@@ -1,0 +1,490 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+// ---------- Tenancy & auth ----------
+
+model Tenant {
+  id        Int      @id @default(autoincrement())
+  name      String
+  cui       String? // CUI/CIF of the dealership
+  address   String?
+  createdAt DateTime @default(now())
+
+  users        User[]
+  parties      Party[]
+  vehicles     Vehicle[]
+  documents    Document[]
+  contracts    Contract[]
+  declarations ETransportDeclaration[]
+  bankAccounts BankAccount[]
+  payables     Payable[]
+  auditLogs    AuditLog[]
+  anafToken    AnafToken?
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  SALES
+  ACCOUNTANT
+  VIEWER
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  passwordHash String
+  name         String
+  role         Role      @default(VIEWER)
+  tenantId     Int
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  createdAt    DateTime  @default(now())
+
+  refreshTokens RefreshToken[]
+  corrections   UserCorrection[]
+  auditLogs     AuditLog[]
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  tokenHash String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+// ---------- Core domain ----------
+
+enum PartyKind {
+  INDIVIDUAL
+  COMPANY
+}
+
+model Party {
+  id       Int       @id @default(autoincrement())
+  kind     PartyKind @default(COMPANY)
+  name     String
+  taxId    String? // CUI/CIF (RO), VAT number (EU) or CNP (individual)
+  country  String    @default("RO")
+  address  String?
+  iban     String?
+  email    String?
+  phone    String?
+  tenantId Int
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  createdAt DateTime @default(now())
+
+  documents      Document[]
+  contracts      Contract[]
+  vehiclesBought Vehicle[]  @relation("VehicleBuyer")
+  vehiclesSold   Vehicle[]  @relation("VehicleSeller")
+  payables       Payable[]
+
+  @@index([tenantId])
+}
+
+enum VehicleStatus {
+  SOURCED
+  PURCHASED
+  IN_TRANSIT
+  CUSTOMS
+  IN_STOCK
+  RESERVED
+  SOLD
+  DELIVERED
+}
+
+model Vehicle {
+  id               Int           @id @default(autoincrement())
+  vin              String
+  make             String
+  model            String
+  variant          String?
+  firstRegistered  DateTime?
+  year             Int
+  mileageKm        Int?
+  fuelType         String?
+  gearbox          String?
+  color            String?
+  originCountry    String        @default("DE")
+  status           VehicleStatus @default(SOURCED)
+  purchasePrice    Decimal       @db.Decimal(12, 2)
+  purchaseCurrency String        @default("EUR")
+  landedCost       Decimal?      @db.Decimal(12, 2)
+  listPrice        Decimal?      @db.Decimal(12, 2)
+  soldPrice        Decimal?      @db.Decimal(12, 2)
+  soldCurrency     String        @default("RON")
+  tenantId         Int
+  tenant           Tenant        @relation(fields: [tenantId], references: [id])
+  buyerId          Int?
+  buyer            Party?        @relation("VehicleBuyer", fields: [buyerId], references: [id])
+  sellerId         Int?
+  seller           Party?        @relation("VehicleSeller", fields: [sellerId], references: [id])
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  documents  Document[]
+  contracts  Contract[]
+  transports ETransportDeclaration[]
+  costs      VehicleCost[]
+
+  @@unique([tenantId, vin])
+  @@index([tenantId, status])
+}
+
+enum CostCategory {
+  PURCHASE
+  TRANSPORT
+  CUSTOMS
+  VAT
+  ITP
+  REGISTRATION
+  REFURB
+  OTHER
+}
+
+model VehicleCost {
+  id         Int          @id @default(autoincrement())
+  vehicleId  Int
+  vehicle    Vehicle      @relation(fields: [vehicleId], references: [id])
+  category   CostCategory
+  amount     Decimal      @db.Decimal(12, 2)
+  currency   String       @default("EUR")
+  note       String?
+  documentId Int?
+  document   Document?    @relation(fields: [documentId], references: [id])
+  createdAt  DateTime     @default(now())
+}
+
+// ---------- Documents & extraction ----------
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Document {
+  id                    Int              @id @default(autoincrement())
+  name                  String
+  type                  String? // Invoice, CMR, Customs Declaration, Registration Certificate, ...
+  s3Key                 String
+  contentType           String
+  fileSize              Int
+  documentHash          String
+  tenantId              Int
+  tenant                Tenant           @relation(fields: [tenantId], references: [id])
+  vehicleId             Int?
+  vehicle               Vehicle?         @relation(fields: [vehicleId], references: [id])
+  partyId               Int?
+  party                 Party?           @relation(fields: [partyId], references: [id])
+  processingStatus      ProcessingStatus @default(PENDING)
+  needsReview           Boolean          @default(false)
+  uploadedAt            DateTime         @default(now())
+  processingStartedAt   DateTime?
+  processingCompletedAt DateTime?
+  deletedAt             DateTime?
+
+  processedData ProcessedData?
+  costs         VehicleCost[]
+  contracts     Contract[]
+  corrections   UserCorrection[]
+  payables      Payable[]
+  parentLinks   DocumentRelationship[] @relation("ParentDoc")
+  childLinks    DocumentRelationship[] @relation("ChildDoc")
+
+  @@index([tenantId, documentHash])
+  @@index([tenantId, vehicleId])
+}
+
+model ProcessedData {
+  id              Int      @id @default(autoincrement())
+  documentId      Int      @unique
+  document        Document @relation(fields: [documentId], references: [id])
+  documentType    String?
+  typeConfidence  Float?
+  extractedFields Json
+  fieldConfidence Json?
+  validationIssues Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model DocumentRelationship {
+  id        Int      @id @default(autoincrement())
+  parentId  Int
+  parent    Document @relation("ParentDoc", fields: [parentId], references: [id])
+  childId   Int
+  child     Document @relation("ChildDoc", fields: [childId], references: [id])
+  relation  String? // e.g. "same-vehicle", "segmented-from"
+  createdAt DateTime @default(now())
+
+  @@unique([parentId, childId])
+}
+
+enum PendingUploadStatus {
+  UPLOADED
+  PROCESSING
+  COMPLETED
+  ERROR
+}
+
+// Durable upload queue: files land in S3 first, extraction is async.
+model PendingUpload {
+  id                  Int                 @id @default(autoincrement())
+  s3Key               String
+  fileName            String
+  contentType         String
+  fileSize            Int
+  documentHash        String
+  tenantId            Int
+  vehicleId           Int?
+  partyId             Int?
+  status              PendingUploadStatus @default(UPLOADED)
+  retryCount          Int                 @default(0)
+  maxRetries          Int                 @default(3)
+  errorMessage        String?
+  documentId          Int?
+  processingStartedAt DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([status, updatedAt])
+}
+
+model UserCorrection {
+  id         Int      @id @default(autoincrement())
+  documentId Int
+  document   Document @relation(fields: [documentId], references: [id])
+  tenantId   Int
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id])
+  field      String
+  oldValue   String?
+  newValue   String
+  // pgvector embedding of "<doc type> <field>: <corrected value>" for RAG on future extractions
+  embedding  Unsupported("vector(1536)")?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, field])
+}
+
+// ---------- Contracts ----------
+
+enum ContractDirection {
+  INCOMING
+  OUTGOING
+}
+
+model Contract {
+  id              Int               @id @default(autoincrement())
+  tenantId        Int
+  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  vehicleId       Int?
+  vehicle         Vehicle?          @relation(fields: [vehicleId], references: [id])
+  partyId         Int?
+  party           Party?            @relation(fields: [partyId], references: [id])
+  direction       ContractDirection @default(OUTGOING)
+  contractType    String // vanzare-cumparare | achizitie | proces-verbal
+  contractNumber  String?
+  contractDate    DateTime?
+  totalValue      Decimal?          @db.Decimal(12, 2)
+  currency        String?
+  documentId      Int?
+  document        Document?         @relation(fields: [documentId], references: [id])
+  extractedFields Json?
+  createdAt       DateTime          @default(now())
+
+  @@index([tenantId])
+}
+
+model ContractNumberSequence {
+  id         Int    @id @default(autoincrement())
+  tenantId   Int
+  series     String @default("CV")
+  nextNumber Int    @default(1)
+
+  @@unique([tenantId, series])
+}
+
+// ---------- e-Transport ----------
+
+enum ETransportStatus {
+  DRAFT
+  SUBMITTED
+  VALIDATED
+  CONFIRMED
+  REJECTED
+  EXPIRED
+}
+
+model ETransportDeclaration {
+  id             Int              @id @default(autoincrement())
+  tenantId       Int
+  tenant         Tenant           @relation(fields: [tenantId], references: [id])
+  vehicleId      Int?
+  vehicle        Vehicle?         @relation(fields: [vehicleId], references: [id])
+  operationType  String           @default("AIC") // intra-community acquisition
+  uit            String?
+  status         ETransportStatus @default(DRAFT)
+  validFrom      DateTime?
+  validUntil     DateTime?
+  declaredAt     DateTime?
+  xmlPayload     String           @db.Text
+  anafUploadId   String?
+  anafResponse   Json?
+  idempotencyKey String           @unique @default(uuid())
+  transporter    Json // { name, taxId, country }
+  vehiclePlate   String?
+  trailerPlate   String?
+  loadingPlace   Json // { country, county, city, address }
+  unloadingPlace Json
+  goods          Json // [{ description, tariffCode, weightKg, valueRon }]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([tenantId, status])
+}
+
+model AnafToken {
+  id           Int      @id @default(autoincrement())
+  tenantId     Int      @unique
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  updatedAt    DateTime @updatedAt
+}
+
+// ---------- Banking & bill pay ----------
+
+enum ConsentStatus {
+  CREATED
+  VALID
+  EXPIRED
+  REVOKED
+}
+
+model OpenBankingConsent {
+  id           Int           @id @default(autoincrement())
+  tenantId     Int
+  bankCode     String
+  consentId    String
+  scope        String        @default("AIS") // AIS | PIS
+  accessToken  String?
+  refreshToken String?
+  tokenExpiresAt DateTime?
+  consentExpiresAt DateTime?
+  status       ConsentStatus @default(CREATED)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  accounts BankAccount[]
+
+  @@index([tenantId, status])
+}
+
+model BankAccount {
+  id                     Int                 @id @default(autoincrement())
+  tenantId               Int
+  tenant                 Tenant              @relation(fields: [tenantId], references: [id])
+  iban                   String
+  bankName               String
+  currency               String              @default("RON")
+  openBankingConsentId   Int?
+  consent                OpenBankingConsent? @relation(fields: [openBankingConsentId], references: [id])
+  openBankingResourceId  String?
+  lastOpenBankingSync    DateTime?
+  balance                Decimal?            @db.Decimal(14, 2)
+  createdAt              DateTime            @default(now())
+
+  transactions BankTransaction[]
+
+  @@unique([tenantId, iban])
+}
+
+model BankTransaction {
+  id            Int         @id @default(autoincrement())
+  bankAccountId Int
+  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id])
+  bookingDate   DateTime
+  amount        Decimal     @db.Decimal(14, 2)
+  currency      String
+  description   String?
+  reference     String?
+  counterparty  String?
+  counterpartyIban String?
+  balanceAfter  Decimal?    @db.Decimal(14, 2)
+  externalId    String?
+  matchedPayableId Int?
+  matchedPayable   Payable? @relation(fields: [matchedPayableId], references: [id])
+  createdAt     DateTime    @default(now())
+
+  @@unique([bankAccountId, externalId])
+  @@index([bankAccountId, bookingDate])
+}
+
+enum PayableStatus {
+  DRAFT
+  APPROVED
+  SUBMITTED
+  EXECUTED
+  FAILED
+  REJECTED
+}
+
+model Payable {
+  id               Int           @id @default(autoincrement())
+  tenantId         Int
+  tenant           Tenant        @relation(fields: [tenantId], references: [id])
+  payeePartyId     Int?
+  payeeParty       Party?        @relation(fields: [payeePartyId], references: [id])
+  payeeName        String
+  iban             String?
+  amount           Decimal       @db.Decimal(14, 2)
+  currency         String        @default("EUR")
+  dueDate          DateTime?
+  reference        String?
+  status           PayableStatus @default(DRAFT)
+  sourceDocumentId Int?
+  sourceDocument   Document?     @relation(fields: [sourceDocumentId], references: [id])
+  approvedByUserId Int?
+  approvedAt       DateTime?
+  submittedAt      DateTime?
+  executedAt       DateTime?
+  idempotencyKey   String        @unique @default(uuid())
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  matchedTransactions BankTransaction[]
+
+  @@index([tenantId, status])
+}
+
+// ---------- Audit ----------
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String // e.g. payable.approved, etransport.submitted, contract.generated, document.deleted
+  entity    String
+  entityId  Int?
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}

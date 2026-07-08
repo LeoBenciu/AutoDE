@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* Tailwind v4: wire the dark: variant to a class on <html>, not OS preference */
+@custom-variant dark (&:where(.dark, .dark *));
+
+html, body, #root {
+  height: 100%;
+}

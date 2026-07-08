@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.env
+*.local
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+coverage/
+tmp/
+uploads/
+.context/
