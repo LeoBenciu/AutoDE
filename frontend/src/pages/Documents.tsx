@@ -1,20 +1,50 @@
 import { useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 import {
+  useArchiveDocumentMutation,
+  useAssignDocumentMutation,
   useCorrectFieldMutation,
   useDocumentQuery,
   useDocumentsQuery,
   useLazyDownloadUrlQuery,
   useMarkReviewedMutation,
-  usePayableFromDocumentMutation,
+  usePartiesQuery,
   useUploadDocumentsMutation,
+  useVehiclesQuery,
 } from '../store/api';
 import { StatusChip } from '../components/StatusChip';
+import type { RootState } from '../store/store';
+
+const DOC_TYPES = [
+  'Invoice',
+  'Receipt',
+  'Bank Statement',
+  'Contract',
+  'CMR',
+  'Customs Declaration',
+  'Vehicle Registration Certificate',
+  'Technical Inspection (ITP)',
+  'Insurance',
+  'Sale Contract',
+  'Handover Protocol',
+  'UIT',
+  'Other',
+];
 
 export default function Documents() {
   const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
-  const { data, isLoading } = useDocumentsQuery(needsReviewOnly ? { needsReview: true } : undefined, {
-    pollingInterval: 8000,
-  });
+  const [search, setSearch] = useState('');
+  const [type, setType] = useState('');
+  const [archived, setArchived] = useState(false);
+  const { data, isLoading } = useDocumentsQuery(
+    {
+      ...(needsReviewOnly ? { needsReview: true } : {}),
+      ...(search ? { search } : {}),
+      ...(type ? { type } : {}),
+      ...(archived ? { archived: true } : {}),
+    },
+    { pollingInterval: 8000 },
+  );
   const [upload, { isLoading: uploading }] = useUploadDocumentsMutation();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -28,9 +58,29 @@ export default function Documents() {
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-900">Documente</h1>
-        <label className="flex items-center gap-2 text-sm text-slate-600">
+      </div>
+
+      {/* Search & filters */}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Caută după nume, tip, VIN, client…"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm sm:max-w-xs"
+        />
+        <select value={type} onChange={(e) => setType(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm">
+          <option value="">Toate tipurile</option>
+          {DOC_TYPES.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+        <label className="flex items-center gap-1.5 text-sm text-slate-600">
           <input type="checkbox" checked={needsReviewOnly} onChange={(e) => setNeedsReviewOnly(e.target.checked)} />
-          Doar de verificat
+          De verificat
+        </label>
+        <label className="flex items-center gap-1.5 text-sm text-slate-600">
+          <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} />
+          Arhivate
         </label>
       </div>
 
@@ -57,6 +107,8 @@ export default function Documents() {
         </p>
         <p className="mt-1 text-xs text-slate-500">Facturi, CMR, declarații vamale, talon, ITP, extrase — PDF sau poze</p>
       </div>
+
+      <SagaExport />
 
       {/* Processing queue */}
       {(data?.pending?.length ?? 0) > 0 && (
@@ -86,6 +138,7 @@ export default function Documents() {
               <p className="text-xs text-slate-500">
                 {d.type ?? 'Necategorisit'}
                 {d.vehicle ? ` · ${d.vehicle.make} ${d.vehicle.model} (${d.vehicle.vin.slice(-6)})` : ''}
+                {d.party ? ` · ${d.party.name}` : ''}
               </p>
             </div>
             <div className="ml-3 flex shrink-0 items-center gap-2">
@@ -104,14 +157,100 @@ export default function Documents() {
   );
 }
 
+function SagaExport() {
+  const token = useSelector((s: RootState) => s.auth.accessToken);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const download = async (path: string) => {
+    setBusy(true);
+    setMessage('');
+    try {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const res = await fetch(`/api/saga/${path}${path.includes('?') ? '&' : '?'}${params}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message ?? `Export eșuat (${res.status})`);
+      }
+      const blob = await res.blob();
+      const count = res.headers.get('X-Invoice-Count');
+      const name = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] ?? 'saga_export.xml';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMessage(`Export generat: ${count ?? '?'} înregistrări ✔`);
+    } catch (err: any) {
+      setMessage(err.message ?? 'Eroare la export');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const field = 'rounded-lg border border-slate-300 px-2 py-1.5 text-sm';
+  return (
+    <div className="mt-4 rounded-xl bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="mr-2 text-sm font-semibold text-slate-900">Export SAGA (facturi)</p>
+        <input type="date" className={field} value={from} onChange={(e) => setFrom(e.target.value)} title="De la data facturii" />
+        <span className="text-sm text-slate-400">–</span>
+        <input type="date" className={field} value={to} onChange={(e) => setTo(e.target.value)} title="Până la data facturii" />
+        <button
+          onClick={() => download('export.xml')}
+          disabled={busy}
+          className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          Facturi XML
+        </button>
+        <button
+          onClick={() => download('export.csv')}
+          disabled={busy}
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-50"
+        >
+          Facturi CSV
+        </button>
+        <button
+          onClick={() => download('parteneri.xml?tip=furnizori')}
+          disabled={busy}
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-50"
+        >
+          Furnizori XML
+        </button>
+        <button
+          onClick={() => download('parteneri.xml?tip=clienti')}
+          disabled={busy}
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-50"
+        >
+          Clienți XML
+        </button>
+        {message && <span className="text-sm text-slate-600">{message}</span>}
+      </div>
+      <p className="mt-2 text-xs text-slate-500">
+        Export în formatul de import SAGA C — facturile cu furnizor străin sunt marcate automat cu taxare
+        inversă (Da), iar partenerii poartă Guid_cod pentru re-identificare. În SAGA: Operații → Preluare date.
+      </p>
+    </div>
+  );
+}
+
 function DocumentDrawer({ id, onClose }: { id: number; onClose: () => void }) {
   const { data: doc } = useDocumentQuery(id);
+  const { data: vehicles = [] } = useVehiclesQuery();
+  const { data: parties = [] } = usePartiesQuery();
   const [correct] = useCorrectFieldMutation();
   const [markReviewed] = useMarkReviewedMutation();
-  const [createPayable, { isLoading: creatingPayable }] = usePayableFromDocumentMutation();
+  const [assign] = useAssignDocumentMutation();
+  const [archive] = useArchiveDocumentMutation();
   const [getUrl] = useLazyDownloadUrlQuery();
   const [editing, setEditing] = useState<{ field: string; value: string } | null>(null);
-  const [note, setNote] = useState('');
 
   if (!doc) return null;
   const fields = (doc.processedData?.extractedFields ?? {}) as Record<string, any>;
@@ -143,29 +282,47 @@ function DocumentDrawer({ id, onClose }: { id: number; onClose: () => void }) {
 
         <div className="mt-3 flex flex-wrap gap-2">
           <button onClick={openFile} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">Deschide fișierul</button>
-          {doc.type === 'Invoice' && (
-            <button
-              onClick={async () => {
-                try {
-                  await createPayable(id).unwrap();
-                  setNote('Plată creată în inbox-ul de plăți ✔');
-                } catch (err: any) {
-                  setNote(err?.data?.message ?? 'Eroare');
-                }
-              }}
-              disabled={creatingPayable}
-              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              → Creează plată
-            </button>
-          )}
           {doc.needsReview && (
             <button onClick={() => markReviewed(id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white">
               ✓ Marchează verificat
             </button>
           )}
+          <button
+            onClick={async () => {
+              await archive({ id, archived: !doc.archivedAt });
+              onClose();
+            }}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700"
+          >
+            {doc.archivedAt ? '↩ Restaurează' : '🗄 Arhivează'}
+          </button>
         </div>
-        {note && <p className="mt-2 text-sm text-slate-600">{note}</p>}
+
+        {/* Asociere cu vehicul / client */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <select
+            value={doc.vehicleId ?? ''}
+            onChange={(e) => assign({ id, vehicleId: e.target.value ? Number(e.target.value) : null })}
+            className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            <option value="">Fără vehicul</option>
+            {vehicles.map((v: any) => (
+              <option key={v.id} value={v.id}>
+                {v.make} {v.model} · {v.vin.slice(-6)}
+              </option>
+            ))}
+          </select>
+          <select
+            value={doc.partyId ?? ''}
+            onChange={(e) => assign({ id, partyId: e.target.value ? Number(e.target.value) : null })}
+            className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            <option value="">Fără client/partener</option>
+            {parties.map((p: any) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
 
         {issues.length > 0 && (
           <div className="mt-4 rounded-lg bg-red-50 p-3">

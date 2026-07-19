@@ -25,6 +25,22 @@ export default function VehicleDetail() {
 
   const fmt = (n: any, cur?: string) => (n != null ? `${Number(n).toLocaleString('ro-RO')} ${cur ?? ''}` : '—');
 
+  // Dosarul mașinii — never starts at 0: the vehicle data itself is step 1.
+  const docTypes = new Set((v.documents ?? []).map((d: any) => d.type));
+  const hasUit = (v.transports ?? []).some((t: any) => t.status === 'CONFIRMED') || docTypes.has('UIT');
+  const dosar = [
+    { label: 'Date vehicul', done: true },
+    { label: 'Factură achiziție', done: docTypes.has('Invoice') },
+    { label: 'CMR', done: docTypes.has('CMR') },
+    { label: 'Talon / certificat', done: docTypes.has('Vehicle Registration Certificate') },
+    { label: 'Cod UIT', done: hasUit },
+    { label: 'Contract vânzare', done: docTypes.has('Sale Contract') },
+  ];
+  const dosarDone = dosar.filter((s) => s.done).length;
+
+  const marginPct =
+    v.margin != null && v.computedLandedCost > 0 ? Math.round((v.margin / v.computedLandedCost) * 100) : null;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -45,12 +61,37 @@ export default function VehicleDetail() {
         </select>
       </div>
 
+      {/* Dosarul mașinii — progress toward a complete file */}
+      <div className="rounded-xl bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <p className="font-semibold text-slate-900">Dosarul mașinii</p>
+          <p className="text-sm text-slate-500">{dosarDone}/{dosar.length} complete</p>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className="h-full rounded-full bg-emerald-500 transition-all"
+            style={{ width: `${(dosarDone / dosar.length) * 100}%` }}
+          />
+        </div>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+          {dosar.map((s) => (
+            <span key={s.label} className={`text-xs ${s.done ? 'text-slate-400 line-through' : 'font-medium text-amber-700'}`}>
+              {s.done ? '✓' : '○'} {s.label}
+            </span>
+          ))}
+        </div>
+      </div>
+
       {/* Money summary */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Preț achiziție" value={fmt(v.purchasePrice, v.purchaseCurrency)} />
         <Stat label="Cost total (landed)" value={fmt(v.computedLandedCost, v.purchaseCurrency)} />
         <Stat label="Preț vânzare" value={fmt(v.soldPrice ?? v.listPrice, v.soldCurrency)} />
-        <Stat label="Marjă" value={v.margin != null ? fmt(v.margin, v.soldCurrency) : '—'} highlight={v.margin != null && v.margin > 0} />
+        <Stat
+          label="Marjă"
+          value={v.margin != null ? `${fmt(v.margin, v.soldCurrency)}${marginPct != null ? ` (${marginPct > 0 ? '+' : ''}${marginPct}%)` : ''}` : '—'}
+          highlight={v.margin != null && v.margin > 0}
+        />
       </div>
 
       {/* Documents */}
@@ -101,7 +142,11 @@ export default function VehicleDetail() {
       <CostsSection vehicle={v} vehicleId={vehicleId} />
 
       {/* Contract generation */}
-      <ContractSection vehicleId={vehicleId} contracts={v.contracts ?? []} />
+      <ContractSection
+        vehicleId={vehicleId}
+        contracts={v.contracts ?? []}
+        defaultPrice={v.soldPrice ?? v.listPrice ?? undefined}
+      />
 
       {/* e-Transport */}
       <section className="rounded-xl bg-white p-4 shadow-sm">
@@ -150,14 +195,21 @@ function CostsSection({ vehicle, vehicleId }: { vehicle: any; vehicleId: number 
     <section className="rounded-xl bg-white p-4 shadow-sm">
       <h2 className="font-semibold text-slate-900">Costuri</h2>
       <div className="mt-3 space-y-1">
-        {(vehicle.costs ?? []).map((c: any) => (
-          <div key={c.id} className="flex justify-between border-b border-slate-50 py-1.5 text-sm">
-            <span className="text-slate-600">
-              {c.category} {c.note ? `· ${c.note}` : ''}
-            </span>
-            <span className="font-medium">{Number(c.amount).toLocaleString('ro-RO')} {c.currency}</span>
-          </div>
-        ))}
+        {(vehicle.costs ?? []).map((c: any) => {
+          // Contrast effect: each cost is anchored against the purchase price.
+          const pct = Number(vehicle.purchasePrice) > 0 ? (Number(c.amount) / Number(vehicle.purchasePrice)) * 100 : null;
+          return (
+            <div key={c.id} className="flex justify-between border-b border-slate-50 py-1.5 text-sm">
+              <span className="text-slate-600">
+                {c.category} {c.note ? `· ${c.note}` : ''}
+              </span>
+              <span className="font-medium">
+                {Number(c.amount).toLocaleString('ro-RO')} {c.currency}
+                {pct != null && <span className="ml-1 font-normal text-slate-400">({pct.toFixed(1).replace('.', ',')}%)</span>}
+              </span>
+            </div>
+          );
+        })}
       </div>
       <form onSubmit={submit} className="mt-3 flex flex-wrap gap-2">
         <select
@@ -189,11 +241,20 @@ function CostsSection({ vehicle, vehicleId }: { vehicle: any; vehicleId: number 
   );
 }
 
-function ContractSection({ vehicleId, contracts }: { vehicleId: number; contracts: any[] }) {
+function ContractSection({
+  vehicleId,
+  contracts,
+  defaultPrice,
+}: {
+  vehicleId: number;
+  contracts: any[];
+  defaultPrice?: number;
+}) {
   const { data: parties = [] } = usePartiesQuery();
   const [generate, { isLoading }] = useGenerateContractMutation();
   const [buyerId, setBuyerId] = useState('');
-  const [price, setPrice] = useState('');
+  // Smart default: the vehicle's sale/list price is pre-filled, adjust if needed.
+  const [price, setPrice] = useState(defaultPrice != null ? String(defaultPrice) : '');
   const [message, setMessage] = useState('');
 
   const submit = async (kind: string) => {

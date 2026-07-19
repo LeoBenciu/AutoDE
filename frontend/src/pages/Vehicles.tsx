@@ -108,7 +108,15 @@ function NewVehicleModal({ onClose }: { onClose: () => void }) {
       <div className="w-full max-w-md rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-bold text-slate-900">Vehicul nou</h2>
         <form onSubmit={submit} className="mt-4 space-y-3">
-          <input className={field} placeholder="VIN (17 caractere)" value={form.vin} onChange={set('vin')} required minLength={11} maxLength={17} />
+          <input
+            className={`${field} font-mono uppercase`}
+            placeholder="VIN (17 caractere)"
+            value={form.vin}
+            onChange={(e) => setForm({ ...form, vin: e.target.value.toUpperCase() })}
+            required
+            minLength={11}
+            maxLength={17}
+          />
           <div className="grid grid-cols-2 gap-3">
             <input className={field} placeholder="Marcă" value={form.make} onChange={set('make')} required />
             <input className={field} placeholder="Model" value={form.model} onChange={set('model')} required />
@@ -131,7 +139,7 @@ function NewVehicleModal({ onClose }: { onClose: () => void }) {
               Renunță
             </button>
             <button disabled={isLoading} className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white disabled:opacity-50">
-              Salvează
+              Adaugă vehiculul →
             </button>
           </div>
         </form>

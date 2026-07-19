@@ -47,6 +47,7 @@ export class AuthService {
     if (!user || !(await bcrypt.compare(dto.password, user.passwordHash))) {
       throw new UnauthorizedException('Email sau parolă incorecte');
     }
+    if (!user.active) throw new UnauthorizedException('Contul este dezactivat — contactează administratorul firmei');
     return this.issueTokens(user.id, user.tenantId, user.role, user.email, user.name);
   }
 
@@ -56,7 +57,7 @@ export class AuthService {
       where: { tokenHash },
       include: { user: true },
     });
-    if (!row || row.revokedAt || row.expiresAt < new Date()) {
+    if (!row || row.revokedAt || row.expiresAt < new Date() || !row.user.active) {
       throw new UnauthorizedException('Sesiune expirată');
     }
     await this.prisma.refreshToken.update({ where: { id: row.id }, data: { revokedAt: new Date() } });

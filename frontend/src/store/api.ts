@@ -11,7 +11,7 @@ export const api = createApi({
       return headers;
     },
   }),
-  tagTypes: ['Vehicle', 'Party', 'Document', 'Payable', 'ETransport', 'Contract'],
+  tagTypes: ['Vehicle', 'Party', 'Document', 'ETransport', 'Contract', 'User'],
   endpoints: (build) => ({
     login: build.mutation<any, { email: string; password: string }>({
       query: (body) => ({ url: '/auth/login', method: 'POST', body }),
@@ -75,25 +75,16 @@ export const api = createApi({
       query: (id) => ({ url: `/documents/${id}/reviewed`, method: 'POST' }),
       invalidatesTags: ['Document'],
     }),
+    assignDocument: build.mutation<any, { id: number; vehicleId?: number | null; partyId?: number | null }>({
+      query: ({ id, ...body }) => ({ url: `/documents/${id}/assign`, method: 'POST', body }),
+      invalidatesTags: (_r, _e, { id }) => ['Document', { type: 'Document', id }, 'Vehicle'],
+    }),
+    archiveDocument: build.mutation<any, { id: number; archived: boolean }>({
+      query: ({ id, archived }) => ({ url: `/documents/${id}/${archived ? 'archive' : 'unarchive'}`, method: 'POST' }),
+      invalidatesTags: ['Document'],
+    }),
     downloadUrl: build.query<{ url: string }, number>({
       query: (id) => `/documents/${id}/download`,
-    }),
-
-    payables: build.query<any[], string | void>({
-      query: (status) => ({ url: '/banking/payables', params: status ? { status } : undefined }),
-      providesTags: ['Payable'],
-    }),
-    payableFromDocument: build.mutation<any, number>({
-      query: (documentId) => ({ url: `/banking/payables/from-document/${documentId}`, method: 'POST' }),
-      invalidatesTags: ['Payable'],
-    }),
-    approvePayable: build.mutation<any, number>({
-      query: (id) => ({ url: `/banking/payables/${id}/approve`, method: 'POST' }),
-      invalidatesTags: ['Payable'],
-    }),
-    submitPayable: build.mutation<any, number>({
-      query: (id) => ({ url: `/banking/payables/${id}/submit`, method: 'POST' }),
-      invalidatesTags: ['Payable'],
     }),
 
     etransport: build.query<any[], void>({
@@ -105,6 +96,10 @@ export const api = createApi({
     }),
     createEtransport: build.mutation<any, any>({
       query: (body) => ({ url: '/etransport', method: 'POST', body }),
+      invalidatesTags: ['ETransport', 'Vehicle'],
+    }),
+    updateEtransport: build.mutation<any, { id: number; body: any }>({
+      query: ({ id, body }) => ({ url: `/etransport/${id}`, method: 'PATCH', body }),
       invalidatesTags: ['ETransport', 'Vehicle'],
     }),
     submitEtransport: build.mutation<any, number>({
@@ -119,6 +114,19 @@ export const api = createApi({
     generateContract: build.mutation<any, any>({
       query: (body) => ({ url: '/contracts/generate', method: 'POST', body }),
       invalidatesTags: ['Contract', 'Vehicle', 'Document'],
+    }),
+
+    users: build.query<any[], void>({
+      query: () => '/users',
+      providesTags: ['User'],
+    }),
+    createUser: build.mutation<any, { name: string; email: string; password: string; role: string }>({
+      query: (body) => ({ url: '/users', method: 'POST', body }),
+      invalidatesTags: ['User'],
+    }),
+    updateUser: build.mutation<any, { id: number; body: any }>({
+      query: ({ id, body }) => ({ url: `/users/${id}`, method: 'PATCH', body }),
+      invalidatesTags: ['User'],
     }),
   }),
 });
@@ -138,15 +146,17 @@ export const {
   useUploadDocumentsMutation,
   useCorrectFieldMutation,
   useMarkReviewedMutation,
+  useAssignDocumentMutation,
+  useArchiveDocumentMutation,
   useLazyDownloadUrlQuery,
-  usePayablesQuery,
-  usePayableFromDocumentMutation,
-  useApprovePayableMutation,
-  useSubmitPayableMutation,
   useEtransportQuery,
   useLazyEtransportPrefillQuery,
   useCreateEtransportMutation,
+  useUpdateEtransportMutation,
   useSubmitEtransportMutation,
   useContractsQuery,
   useGenerateContractMutation,
+  useUsersQuery,
+  useCreateUserMutation,
+  useUpdateUserMutation,
 } = api;

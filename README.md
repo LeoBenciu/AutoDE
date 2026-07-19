@@ -1,8 +1,8 @@
 # AutoImport — platformă pentru importatori de mașini second-hand
 
 Back-office + operations SaaS for Romanian dealerships importing used cars from the EU:
-document management, LLM document extraction, contract generation, RO e-Transport (cod UIT),
-and bill pay over Open Banking. Multi-tenant, Romanian-first UI, mobile-first.
+document management, LLM document extraction, contract generation, and RO e-Transport
+(cod UIT). Multi-tenant, Romanian-first UI, mobile-first.
 
 ## Architecture
 
@@ -30,15 +30,17 @@ and bill pay over Open Banking. Multi-tenant, Romanian-first UI, mobile-first.
 - **Documents**: dedupe by hash, needs-review UI with inline field corrections.
 - **Contracts**: generate *contract de vânzare-cumpărare* / *proces-verbal* PDFs
   (price in words in Romanian, per-tenant number sequences), stored back as documents.
+- **SAGA export**: processed invoices export to the SAGA C XML import format
+  (`GET /api/saga/export.xml?from&to`, plus CSV) — Furnizor/Client mapped from the
+  extracted fields so SAGA routes Intrări/Ieșiri by CIF itself; non-RO suppliers are
+  marked taxare inversă. *Confirm the date format against the client's SAGA build on
+  the first import test.*
 - **e-Transport**: declaration pre-filled from extracted CMR/invoice, XML build,
   ANAF OAuth2 (logincert) client with proactive token refresh, status polling → UIT,
   printable UIT sheet. *Validate the XML against the current ANAF XSD before production.*
-- **Banking**: payables inbox from extracted invoices, OWNER/MANAGER approval gate,
-  idempotency keys, PIS submit stub (needs a licensed TPP), reconciliation suggestions
-  (amount + date window + reference, top-3).
 - **Cross-cutting**: JWT access+refresh, roles, tenant scoping on every query,
-  audit log (payments/e-Transport/contracts/deletes), graceful degradation when
-  ANAF/bank/LLM credentials are missing.
+  audit log (e-Transport/contracts/deletes), graceful degradation when
+  ANAF/LLM credentials are missing.
 
 ## Local development
 
@@ -72,8 +74,6 @@ Register a company from the login screen (first user becomes OWNER).
   cost-sensitive volume. Without `ANTHROPIC_API_KEY`, uploads queue and fail with a clear error.
 - **ANAF**: needs a qualified certificate enrolled in SPV; set `ANAF_CLIENT_ID/SECRET`
   and complete the OAuth2 flow per tenant. Defaults point at the ANAF **test** endpoint.
-- **Open Banking**: AIS sync and PIS submission stay disabled until a TPP aggregator
-  (e.g. Smart Fintech) is configured — the endpoints return actionable errors instead.
 - **Accuracy**: build the golden set early — mint golden cases from review-UI corrections;
   a 20-doc eval is noise.
 

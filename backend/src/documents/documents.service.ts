@@ -52,17 +52,45 @@ export class DocumentsService {
     return { pendingUploadId: pending.id, duplicateOf: duplicate ?? null };
   }
 
-  async list(tenantId: number, filters: { vehicleId?: number; partyId?: number; type?: string; needsReview?: boolean }) {
-    const where: Prisma.DocumentWhereInput = { tenantId, deletedAt: null };
+  async list(
+    tenantId: number,
+    filters: {
+      vehicleId?: number;
+      partyId?: number;
+      type?: string;
+      needsReview?: boolean;
+      search?: string;
+      archived?: boolean;
+    },
+  ) {
+    const where: Prisma.DocumentWhereInput = {
+      tenantId,
+      deletedAt: null,
+      archivedAt: filters.archived ? { not: null } : null,
+    };
     if (filters.vehicleId) where.vehicleId = filters.vehicleId;
     if (filters.partyId) where.partyId = filters.partyId;
     if (filters.type) where.type = filters.type;
     if (filters.needsReview !== undefined) where.needsReview = filters.needsReview;
+    if (filters.search) {
+      const q = filters.search.trim();
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { type: { contains: q, mode: 'insensitive' } },
+        { vehicle: { vin: { contains: q, mode: 'insensitive' } } },
+        { vehicle: { make: { contains: q, mode: 'insensitive' } } },
+        { party: { name: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
     const [documents, pending] = await Promise.all([
       this.prisma.document.findMany({
         where,
         orderBy: { uploadedAt: 'desc' },
-        include: { processedData: true, vehicle: { select: { id: true, vin: true, make: true, model: true } } },
+        include: {
+          processedData: true,
+          vehicle: { select: { id: true, vin: true, make: true, model: true } },
+          party: { select: { id: true, name: true } },
+        },
       }),
       this.prisma.pendingUpload.findMany({
         where: { tenantId, status: { in: ['UPLOADED', 'PROCESSING', 'ERROR'] } },
@@ -84,6 +112,49 @@ export class DocumentsService {
   async downloadUrl(tenantId: number, id: number) {
     const doc = await this.get(tenantId, id);
     return { url: await this.s3.presignedGetUrl(doc.s3Key) };
+  }
+
+  /** Attach the document to a vehicle and/or a client (party). */
+  async assign(tenantId: number, id: number, vehicleId?: number | null, partyId?: number | null) {
+    await this.get(tenantId, id);
+    if (vehicleId) {
+      const v = await this.prisma.vehicle.findFirst({ where: { id: vehicleId, tenantId }, select: { id: true } });
+      if (!v) throw new NotFoundException('Vehiculul nu a fost găsit');
+    }
+    if (partyId) {
+      const p = await this.prisma.party.findFirst({ where: { id: partyId, tenantId }, select: { id: true } });
+      if (!p) throw new NotFoundException('Partenerul nu a fost găsit');
+    }
+    return this.prisma.document.update({
+      where: { id },
+      data: {
+        vehicleId: vehicleId === undefined ? undefined : vehicleId,
+        partyId: partyId === undefined ? undefined : partyId,
+      },
+    });
+  }
+
+  /** Archive is reversible and distinct from delete: the file stays searchable in the archived view. */
+  async setArchived(tenantId: number, id: number, userId: number, archived: boolean) {
+    await this.getEvenArchived(tenantId, id);
+    await this.prisma.document.update({
+      where: { id },
+      data: { archivedAt: archived ? new Date() : null },
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: archived ? 'document.archived' : 'document.unarchived',
+      entity: 'Document',
+      entityId: id,
+    });
+    return { ok: true };
+  }
+
+  private async getEvenArchived(tenantId: number, id: number) {
+    const doc = await this.prisma.document.findFirst({ where: { id, tenantId, deletedAt: null } });
+    if (!doc) throw new NotFoundException('Documentul nu a fost găsit');
+    return doc;
   }
 
   async softDelete(tenantId: number, id: number, userId: number) {

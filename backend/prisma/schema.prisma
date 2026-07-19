@@ -24,8 +24,6 @@ model Tenant {
   documents    Document[]
   contracts    Contract[]
   declarations ETransportDeclaration[]
-  bankAccounts BankAccount[]
-  payables     Payable[]
   auditLogs    AuditLog[]
   anafToken    AnafToken?
 }
@@ -44,6 +42,7 @@ model User {
   passwordHash String
   name         String
   role         Role      @default(VIEWER)
+  active       Boolean   @default(true)
   tenantId     Int
   tenant       Tenant    @relation(fields: [tenantId], references: [id])
   createdAt    DateTime  @default(now())
@@ -88,7 +87,6 @@ model Party {
   contracts      Contract[]
   vehiclesBought Vehicle[]  @relation("VehicleBuyer")
   vehiclesSold   Vehicle[]  @relation("VehicleSeller")
-  payables       Payable[]
 
   @@index([tenantId])
 }
@@ -194,15 +192,17 @@ model Document {
   uploadedAt            DateTime         @default(now())
   processingStartedAt   DateTime?
   processingCompletedAt DateTime?
+  archivedAt            DateTime?
   deletedAt             DateTime?
 
   processedData ProcessedData?
   costs         VehicleCost[]
   contracts     Contract[]
   corrections   UserCorrection[]
-  payables      Payable[]
   parentLinks   DocumentRelationship[] @relation("ParentDoc")
   childLinks    DocumentRelationship[] @relation("ChildDoc")
+  declarationsAsInvoice ETransportDeclaration[] @relation("DeclInvoice")
+  declarationsAsUit     ETransportDeclaration[] @relation("DeclUit")
 
   @@index([tenantId, documentHash])
   @@index([tenantId, vehicleId])
@@ -344,6 +344,12 @@ model ETransportDeclaration {
   xmlPayload     String           @db.Text
   anafUploadId   String?
   anafResponse   Json?
+  // The purchase invoice this transport belongs to; the UIT is stored with it.
+  invoiceDocumentId Int?
+  invoiceDocument   Document? @relation("DeclInvoice", fields: [invoiceDocumentId], references: [id])
+  // The saved printable UIT sheet, once the declaration is confirmed.
+  uitDocumentId     Int?
+  uitDocument       Document? @relation("DeclUit", fields: [uitDocumentId], references: [id])
   idempotencyKey String           @unique @default(uuid())
   transporter    Json // { name, taxId, country }
   vehiclePlate   String?
@@ -367,111 +373,6 @@ model AnafToken {
   updatedAt    DateTime @updatedAt
 }
 
-// ---------- Banking & bill pay ----------
-
-enum ConsentStatus {
-  CREATED
-  VALID
-  EXPIRED
-  REVOKED
-}
-
-model OpenBankingConsent {
-  id           Int           @id @default(autoincrement())
-  tenantId     Int
-  bankCode     String
-  consentId    String
-  scope        String        @default("AIS") // AIS | PIS
-  accessToken  String?
-  refreshToken String?
-  tokenExpiresAt DateTime?
-  consentExpiresAt DateTime?
-  status       ConsentStatus @default(CREATED)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-
-  accounts BankAccount[]
-
-  @@index([tenantId, status])
-}
-
-model BankAccount {
-  id                     Int                 @id @default(autoincrement())
-  tenantId               Int
-  tenant                 Tenant              @relation(fields: [tenantId], references: [id])
-  iban                   String
-  bankName               String
-  currency               String              @default("RON")
-  openBankingConsentId   Int?
-  consent                OpenBankingConsent? @relation(fields: [openBankingConsentId], references: [id])
-  openBankingResourceId  String?
-  lastOpenBankingSync    DateTime?
-  balance                Decimal?            @db.Decimal(14, 2)
-  createdAt              DateTime            @default(now())
-
-  transactions BankTransaction[]
-
-  @@unique([tenantId, iban])
-}
-
-model BankTransaction {
-  id            Int         @id @default(autoincrement())
-  bankAccountId Int
-  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id])
-  bookingDate   DateTime
-  amount        Decimal     @db.Decimal(14, 2)
-  currency      String
-  description   String?
-  reference     String?
-  counterparty  String?
-  counterpartyIban String?
-  balanceAfter  Decimal?    @db.Decimal(14, 2)
-  externalId    String?
-  matchedPayableId Int?
-  matchedPayable   Payable? @relation(fields: [matchedPayableId], references: [id])
-  createdAt     DateTime    @default(now())
-
-  @@unique([bankAccountId, externalId])
-  @@index([bankAccountId, bookingDate])
-}
-
-enum PayableStatus {
-  DRAFT
-  APPROVED
-  SUBMITTED
-  EXECUTED
-  FAILED
-  REJECTED
-}
-
-model Payable {
-  id               Int           @id @default(autoincrement())
-  tenantId         Int
-  tenant           Tenant        @relation(fields: [tenantId], references: [id])
-  payeePartyId     Int?
-  payeeParty       Party?        @relation(fields: [payeePartyId], references: [id])
-  payeeName        String
-  iban             String?
-  amount           Decimal       @db.Decimal(14, 2)
-  currency         String        @default("EUR")
-  dueDate          DateTime?
-  reference        String?
-  status           PayableStatus @default(DRAFT)
-  sourceDocumentId Int?
-  sourceDocument   Document?     @relation(fields: [sourceDocumentId], references: [id])
-  approvedByUserId Int?
-  approvedAt       DateTime?
-  submittedAt      DateTime?
-  executedAt       DateTime?
-  idempotencyKey   String        @unique @default(uuid())
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-
-  matchedTransactions BankTransaction[]
-
-  @@index([tenantId, status])
-}
-
 // ---------- Audit ----------
 
 model AuditLog {
@@ -480,7 +381,7 @@ model AuditLog {
   tenant    Tenant   @relation(fields: [tenantId], references: [id])
   userId    Int?
   user      User?    @relation(fields: [userId], references: [id])
-  action    String // e.g. payable.approved, etransport.submitted, contract.generated, document.deleted
+  action    String // e.g. etransport.submitted, contract.generated, document.deleted
   entity    String
   entityId  Int?
   details   Json?

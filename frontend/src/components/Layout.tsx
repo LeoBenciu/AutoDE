@@ -8,8 +8,8 @@ const NAV = [
   { to: '/', label: 'Acasă', icon: '🏠' },
   { to: '/vehicule', label: 'Vehicule', icon: '🚗' },
   { to: '/documente', label: 'Documente', icon: '📄' },
-  { to: '/plati', label: 'Plăți', icon: '💳' },
   { to: '/e-transport', label: 'e-Transport', icon: '🚚' },
+  { to: '/setari', label: 'Setări', icon: '⚙️' },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {

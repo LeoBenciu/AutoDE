@@ -32,8 +32,14 @@ export default function Login() {
       <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-lg">
         <div className="mb-6 text-center">
           <div className="text-3xl">🚗</div>
-          <h1 className="mt-1 text-xl font-bold text-slate-900">AutoImport</h1>
-          <p className="text-sm text-slate-500">Platforma dealerului de mașini importate</p>
+          <h1 className="mt-1 text-xl font-bold text-slate-900">
+            {mode === 'login' ? 'AutoImport' : 'Configurează platforma firmei tale'}
+          </h1>
+          <p className="text-sm text-slate-500">
+            {mode === 'login'
+              ? 'Platforma dealerului de mașini importate'
+              : 'Contul se creează instant — fără card, fără instalare.'}
+          </p>
         </div>
         <form onSubmit={submit} className="space-y-3">
           {mode === 'register' && (
@@ -76,7 +82,7 @@ export default function Login() {
             className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
             disabled={loggingIn || registering}
           >
-            {mode === 'login' ? 'Autentificare' : 'Creează cont'}
+            {mode === 'login' ? 'Autentificare' : 'Creează contul firmei →'}
           </button>
         </form>
         <button

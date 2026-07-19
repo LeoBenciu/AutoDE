@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { CurrentUser, JwtAuthGuard, Roles, RolesGuard } from '../auth/guards';
 import { AuthUser } from '../auth/jwt.strategy';
@@ -28,6 +28,12 @@ export class EtransportController {
   @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateDeclarationInput) {
     return this.etransport.create(user.tenantId, dto);
+  }
+
+  @Patch(':id')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  update(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: CreateDeclarationInput) {
+    return this.etransport.update(user.tenantId, user.userId, id, dto);
   }
 
   @Post(':id/submit')
