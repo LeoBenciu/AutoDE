@@ -3,6 +3,44 @@
 /* Tailwind v4: wire the dark: variant to a class on <html>, not OS preference */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* AutoImport redesign tokens — mirrors the Claude Design "AutoImport Redesign" spec.
+   Cool-neutral palette (hue 260) with an indigo brand accent (hue 250). */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  --color-brand: oklch(0.55 0.16 250);
+  --color-brand-hover: oklch(0.48 0.17 250);
+
+  --color-canvas: oklch(0.94 0.006 260);   /* page background */
+  --color-surface: oklch(0.97 0.004 260);  /* main content background */
+
+  --color-sidebar: oklch(0.2 0.03 260);        /* dark navy nav */
+  --color-sidebar-active: oklch(0.3 0.03 260); /* active nav item */
+  --color-sidebar-line: oklch(0.3 0.02 260);   /* nav dividers */
+  --color-sidebar-fg: oklch(0.78 0.02 260);    /* inactive nav text */
+  --color-sidebar-muted: oklch(0.6 0.02 260);  /* nav footer text */
+
+  --color-ink: oklch(0.2 0.02 260);        /* headings */
+  --color-ink-soft: oklch(0.3 0.01 260);   /* strong body text */
+  --color-muted: oklch(0.5 0.01 260);      /* secondary text */
+  --color-muted-2: oklch(0.6 0.01 260);    /* tertiary text */
+
+  --color-line: oklch(0.92 0.006 260);         /* card borders */
+  --color-line-strong: oklch(0.88 0.006 260);  /* input borders */
+
+  --radius-control: 10px;  /* buttons, inputs, selects */
+  --radius-card: 14px;     /* cards */
+}
+
 html, body, #root {
   height: 100%;
+}
+
+body {
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::placeholder {
+  color: oklch(0.6 0.01 260);
 }

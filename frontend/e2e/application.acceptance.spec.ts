@@ -1,0 +1,145 @@
+import { expect, Page, test } from '@playwright/test';
+
+const email = 'ui-acceptance@autoimport.test';
+const password = 'UiAcceptance!2026';
+
+test.beforeEach(async ({ page }) => {
+  await login(page);
+});
+
+test('@desktop core flows and side-by-side extraction review', async ({
+  page,
+}, testInfo) => {
+  await expect(page.getByRole('heading', { name: /Bună, Ana/ })).toBeVisible();
+  await expect(page.getByText('Situația documentelor')).toBeVisible();
+  await expect(page.getByText(/în tranzit fără cod UIT confirmat/)).toBeVisible();
+
+  await page.goto('/vehicule');
+  await expect(page.getByText('Golf Acceptance')).toBeVisible();
+  await page.getByText('Golf Acceptance').click();
+  await expect(
+    page.getByRole('heading', { name: 'Volkswagen Golf Acceptance' }),
+  ).toBeVisible();
+  await expect(page.getByText(/CV-UI-00001 · vanzare-cumparare/)).toBeVisible();
+
+  await page.goto('/documente');
+  await page.getByPlaceholder('Caută după nume, tip, VIN, client…').fill('UI Acceptance');
+  await expect(page.getByText('UI Acceptance Invoice.pdf')).toBeVisible();
+  await page.getByText('UI Acceptance Invoice.pdf').first().click();
+
+  const dialog = page.getByRole('dialog', {
+    name: /Date extrase pentru UI Acceptance Invoice/,
+  });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('PDF · pagina 1')).toBeVisible();
+  await expect(
+    dialog.getByText('Furnizor Acceptance SRL', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText('Servicii acceptanță', { exact: true }).first(),
+  ).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Aprobă și postează/ })).toBeEnabled();
+
+  const preview = dialog.locator('iframe');
+  const details = dialog.getByText('Furnizor Acceptance SRL', { exact: true });
+  await expect(preview).toBeVisible();
+  expect(await preview.getAttribute('src')).toContain('ui-acceptance.pdf');
+  const previewBox = await preview.boundingBox();
+  const detailsBox = await details.boundingBox();
+  expect(previewBox).not.toBeNull();
+  expect(detailsBox).not.toBeNull();
+  expect(previewBox!.x).toBeLessThan(detailsBox!.x);
+
+  await page.screenshot({
+    path: testInfo.outputPath('document-review-desktop.png'),
+    fullPage: false,
+  });
+
+  const popupPromise = page.waitForEvent('popup');
+  await dialog.getByRole('button', { name: 'Deschide separat' }).click();
+  const documentPopup = await popupPromise;
+  await documentPopup.close();
+
+  await dialog.getByRole('button', { name: 'Arhivează' }).click();
+  const documentRow = page
+    .locator('button')
+    .filter({ hasText: 'UI Acceptance Invoice.pdf' });
+  await expect(documentRow).toHaveCount(0);
+  await page.getByLabel('Arhivate').check();
+  await expect(documentRow).toBeVisible();
+  await documentRow.click();
+  const archivedDialog = page.getByRole('dialog', {
+    name: /Date extrase pentru UI Acceptance Invoice/,
+  });
+  await archivedDialog.getByRole('button', { name: 'Restaurează' }).click();
+  await expect(documentRow).toHaveCount(0);
+
+  await page.getByLabel('Arhivate').uncheck();
+  await expect(documentRow).toBeVisible();
+  await page.getByPlaceholder('Caută după nume, tip, VIN, client…').fill('');
+  const uploadInput = page.locator('input[type="file"]').first();
+  await uploadInput.setInputFiles({
+    name: 'ui-upload-acceptance.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    ),
+  });
+  const pendingUpload = page.getByText('ui-upload-acceptance.png');
+  await expect(pendingUpload).toBeVisible();
+  await pendingUpload
+    .locator('xpath=ancestor::div[contains(@class,"justify-between")][1]')
+    .getByRole('button', { name: 'Anulează' })
+    .click();
+  await expect(pendingUpload).not.toBeVisible();
+
+  await page.goto('/e-transport');
+  await expect(page.getByText('B123UIT')).toBeVisible();
+
+  await page.goto('/exporturi');
+  const quickExport = page.getByRole('button', {
+    name: 'Re-exportă ultima configurație',
+  });
+  await expect(quickExport).toBeVisible();
+  const downloadPromise = page.waitForEvent('download');
+  await quickExport.click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^SAGA_Export_\d{4}-\d{2}-\d{2}\.zip$/);
+  await expect(page.getByText(/re-generat folosind ultima configurație/)).toBeVisible();
+});
+
+test('@mobile 360 layout keeps document and extracted data usable', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/documente');
+  await expect(page.getByRole('heading', { name: 'Documente' })).toBeVisible();
+  await page.getByText('UI Acceptance Invoice.pdf').first().click();
+
+  const dialog = page.getByRole('dialog', {
+    name: /Date extrase pentru UI Acceptance Invoice/,
+  });
+  await expect(dialog).toBeVisible();
+  const box = await dialog.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.width).toBeLessThanOrEqual(360);
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  await expect(dialog.getByText('PDF · pagina 1')).toBeVisible();
+  await expect(
+    dialog.getByText('Furnizor Acceptance SRL', { exact: true }),
+  ).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Aprobă și postează/ })).toBeVisible();
+
+  await page.screenshot({
+    path: testInfo.outputPath('document-review-mobile-360.png'),
+    fullPage: false,
+  });
+});
+
+async function login(page: Page) {
+  await page.goto('/');
+  await page.getByPlaceholder('Email').fill(email);
+  await page.getByPlaceholder('Parolă').fill(password);
+  await page.getByRole('button', { name: 'Autentificare' }).click();
+  await expect(page.getByRole('heading', { name: /Bună, Ana/ })).toBeVisible();
+}

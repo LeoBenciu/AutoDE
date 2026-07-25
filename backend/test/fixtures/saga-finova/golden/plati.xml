@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Plati>
+  <Linie>
+    <Data>17-07-2026</Data>
+    <Numar>CH-1</Numar>
+    <Suma>30</Suma>
+    <Cont>5121</Cont>
+    <ContFurnizor>401.00001</ContFurnizor>
+    <Explicatie>Plată factură &amp; transport</Explicatie>
+    <FacturaID>101</FacturaID>
+    <FacturaNumar>INV-101</FacturaNumar>
+    <CodFiscal></CodFiscal>
+    <Moneda>EUR</Moneda>
+  </Linie>
+</Plati>

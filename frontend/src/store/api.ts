@@ -11,7 +11,16 @@ export const api = createApi({
       return headers;
     },
   }),
-  tagTypes: ['Vehicle', 'Party', 'Document', 'ETransport', 'Contract', 'User'],
+  tagTypes: [
+    'Vehicle',
+    'Party',
+    'Document',
+    'ETransport',
+    'Contract',
+    'User',
+    'Accounting',
+    'Saga',
+  ],
   endpoints: (build) => ({
     login: build.mutation<any, { email: string; password: string }>({
       query: (body) => ({ url: '/auth/login', method: 'POST', body }),
@@ -49,6 +58,14 @@ export const api = createApi({
       query: (body) => ({ url: '/parties', method: 'POST', body }),
       invalidatesTags: ['Party'],
     }),
+    updateParty: build.mutation<any, { id: number; body: any }>({
+      query: ({ id, body }) => ({
+        url: `/parties/${id}`,
+        method: 'PATCH',
+        body,
+      }),
+      invalidatesTags: ['Party', 'Saga'],
+    }),
 
     documents: build.query<{ documents: any[]; pending: any[] }, Record<string, any> | void>({
       query: (params) => ({ url: '/documents', params: params ?? undefined }),
@@ -67,13 +84,21 @@ export const api = createApi({
       },
       invalidatesTags: ['Document', 'Vehicle'],
     }),
-    correctField: build.mutation<any, { id: number; field: string; newValue: string }>({
+    correctField: build.mutation<any, { id: number; field: string; newValue: unknown }>({
       query: ({ id, ...body }) => ({ url: `/documents/${id}/corrections`, method: 'POST', body }),
-      invalidatesTags: (_r, _e, { id }) => ['Document', { type: 'Document', id }],
+      invalidatesTags: (_r, _e, { id }) => ['Document', { type: 'Document', id }, 'Accounting', 'Saga'],
     }),
-    markReviewed: build.mutation<any, number>({
-      query: (id) => ({ url: `/documents/${id}/reviewed`, method: 'POST' }),
-      invalidatesTags: ['Document'],
+    postingPreview: build.query<any, number>({
+      query: (id) => `/documents/${id}/posting-preview`,
+      providesTags: (_r, _e, id) => [{ type: 'Accounting', id }],
+    }),
+    approveDocument: build.mutation<any, number>({
+      query: (id) => ({ url: `/documents/${id}/approve`, method: 'POST' }),
+      invalidatesTags: ['Document', 'Accounting', 'Party', 'Saga'],
+    }),
+    reopenDocument: build.mutation<any, number>({
+      query: (id) => ({ url: `/documents/${id}/reopen`, method: 'POST' }),
+      invalidatesTags: ['Document', 'Accounting', 'Saga'],
     }),
     assignDocument: build.mutation<any, { id: number; vehicleId?: number | null; partyId?: number | null }>({
       query: ({ id, ...body }) => ({ url: `/documents/${id}/assign`, method: 'POST', body }),
@@ -81,6 +106,14 @@ export const api = createApi({
     }),
     archiveDocument: build.mutation<any, { id: number; archived: boolean }>({
       query: ({ id, archived }) => ({ url: `/documents/${id}/${archived ? 'archive' : 'unarchive'}`, method: 'POST' }),
+      invalidatesTags: ['Document'],
+    }),
+    retryPendingUpload: build.mutation<any, number>({
+      query: (id) => ({ url: `/documents/pending/${id}/retry`, method: 'POST' }),
+      invalidatesTags: ['Document'],
+    }),
+    cancelPendingUpload: build.mutation<any, number>({
+      query: (id) => ({ url: `/documents/pending/${id}/cancel`, method: 'POST' }),
       invalidatesTags: ['Document'],
     }),
     downloadUrl: build.query<{ url: string }, number>({
@@ -128,6 +161,76 @@ export const api = createApi({
       query: ({ id, body }) => ({ url: `/users/${id}`, method: 'PATCH', body }),
       invalidatesTags: ['User'],
     }),
+
+    company: build.query<any, void>({
+      query: () => '/accounting/company',
+      providesTags: ['Accounting'],
+    }),
+    updateCompany: build.mutation<any, any>({
+      query: (body) => ({ url: '/accounting/company', method: 'PATCH', body }),
+      invalidatesTags: ['Accounting', 'Saga'],
+    }),
+    ledger: build.query<any, Record<string, any> | void>({
+      query: (params) => ({ url: '/accounting/ledger', params: params ?? undefined }),
+      providesTags: ['Accounting'],
+    }),
+    chartOfAccounts: build.query<any[], string | void>({
+      query: (search) => ({
+        url: '/accounting/accounts',
+        params: search ? { search } : undefined,
+      }),
+      providesTags: ['Accounting'],
+    }),
+    articles: build.query<any[], string | void>({
+      query: (search) => ({
+        url: '/accounting/articles',
+        params: search ? { search } : undefined,
+      }),
+      providesTags: ['Accounting'],
+    }),
+    createArticle: build.mutation<any, any>({
+      query: (body) => ({ url: '/accounting/articles', method: 'POST', body }),
+      invalidatesTags: ['Accounting', 'Saga'],
+    }),
+    updateArticle: build.mutation<any, { id: number; body: any }>({
+      query: ({ id, body }) => ({
+        url: `/accounting/articles/${id}`,
+        method: 'PATCH',
+        body,
+      }),
+      invalidatesTags: ['Accounting', 'Saga'],
+    }),
+    managements: build.query<any[], void>({
+      query: () => '/accounting/managements',
+      providesTags: ['Accounting'],
+    }),
+    createManagement: build.mutation<any, any>({
+      query: (body) => ({
+        url: '/accounting/managements',
+        method: 'POST',
+        body,
+      }),
+      invalidatesTags: ['Accounting', 'Saga'],
+    }),
+    updateManagement: build.mutation<any, { id: number; body: any }>({
+      query: ({ id, body }) => ({
+        url: `/accounting/managements/${id}`,
+        method: 'PATCH',
+        body,
+      }),
+      invalidatesTags: ['Accounting', 'Saga'],
+    }),
+    sagaPreview: build.mutation<any, any>({
+      query: (body) => ({ url: '/saga/preview', method: 'POST', body }),
+    }),
+    sagaPreferences: build.query<any | null, void>({
+      query: () => '/saga/preferences',
+      providesTags: ['Saga'],
+    }),
+    saveSagaPreferences: build.mutation<any, any>({
+      query: (body) => ({ url: '/saga/preferences', method: 'POST', body }),
+      invalidatesTags: ['Saga'],
+    }),
   }),
 });
 
@@ -141,13 +244,18 @@ export const {
   useAddCostMutation,
   usePartiesQuery,
   useCreatePartyMutation,
+  useUpdatePartyMutation,
   useDocumentsQuery,
   useDocumentQuery,
   useUploadDocumentsMutation,
   useCorrectFieldMutation,
-  useMarkReviewedMutation,
+  usePostingPreviewQuery,
+  useApproveDocumentMutation,
+  useReopenDocumentMutation,
   useAssignDocumentMutation,
   useArchiveDocumentMutation,
+  useRetryPendingUploadMutation,
+  useCancelPendingUploadMutation,
   useLazyDownloadUrlQuery,
   useEtransportQuery,
   useLazyEtransportPrefillQuery,
@@ -159,4 +267,17 @@ export const {
   useUsersQuery,
   useCreateUserMutation,
   useUpdateUserMutation,
+  useCompanyQuery,
+  useUpdateCompanyMutation,
+  useLedgerQuery,
+  useChartOfAccountsQuery,
+  useArticlesQuery,
+  useCreateArticleMutation,
+  useUpdateArticleMutation,
+  useManagementsQuery,
+  useCreateManagementMutation,
+  useUpdateManagementMutation,
+  useSagaPreviewMutation,
+  useSagaPreferencesQuery,
+  useSaveSagaPreferencesMutation,
 } = api;

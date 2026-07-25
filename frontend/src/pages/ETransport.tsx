@@ -9,6 +9,31 @@ import {
 } from '../store/api';
 import { StatusChip } from '../components/StatusChip';
 
+const PlusIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+
+const TruckIcon = ({ size = 20 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 17h9V7H3zM12 10h4l3 3v4h-7z" />
+    <circle cx="7" cy="19" r="1.6" />
+    <circle cx="17" cy="19" r="1.6" />
+  </svg>
+);
+
+function TruckTile() {
+  return (
+    <div
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+      style={{ backgroundColor: 'oklch(0.95 0.006 260)', color: 'oklch(0.45 0.01 260)' }}
+    >
+      <TruckIcon size={15} />
+    </div>
+  );
+}
+
 export default function ETransport() {
   const { data: declarations = [] } = useEtransportQuery();
   const [submitDecl] = useSubmitEtransportMutation();
@@ -19,22 +44,23 @@ export default function ETransport() {
   return (
     <div>
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-900">e-Transport</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-ink">e-Transport</h1>
         <button
           onClick={() => setShowForm(true)}
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+          className="flex items-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover"
         >
-          + Generează cod UIT
+          <PlusIcon />
+          Generează cod UIT
         </button>
       </div>
-      <p className="mt-1 text-sm text-slate-500">
-        Transportul internațional al mașinilor spre România se declară la ANAF <b>înainte</b> de plecare —
+      <p className="mt-2.5 max-w-2xl text-sm leading-relaxed text-muted">
+        Transportul internațional al mașinilor spre România se declară la ANAF <b className="text-ink-soft">înainte</b> de plecare —
         lipsa codului UIT la control înseamnă <b className="text-red-600">amendă și confiscarea contravalorii mărfii</b>.
         Șoferul trebuie să aibă codul UIT asupra lui.
       </p>
-      {error && <p className="mt-3 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p>}
+      {error && <p className="mt-3 rounded-control bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p>}
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-5 space-y-2">
         {declarations.map((d: any) => {
           // Loss framing: an expiring UIT is an actionable risk, show the countdown.
           const daysLeft =
@@ -42,31 +68,34 @@ export default function ETransport() {
               ? Math.ceil((new Date(d.validUntil).getTime() - Date.now()) / (24 * 3600 * 1000))
               : null;
           return (
-          <div key={d.id} className="rounded-xl bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="font-semibold text-slate-900">
-                  {d.uit ? <span className="font-mono">{d.uit}</span> : `Declarație #${d.id}`}
-                </p>
-                <p className="text-xs text-slate-500">
-                  {d.vehicle ? `${d.vehicle.make} ${d.vehicle.model} · ` : ''}
-                  {d.vehiclePlate ?? 'fără nr. camion'} · {d.operationType}
-                  {daysLeft != null && daysLeft >= 0 && (
-                    <span className={daysLeft <= 2 ? 'ml-1 font-semibold text-red-600' : 'ml-1 text-slate-500'}>
-                      · UIT expiră în {daysLeft === 0 ? 'sub 24h' : `${daysLeft} zile`}
-                    </span>
-                  )}
-                  {daysLeft != null && daysLeft < 0 && (
-                    <span className="ml-1 font-semibold text-red-600">· UIT expirat</span>
-                  )}
-                </p>
+          <div key={d.id} className="rounded-card border border-line bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex items-center gap-3">
+                <TruckTile />
+                <div>
+                  <p className={`text-[14.5px] font-semibold text-ink ${d.uit ? 'font-mono' : ''}`}>
+                    {d.uit ? d.uit : `Declarație #${d.id}`}
+                  </p>
+                  <p className="mt-0.5 text-[12.5px] text-muted">
+                    {d.vehicle ? `${d.vehicle.make} ${d.vehicle.model} · ` : ''}
+                    {d.vehiclePlate ?? 'fără nr. camion'} · {d.operationType}
+                    {daysLeft != null && daysLeft >= 0 && (
+                      <span className={daysLeft <= 2 ? 'ml-1 font-semibold text-red-600' : 'ml-1 text-muted'}>
+                        · UIT expiră în {daysLeft === 0 ? 'sub 24h' : `${daysLeft} zile`}
+                      </span>
+                    )}
+                    {daysLeft != null && daysLeft < 0 && (
+                      <span className="ml-1 font-semibold text-red-600">· UIT expirat</span>
+                    )}
+                  </p>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <StatusChip status={d.status} />
                 {d.status !== 'SUBMITTED' && (
                   <button
                     onClick={() => setEditing(d)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                    className="rounded-lg border border-line-strong bg-white px-3.5 py-2 text-[13px] text-ink-soft"
                     title="Modificarea regenerează codul UIT"
                   >
                     Modifică
@@ -82,7 +111,7 @@ export default function ETransport() {
                         setError(err?.data?.message ?? 'Eroare la trimitere');
                       }
                     }}
-                    className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white"
+                    className="rounded-lg bg-sidebar px-3.5 py-2 text-[13px] font-semibold text-white"
                   >
                     Trimite la ANAF
                   </button>
@@ -90,7 +119,7 @@ export default function ETransport() {
                 {d.uit && (
                   <a
                     href={`/api/etransport/${d.id}/uit-sheet`}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                    className="rounded-lg border border-line-strong bg-white px-3.5 py-2 text-[13px] text-ink-soft"
                   >
                     Fișă UIT
                   </a>
@@ -101,7 +130,21 @@ export default function ETransport() {
           );
         })}
         {declarations.length === 0 && (
-          <p className="rounded-xl bg-white p-8 text-center text-sm text-slate-500 shadow-sm">Nicio declarație încă.</p>
+          <div className="rounded-card border-[1.5px] border-dashed border-line-strong bg-white p-12 text-center">
+            <div className="mx-auto mb-3.5 flex h-11 w-11 items-center justify-center rounded-[11px] bg-canvas text-muted">
+              <TruckIcon />
+            </div>
+            <p className="text-[15px] font-semibold text-ink-soft">Nicio declarație încă</p>
+            <p className="mx-auto mt-1.5 mb-4 max-w-xs text-[13.5px] text-muted">
+              Generează un cod UIT înainte de plecarea transportului.
+            </p>
+            <button
+              onClick={() => setShowForm(true)}
+              className="rounded-control bg-brand px-4 py-2.5 text-[13.5px] font-semibold text-white transition-colors hover:bg-brand-hover"
+            >
+              + Generează cod UIT
+            </button>
+          </div>
         )}
       </div>
 
@@ -204,16 +247,19 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
     }
   };
 
-  const field = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  const field = 'w-full box-border rounded-control border border-line-strong px-3 py-2.5 text-sm focus:border-brand focus:outline-none';
   const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value });
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center overflow-y-auto bg-black/40 sm:items-center" onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-slate-900">
-          {declaration ? `Modifică declarația #${declaration.id}` : 'Declarație e-Transport nouă'}
-        </h2>
-        <p className="mt-1 text-xs text-slate-500">
+    <div className="fixed inset-0 z-40 flex items-end justify-center overflow-y-auto bg-[rgba(15,15,25,0.5)] sm:items-center sm:p-5" onClick={onClose}>
+      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-6 shadow-[0_20px_60px_-15px_rgba(20,20,40,0.4)] sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-[17px] font-bold text-ink">
+            {declaration ? `Modifică declarația #${declaration.id}` : 'Declarație e-Transport nouă'}
+          </h2>
+          <button onClick={onClose} className="p-1 text-lg leading-none text-muted hover:text-ink">✕</button>
+        </div>
+        <p className="mt-1.5 text-xs text-muted">
           {declaration
             ? declaration.uit
               ? `Atenție: modificarea invalidează codul UIT ${declaration.uit} — după salvare declarația revine în ciornă și trebuie retrimisă la ANAF pentru un cod nou.`
@@ -229,29 +275,29 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
               </option>
             ))}
           </select>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2.5">
             <input className={field} placeholder="Transportator" value={form.transporterName} onChange={set('transporterName')} required />
             <input className={field} placeholder="Cod fiscal transportator" value={form.transporterTaxId} onChange={set('transporterTaxId')} required />
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-2.5">
             <input className={field} placeholder="Țară" value={form.transporterCountry} onChange={set('transporterCountry')} maxLength={2} />
             <input className={field} placeholder="Nr. camion" value={form.vehiclePlate} onChange={set('vehiclePlate')} required />
             <input className={field} placeholder="Nr. remorcă" value={form.trailerPlate} onChange={set('trailerPlate')} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2.5">
             <input className={field} placeholder="Loc încărcare (oraș)" value={form.loadingCity} onChange={set('loadingCity')} />
             <input className={field} placeholder="Țară încărcare" value={form.loadingCountry} onChange={set('loadingCountry')} maxLength={2} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2.5">
             <input className={field} placeholder="Loc descărcare (oraș, RO)" value={form.unloadingCity} onChange={set('unloadingCity')} />
             <input className={field} placeholder="Județ descărcare" value={form.unloadingCounty} onChange={set('unloadingCounty')} />
           </div>
           <input className={field} placeholder="Descriere marfă" value={form.goodsDescription} onChange={set('goodsDescription')} />
           <input className={field} type="number" step="0.01" placeholder="Valoare (RON, fără TVA)" value={form.valueRon} onChange={set('valueRon')} />
           {error && <p className="text-sm text-red-600">{error}</p>}
-          <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-300 py-2 text-sm">Renunță</button>
-            <button disabled={isLoading} className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white disabled:opacity-50">
+          <div className="flex gap-2.5 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 rounded-control border border-line-strong py-2.5 text-sm font-semibold text-ink-soft">Anulează</button>
+            <button disabled={isLoading} className="flex-1 rounded-control bg-brand py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:opacity-50">
               {declaration ? 'Salvează → regenerează UIT' : 'Salvează ciorna →'}
             </button>
           </div>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Articole>
+  <Linie>
+    <Cod>00001</Cod>
+    <Denumire>Piesă &amp; montaj</Denumire>
+    <Cod_NC></Cod_NC>
+    <Cod_CPV></Cod_CPV>
+    <UM>BUC</UM>
+    <Tip>15</Tip>
+    <TVA>19</TVA>
+    <Pret></Pret>
+    <Pret_TVA></Pret_TVA>
+    <Cod_bare></Cod_bare>
+    <Informatii></Informatii>
+    <Guid_cod>ART-01</Guid_cod>
+  </Linie>
+</Articole>

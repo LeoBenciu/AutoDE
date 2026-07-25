@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Incasari>
+  <Linie>
+    <Data>16-07-2026</Data>
+    <Numar>DI&amp;1</Numar>
+    <Suma>125.5</Suma>
+    <Cont>5311</Cont>
+    <ContClient>411.00001</ContClient>
+    <Explicatie>Încasare avans &lt;client&gt;</Explicatie>
+    <FacturaID></FacturaID>
+    <FacturaNumar></FacturaNumar>
+    <CodFiscal></CodFiscal>
+    <Moneda>RON</Moneda>
+  </Linie>
+</Incasari>

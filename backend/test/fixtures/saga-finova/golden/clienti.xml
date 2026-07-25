@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Clienti>
+  <Linie>
+    <Cod>00002</Cod>
+    <Denumire>Client &quot;Golden&quot; SRL</Denumire>
+    <Cod_fiscal>87654321</Cod_fiscal>
+    <Reg_com>J40/3/2025</Reg_com>
+    <Tara>RO</Tara>
+    <Judet>B</Judet>
+    <Localitate>București</Localitate>
+    <Adresa>Calea Victoriei 1</Adresa>
+    <Cont_banca>RO09CCCC1B31007593840002</Cont_banca>
+    <Banca>Banca Client</Banca>
+    <Tel>+40 700 000 002</Tel>
+    <Email>client@example.test</Email>
+    <Discount>2</Discount>
+    <Informatii></Informatii>
+    <Guid_cod>CLI-01</Guid_cod>
+  </Linie>
+</Clienti>

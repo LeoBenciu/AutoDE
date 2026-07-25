@@ -1,0 +1,12 @@
+.git
+.context
+.env*
+**/.env*
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/*.pyc
+frontend/playwright-report
+frontend/test-results
+backups

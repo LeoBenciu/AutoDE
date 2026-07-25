@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: autoimport
+          POSTGRES_PASSWORD: autoimport
+          POSTGRES_DB: autoimport
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U autoimport -d autoimport"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://autoimport:autoimport@127.0.0.1:5432/autoimport
+      JWT_SECRET: ci-acceptance-secret
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_REGION: eu-central-1
+      S3_BUCKET: autoimport-documents
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_FORCE_PATH_STYLE: "true"
+      WORKER_DIR: ../worker
+      PYTHON_BIN: python3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Start object storage
+        run: |
+          docker run --detach --name autoimport-ci-minio \
+            --publish 9000:9000 \
+            --env MINIO_ROOT_USER=minioadmin \
+            --env MINIO_ROOT_PASSWORD=minioadmin \
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs autoimport-ci-minio
+          exit 1
+
+      - name: Install backend and migrate clean database
+        working-directory: backend
+        run: |
+          npm ci
+          npm run prisma:generate
+          npm run prisma:migrate
+
+      - name: Create document bucket
+        working-directory: backend
+        run: |
+          node - <<'NODE'
+          const { CreateBucketCommand, S3Client } = require('@aws-sdk/client-s3');
+          async function main() {
+            const client = new S3Client({
+              region: process.env.S3_REGION,
+              endpoint: process.env.S3_ENDPOINT,
+              forcePathStyle: true,
+              credentials: {
+                accessKeyId: process.env.S3_ACCESS_KEY,
+                secretAccessKey: process.env.S3_SECRET_KEY,
+              },
+            });
+            try {
+              await client.send(new CreateBucketCommand({ Bucket: process.env.S3_BUCKET }));
+            } catch (error) {
+              if (!['BucketAlreadyOwnedByYou', 'BucketAlreadyExists'].includes(error.name)) throw error;
+            } finally {
+              client.destroy();
+            }
+          }
+          main().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
+
+      - name: Build and test backend
+        working-directory: backend
+        run: |
+          npm run build
+          npm test
+          npm run test:extraction:live
+
+      - name: Install and build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run desktop and mobile acceptance
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-evidence
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
+  production-images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: acceptance
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production images
+        run: |
+          docker build --file deploy/backend.Dockerfile --tag autoimport-backend:ci .
+          docker build --file deploy/frontend.Dockerfile --tag autoimport-frontend:ci .
+          docker build --file deploy/backup.Dockerfile --tag autoimport-backup:ci .

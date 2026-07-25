@@ -1,0 +1,454 @@
+categorize_document_task:
+  description: >
+    Classify the document into exactly one type:
+    Invoice, Receipt, Contract, Bank Statement, Z Report, Payment Disposition,
+    Collection Disposition, CMR, Customs Declaration, Vehicle Registration
+    Certificate, Technical Inspection (ITP), Insurance, or Other.
+
+    Use these document-text cues to disambiguate:
+    - Receipt: contains "CHITANȚĂ", "CHITANTA", or "BON FISCAL".
+    - Bank Statement: contains "EXTRAS DE CONT", shows a bank name, and lists one
+      company's account activity (not a buyer/seller pair).
+    - Invoice: contains "FACTURA" / "FACTURĂ" with a vendor and a buyer.
+    - Payment Disposition: "DISPOZIȚIE DE PLATĂ" / "Dispozitie de Plata" — cash PAID
+      OUT to a person.
+    - Collection Disposition: "DISPOZIȚIE DE ÎNCASARE" / "Dispozitie de Incasare" —
+      cash RECEIVED from a person. Do NOT confuse the two: "plată" = pay out,
+      "încasare" = collect in. The single word încasare vs plată decides the type.
+    - CMR: international consignment note / "Scrisoare de transport CMR", with
+      sender, consignee, carrier, loading and delivery places.
+    - Customs Declaration: customs/MRN declaration with customs value, duties,
+      tariff code, declarant, or customs office.
+    - Vehicle Registration Certificate: vehicle title/registration paper such as
+      "Zulassungsbescheinigung", Fahrzeugbrief, certificat de înmatriculare, or
+      talon; prominently contains a VIN/chassis and vehicle technical data.
+    - Technical Inspection (ITP): inspection/TÜV/ITP report with inspection date,
+      result, mileage and validity date.
+    - Insurance: insurance policy/RCA/CASCO/green card with policy number and
+      coverage start/end dates.
+    - Other: only when none of the supported types fits.
+
+    AVIZ (delivery note): if the document is an "Aviz de însoțire" / delivery note
+    / accompanying note for goods (contains "AVIZ", "Aviz de însoțire", "Delivery
+    note", "Însoțitor", or "accompanying"), classify it as Invoice (same
+    structure) and set aviz=true. Otherwise set aviz=false. (This lets the client
+    generate a NIR from it and replace it with the real invoice later.)
+
+    Determine invoice direction:
+    - buyer's CUI = {client_company_ein}  -> direction = "incoming"
+    - vendor's CUI = {client_company_ein} -> direction = "outgoing"
+    Identify the parties using these labels — vendor: {vendor_labels}; buyer:
+    {buyer_labels}. If labels are missing, treat the company carrying CUI/bank
+    details, header position, invoice-number prefix, logo and contact details as
+    the vendor. For non-invoice documents set direction = null.
+
+    Return JSON matching the schema: document_type, direction, confidence
+    (0.0-1.0), aviz.
+    Example: {"document_type": "Invoice", "direction": "incoming", "confidence": 0.95, "aviz": false}
+    Delivery-note example: {"document_type": "Invoice", "direction": "incoming", "confidence": 0.9, "aviz": true}
+
+    Source file (read it with your tool if the text is not already provided): {document_path}
+  expected_output: >
+    JSON with document_type, direction, confidence, and aviz.
+  agent: document_categorizer
+
+extract_invoice_data_task:
+  description: >
+    For an Invoice with direction '{direction}', where CURRENT DATE is {current_date}, extract:
+    - vendor, vendor_ein (number only, remove 'RO'), buyer, buyer_ein (number only, remove 'RO'), document_number, document_date (DD-MM-YYYY, must not be after {current_date}), due_date (DD-MM-YYYY, null if absent — the payment DEADLINE; it MAY be after {current_date}, so do NOT null or change a future due date), total_amount (numeric - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), vat_amount (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - default to RON), referenced_numbers: array of any document numbers which the current document references(invoices, contracts, receipts, etc.) mentioned anywhere in the invoice text.
+
+    CRITICAL: Extract line_items array - THIS IS MANDATORY. EVERY invoice MUST have line_items. Look carefully at the document for itemized lists, tables, product/service descriptions with quantities and prices. Extract ALL items from ALL pages of the document. If the document text contains "=== PAGE X ===" markers, this indicates a multi-page document - you MUST extract line items from EVERY page, not just the first page. Count the total number of line items as you extract them - if you see line items continuing on subsequent pages, you MUST include ALL of them. Do NOT stop after the first page or after a certain number of items.     Each line item must have: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (e.g., '624' for transport - THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING invoices - see rules below). The line_items array CANNOT be empty - if you cannot find explicit line items, you must look harder or extract from the invoice structure. For multi-page invoices, continue reading through all pages until you have extracted every single line item. Verify completeness by checking that you've processed all pages and all line items visible in the document.
+
+    VAT RATE DETECTION: Look for VAT percentage in document (e.g., "TVA 21%", "Cota TVA: 11%", "19% VAT") or calculate from vat_amount/net_amount. {VAT_RATE_MAPPING}
+
+    NET PRICES (CRITICAL): each line item's unit_price and total MUST be NET (WITHOUT VAT); vat_amount is the line's VAT; the gross line equals total + vat_amount. If a price already includes VAT, convert to net first: net = gross / (1 + rate/100). NEVER put a VAT-inclusive amount in total. (The document-level total_amount stays the GROSS, VAT-inclusive figure.)
+
+    VAT DEDUCTIBILITY (ONLY for INCOMING invoices):
+    Determine vat_deductibility for each line item: FULL (default for most expenses), PARTIAL_50 (account_code 6022 fuel, 611 vehicle maintenance, 624 fuel-related transport), NONE (rare - protocol/entertainment over limits). If uncertain, use FULL.
+
+    RELEVANT ROMANIAN CHART OF ACCOUNTS (Selected for this document):
+    {relevant_accounts}
+
+    {ACCOUNT_HIERARCHY}
+    INCOMING: Goods→371 | Materials→301/302/602 | Equipment→213 | Services→6xx
+    OUTGOING: Goods→707 | Services→704 (use ONLY 701-709)
+
+    EXISTING ARTICLES: {existing_articles}
+
+    ARTICLE MATCHING RULES:
+    1. Match each line item semantically with EXISTING ARTICLES by MEANING, not position.
+    2. If good semantic match found: use existing articleCode, set isNew=false.
+    3. If NO good semantic match:
+       - If type is 'Nedefinit': set articleCode="" (empty), isNew=false.
+       - If type is NOT 'Nedefinit': generate new unique ART### code, set isNew=true.
+    4. CRITICAL: NEVER assign articleCodes sequentially (e.g., "1", "2", "3") based on line item position.
+       - WRONG: First item gets "1", second gets "2" - THIS IS FORBIDDEN.
+       - CORRECT: Match "Genti" with a bags article, "Haine" with a clothes article, or leave empty if no match.
+    5. If unsure about a match, leave articleCode="" (empty) rather than guessing.
+    For 'Nedefinit' type, set management to null.
+
+    {CONFIDENCE_CALIBRATION}
+
+    Source file (read it with your tool if the text is not already provided): {document_path}
+    Output as a JSON string.
+  expected_output: >
+    JSON with invoice details, line_items, confidence map, and currency.
+  agent: document_extractor
+
+attribute_bank_transaction_account_task:
+  description: >
+    Analyze the bank transaction with the following details:
+    - Description: {transaction_description}
+    - Amount: {transaction_amount} {transaction_currency}
+    - Transaction Type: {transaction_type} (DEBIT/CREDIT)
+    - Reference Number: {reference_number}
+    - Transaction Date: {transaction_date}
+
+    Using the Romanian Chart of Accounts and Romanian accounting standards, determine the most appropriate account code for this transaction.
+
+    ANALYSIS GUIDELINES:
+    1. Analyze the transaction description for keywords and business context
+    2. Consider the transaction type (DEBIT/CREDIT) and amount
+    3. Match against standard Romanian accounting practices
+    4. Provide confidence score (0.0-1.0) based on certainty of categorization
+
+    COMMON PATTERNS:
+    - Bank fees/commissions → 627 (Cheltuieli cu serviciile bancare)
+    - Interest received → 766 (Venituri din dobânzi)
+    - Interest paid → 666 (Cheltuieli privind dobânzile)
+    - Currency exchange → 665/765 (Diferențe de curs valutar)
+    - Cash withdrawals → 5311 (Casa în lei)
+    - Insurance payments → 613 (Cheltuieli cu primele de asigurare)
+    - Utilities → 605 (Cheltuieli privind utilitățile)
+
+    OUTPUT FORMAT:
+    Return JSON with:
+    {
+      "account_code": "XXX",
+      "account_name": "Romanian account name",
+      "confidence": 0.0-1.0,
+      "reasoning": "Detailed explanation in Romanian and English",
+      "alternative_accounts": [
+        {"code": "XXX", "name": "Alternative account name", "confidence": 0.0-1.0}
+      ],
+      "requires_manual_review": boolean
+    }
+
+  expected_output: >
+    JSON with account_code, account_name, confidence, reasoning, and alternative_accounts.
+  agent: account_attribution_agent
+
+# Specialized Tasks for Document Types
+extract_receipt_data_task:
+  description: >
+    For a Receipt document, extract relevant data:
+    CURRENT DATE: {current_date}
+
+    CRITICAL RECEIPT TYPE DETECTION:
+    - If you see ANY itemized list (products, services, fuel, discounts, etc.) → ALWAYS 'independent_receipt'
+    - If receipt explicitly references an invoice number AND has no item list → 'payment_receipt'
+    - When in doubt and items are listed → 'independent_receipt'
+    - Examples of independent receipts: supermarket receipts, gas station receipts, retail store receipts, restaurant bills with items
+
+    Common fields for all receipts: receipt_number, receipt_type ('payment_receipt' OR 'independent_receipt'), vendor, vendor_ein (number only, remove 'RO'), buyer, buyer_ein (number only, remove 'RO'), total_amount (paid/received - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), document_date (DD-MM-YYYY, must not be after {current_date}), payment_method (MANDATORY - must be either 'cash' or 'bank' - analyze the document carefully: if payment was made by cash/numerar use 'cash', if payment was made by bank transfer/transfer bancar OR card/card bancar use 'bank' - card payments are treated as bank payments - this is critical for bank reconciliation), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - detect from document or default to RON), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
+
+    For PAYMENT RECEIPTS only: invoice_reference (MANDATORY - extract invoice number from phrases like "Pentru factura", "Factura nr.", "Invoice No.", "Payment for invoice", "Referinta: factura" - look in headers, footers, and reference sections. Also add to referenced_numbers array.)
+
+    For INDEPENDENT RECEIPTS only:
+    MANDATORY: vat_amount (numeric), line_items array - YOU MUST EXTRACT ALL ITEMS FROM THE RECEIPT
+
+    CRITICAL - LINE ITEMS EXTRACTION RULES:
+    1. Extract EVERY item listed on the receipt: products, services, fuel, discounts (use NEGATIVE total), fees, and any other itemized charges.
+
+    2. For each line item extract: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING receipts - see rules below).
+       {VAT_RATE_MAPPING}
+
+       NET vs VAT-INCLUSIVE PRICES (CRITICAL): unit_price and total MUST be NET (WITHOUT VAT); vat_amount is the line's VAT; the gross line equals total + vat_amount. Romanian fiscal receipts (BON FISCAL) and most till receipts print VAT-INCLUSIVE prices — when the listed unit price / line amount already contains VAT, you MUST convert to net before output: net_total = printed_amount / (1 + rate/100) and vat_amount = printed_amount − net_total (e.g. a 100.06 line at 19% → total 84.08, vat_amount 15.98). NEVER copy a VAT-inclusive printed amount into total, otherwise the VAT gets added twice. (The document-level total_amount still stays the GROSS, VAT-inclusive figure.)
+
+       VAT DEDUCTIBILITY (ONLY for INCOMING receipts):
+       Determine vat_deductibility: FULL (default), PARTIAL_50 (account_code 6022 fuel, 611 vehicle maintenance, 624 fuel-related transport), NONE (rare). For gas station receipts or fuel items, use PARTIAL_50. If uncertain, use FULL.
+
+    3. Special cases: Gas station receipts (extract fuel type/quantity), discounts (negative total), bundled items (extract separately).
+       FUEL BON LAYOUT (do NOT swap quantity and unit_price): the column "Cantitate"/"Litri" is the QUANTITY (litres pumped — usually many decimals, e.g. 19.810026); the column "Preț"/"Preț/UM"/"P.U." is the UNIT_PRICE (lei per litre, e.g. 6.37); "Valoare" is the line total. The litres figure is almost always larger than the price-per-litre. Sanity-check: quantity × unit_price must ≈ the line value — if it doesn't, you have swapped the two fields. Put the litres in quantity and the lei/litre in unit_price, never the reverse.
+       FUEL BON INLINE FORMAT (thermal POS receipts — MOL, OMV, etc.): the line often has NO column headers and is printed as a single "A x B UM" expression, and the order may be PRICE-FIRST. Example: "9,69 x47,53 L" means 9.69 lei/litre × 47.53 litres → unit_price=9.69, quantity=47.53 (NOT quantity=9.69). The number carrying the unit "L"/"LITRI" is the QUANTITY; do NOT assume the first number is the quantity. ANCHOR ON PHYSICAL REALITY: a Romanian fuel price is ~5–15 lei/litre, so whichever value falls in that range is the UNIT_PRICE and the OTHER (larger) value is the litres — even when the price is printed first. NEVER re-derive unit_price as value÷quantity from a guessed quantity: that hides a swap by making quantity × unit_price reconcile artificially (a 47 lei/litre "price" is impossible — it's the litres).
+
+    CRITICAL for INDEPENDENT RECEIPTS - ACCOUNT CODE ATTRIBUTION:
+    RELEVANT ROMANIAN CHART OF ACCOUNTS (Selected for this document):
+    {relevant_accounts}
+
+    {ACCOUNT_HIERARCHY}
+    EXAMPLES (not exhaustive): Goods/Food→371/301/302 | Equipment→213 | Transport→624 | Fuel→6022 | Energy→605 | Phone→626 | Materials→602 | Maintenance→611 | Rent→612 | Consulting→618
+    Consider ALL account classes (1-9).
+
+    VALIDATION: If receipt_type is 'independent_receipt', the line_items array MUST NOT be empty.
+
+    {CONFIDENCE_CALIBRATION}
+
+    Source file (read it with your tool if the text is not already provided): {document_path}
+    Use DD-MM-YYYY format. Output as JSON.
+  expected_output: >
+    JSON with receipt details, confidence map, and currency.
+  agent: document_extractor
+
+extract_bank_statement_data_task:
+  description: >
+    For bank statement documents at {document_path} of type Bank Statement, extract relevant data:
+    CURRENT DATE: {current_date}
+
+    Extract: company_name, company_ein (number only, remove 'RO'), bank_name, account_number (ex: RO70BTRLRONCRT0CL4098501), statement_number (the statement's own sequence number, e.g. "Extras nr. 9"; use null if the statement has no number — do NOT use a page number like "Pag 1/9" or "1/9"), statement_period_start (DD-MM-YYYY, must not be after {current_date}), statement_period_end (DD-MM-YYYY, must not be after {current_date}), opening_balance (SIGNED numeric, no currency - a balance printed in the Debit column / marked 'cont debitor' or 'D' is NEGATIVE; a balance in the Credit column / 'cont creditor' or 'C' is POSITIVE. Example: a 'Sold anterior' of 25 shown under the Debit column must be extracted as -25, not 25), closing_balance (SIGNED numeric, no currency - same Debit=negative / Credit=positive rule as opening_balance; it must equal opening_balance + sum(credit_amount) - sum(debit_amount)), currency, transactions array with: transaction_date (DD-MM-YYYY, must not be after {current_date}), description, reference_number, debit_amount (numeric, null if none, just the number without currency), credit_amount (numeric, null if none, just the number without currency), balance_after_transaction (numeric, just the number without currency), transaction_type (transfer/payment/deposit/withdrawal), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
+    CRITICAL - extract EVERY transaction row, in order, exactly as printed: two consecutive rows with the same amount and a similar description on the same day are almost always TWO separate transactions (e.g. two ATM withdrawals), NOT a duplicate - never merge or skip a repeated line. The running balance moves on each row; use balance_after_transaction to keep near-identical rows distinct, and verify that the last transaction's balance_after_transaction equals closing_balance (if it does not, you missed a row - re-read).
+    CRITICAL - DEBIT vs CREDIT from the COLUMN POSITION, not the wording: the statement prints debit and credit amounts in SEPARATE COLUMNS. Read each amount from the column it physically occupies in the page image — an amount in the Debit / "Debit" / "Plati" / left money column is money OUT → debit_amount (credit_amount null); an amount in the Credit / "Credit" / "Incasari" / right money column is money IN → credit_amount (debit_amount null). Decide from the VISUAL column the number sits under, NEVER from words in the description. In particular BRD labels outgoing payments "Transfer credit - Plata interb." / "Plata din cont" — the word "credit" there names the payment instrument; the amount is in the Debit column, so it is a debit. Read balance_after_transaction EXACTLY as printed on each row — never recompute it yourself; if a row's printed balance is illegible, use null rather than a derived guess. As a final check, verify the last row's printed balance equals closing_balance and that opening + Σcredit − Σdebit = closing; if not, you mis-read a debit/credit column — re-read the columns.
+    Use DD-MM-YYYY format. Output as JSON.
+  expected_output: >
+    JSON with bank statement details and currency.
+  agent: document_extractor
+
+extract_contract_data_task:
+  description: >
+    For contract documents at {document_path} of type Contract, extract relevant data:
+    CURRENT DATE: {current_date}
+
+    Extract: contract_number, contract_type, parties array with: name, ein (number only, remove 'RO'), role (client/vendor/contractor), contract_date (DD-MM-YYYY, must not be after {current_date}), start_date (DD-MM-YYYY, must not be after {current_date}), end_date (DD-MM-YYYY), total_value (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - default to RON), payment_terms, deliverables array with: description, due_date (DD-MM-YYYY), amount (numeric), status (pending/completed), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
+    Use DD-MM-YYYY format. Output as JSON.
+  expected_output: >
+    JSON with contract details and currency.
+  agent: document_extractor
+
+extract_z_report_data_task:
+  description: >
+    For Z report documents at {document_path} of type Z Report, extract relevant data:
+    CURRENT DATE: {current_date}
+
+    Extract: report_number, closing_date (DD-MM-YYYY, must not be after {current_date}), closing_time, fiscal_cash_register_number, report_sequence_number, daily_sales_total (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - default to RON), vat_breakdown array with: vat_rate (detect percentage; {VAT_RATE_MAPPING}), taxable_base (numeric), vat_amount (numeric), total_amount (numeric), fiscal_receipts_issued, initial_cash_balance (numeric, if applicable), final_cash_balance (numeric), cancellations_refunds (numeric, if exist), department_sales (array with department/category sales, if configured), payment_methods array with: method (cash/card/other_payment_method), amount (numeric), transaction_count, receipts_issued (if applicable), orders_notes (if relevant), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
+
+    Use DD-MM-YYYY format. Output as JSON.
+  expected_output: >
+    JSON with Z report details and currency.
+  agent: document_extractor
+
+extract_payment_disposition_data_task:
+  description: >
+    For payment disposition documents at {document_path} of type Payment Disposition (Dispozitie de Plata), extract relevant data:
+    CURRENT DATE: {current_date}
+
+    IMPORTANT: This is a CASH OPERATION document (not a bank transfer). The form contains:
+    - Document header with number and date
+    - Company name and CUI (company identifier)
+    - Person's name and surname
+    - Person's function/quality
+    - Amount (in figures and letters)
+    - Purpose/description of the payment
+    - Signatures section
+
+    Extract ONLY these fields:
+    - document_number (from "nr." field)
+    - issue_date (DD-MM-YYYY, must not be after {current_date}, from "din" field)
+    - operation_type: MUST be "payment" (this is a payment disposition)
+    - total_amount (numeric, extract from "Suma" field)
+    - currency (default to RON, detect if other currency mentioned)
+    - company_name (the name of the company issuing or receiving the payment, extract from company name fields in the document)
+    - company_ein (the CUI/company identifier, number only, remove 'RO' prefix if present)
+    - person_name (name and surname from "Numele si prenumele" field)
+    - person_function (from "Funcția (calitatea)" field, if available)
+    - description (from "Scopul încasării-plății" field - this is the purpose/explanation of the payment)
+    - account_code: RECOMMEND an expense (6xx) or asset (1xx, 2xx, 3xx, 5xx) account code based on the description/purpose of the payment. Use the Romanian Chart of Accounts. Match the description to the most specific account from {relevant_accounts}. Examples: Transport→624, Materials→602, Equipment→213, Utilities→605, Rent→612, etc. If no specific match, use 628 (Alte cheltuieli cu serviciile executate de terți) or 629 (Alte cheltuieli de exploatare) as last resort.
+    - referenced_numbers: array of any document numbers (invoices, contracts, receipts, etc.) mentioned in the description or anywhere in the document text
+
+    RELEVANT ROMANIAN CHART OF ACCOUNTS (Selected for this document - EXPENSE/ASSET accounts only):
+    {relevant_accounts}
+
+    For payment dispositions, use EXPENSE (6xx) or ASSET (1xx, 2xx, 3xx, 5xx) accounts. {ACCOUNT_HIERARCHY}
+
+    DO NOT extract bank-related fields (IBAN, bank names, bank accounts, bank fees, exchange rates) - these are NOT on disposition forms.
+    DO NOT extract payer/beneficiary fields - dispositions are simpler cash operation forms.
+
+    Use DD-MM-YYYY format. Output as JSON.
+  expected_output: >
+    JSON with payment disposition details, account_code recommendation, and currency.
+  agent: document_extractor
+
+extract_collection_disposition_data_task:
+  description: >
+    For collection disposition documents at {document_path} of type Collection Disposition (Dispozitie de Incasare), extract relevant data:
+    CURRENT DATE: {current_date}
+
+    IMPORTANT: This is a CASH OPERATION document (not a bank transfer). The form contains:
+    - Document header with number and date
+    - Company name and CUI (company identifier)
+    - Person's name and surname
+    - Person's function/quality
+    - Amount (in figures and letters)
+    - Purpose/description of the collection
+    - Signatures section
+
+    Extract ONLY these fields:
+    - document_number (from "nr." field)
+    - issue_date (DD-MM-YYYY, must not be after {current_date}, from "din" field)
+    - operation_type: MUST be "collection" (this is a collection disposition)
+    - total_amount (numeric, extract from "Suma" field)
+    - currency (default to RON, detect if other currency mentioned)
+    - company_name (the name of the company issuing or receiving the collection, extract from company name fields in the document)
+    - company_ein (the CUI/company identifier, number only, remove 'RO' prefix if present)
+    - person_name (name and surname from "Numele si prenumele" field)
+    - person_function (from "Funcția (calitatea)" field, if available)
+    - description (from "Scopul încasării-plății" field - this is the purpose/explanation of the collection)
+    - account_code: RECOMMEND a revenue (7xx) account code based on the description/purpose of the collection. Use the Romanian Chart of Accounts. Match the description to the most specific account from {relevant_accounts}. Examples: Services→704, Goods→707, Products→701, etc. If no specific match, use 706 (Venituri din activități diverse) as last resort.
+    - referenced_numbers: array of any document numbers (invoices, contracts, receipts, etc.) mentioned in the description or anywhere in the document text
+
+    RELEVANT ROMANIAN CHART OF ACCOUNTS (Selected for this document - REVENUE accounts only):
+    {relevant_accounts}
+
+    For collection dispositions, use REVENUE (7xx) accounts (706 as last resort). {ACCOUNT_HIERARCHY}
+
+    DO NOT extract bank-related fields (IBAN, bank names, bank accounts, bank fees, exchange rates) - these are NOT on disposition forms.
+    DO NOT extract payer/beneficiary fields - dispositions are simpler cash operation forms.
+
+    Use DD-MM-YYYY format. Output as JSON.
+  expected_output: >
+    JSON with collection disposition details, account_code recommendation, and currency.
+  agent: document_extractor
+
+extract_cmr_data_task:
+  description: >
+    For this CMR / international consignment note, extract exactly what is
+    printed: cmr_number, sender_name, sender_tax_id, consignee_name,
+    consignee_tax_id, carrier_name, carrier_tax_id, carrier_country,
+    place_of_loading, place_of_delivery, loading_date (DD-MM-YYYY or null),
+    vehicle_plate, trailer_plate, goods_description, gross_weight_kg, vin
+    (17-character chassis number if present), and referenced_numbers.
+    Use empty strings only for required text that is genuinely absent and null
+    for absent optional fields. Never guess. Include a confidence object with
+    honest 0.0-1.0 values for cmr_number, sender_name, consignee_name,
+    carrier_name, loading_date, and vin.
+    Source file: {document_path}
+  expected_output: >
+    Strict JSON matching the CMR schema.
+  agent: document_extractor
+
+extract_customs_declaration_data_task:
+  description: >
+    For this customs declaration, extract mrn, document_date (DD-MM-YYYY or
+    null), customs_office, declarant_name, declarant_tax_id, customs_value,
+    currency, duties_paid, vat_paid, tariff_code, gross_weight_kg, vin, and
+    referenced_numbers. Read every page. Use null for absent optional values
+    (including currency when no currency is printed) and never infer a number
+    that is not printed. Include a confidence object
+    with honest 0.0-1.0 values for mrn, document_date, customs_value, and vin.
+    Source file: {document_path}
+  expected_output: >
+    Strict JSON matching the customs declaration schema.
+  agent: document_extractor
+
+extract_vehicle_registration_data_task:
+  description: >
+    For this vehicle registration certificate/title (including German
+    Zulassungsbescheinigung/Fahrzeugbrief), extract vin, make, model, variant,
+    first_registration_date (DD-MM-YYYY or null), registration_number,
+    owner_name, owner_address, fuel_type, engine_capacity_cm3, power_kw,
+    emissions_class, mass_kg, and color. Pay special attention to official
+    coded fields and distinguish VIN from registration number. Never guess.
+    Include a confidence object with honest 0.0-1.0 values for vin, make, model,
+    first_registration_date, and registration_number.
+    Source file: {document_path}
+  expected_output: >
+    Strict JSON matching the vehicle registration schema.
+  agent: document_extractor
+
+extract_technical_inspection_data_task:
+  description: >
+    For this technical inspection / ITP / TÜV report, extract vin,
+    registration_number, inspection_date (DD-MM-YYYY or null), valid_until
+    (DD-MM-YYYY or null), result, station_name, and mileage_km. Never turn the
+    inspection date into the expiry date. Include a confidence object with
+    honest 0.0-1.0 values for vin, inspection_date, valid_until, and result.
+    Source file: {document_path}
+  expected_output: >
+    Strict JSON matching the technical inspection schema.
+  agent: document_extractor
+
+extract_insurance_data_task:
+  description: >
+    For this insurance policy / RCA / CASCO / green card, extract policy_number,
+    insurer_name, insured_name, vin, registration_number, start_date and
+    end_date (DD-MM-YYYY or null), premium_amount, and currency. Never confuse
+    the issue date with the coverage dates. Use an empty string for an absent
+    required name/number and null for absent optional values, including currency.
+    Include a confidence object with
+    honest 0.0-1.0 values for policy_number, vin, start_date, end_date, and
+    premium_amount.
+    Source file: {document_path}
+  expected_output: >
+    Strict JSON matching the insurance schema.
+  agent: document_extractor
+
+extract_other_document_data_task:
+  description: >
+    This document does not fit another supported schema. Return a concise
+    one-sentence summary, document_date (DD-MM-YYYY or null), parties, and
+    referenced_numbers. Do not invent missing facts. Include honest confidence
+    values for summary and document_date.
+    Source file: {document_path}
+  expected_output: >
+    Strict JSON matching the other-document schema.
+  agent: document_extractor
+
+segment_batch_task:
+  description: >
+    You are looking at ONE scanned PDF of {total_pages} pages that may contain
+    SEVERAL separate accounting documents scanned in a stack (invoices, receipts,
+    fiscal receipts, bank statements, contracts, Z reports, cash dispositions,
+    CMRs, customs declarations, vehicle registration certificates, technical
+    inspections, and insurance policies).
+    Group consecutive pages into logical documents. Pages are provided in order,
+    each labeled "=== PAGE i of N ===" with its thumbnail image and, when the PDF
+    has a text layer, a snippet of its text (scans usually have no text — read
+    the images).
+
+    A page CONTINUES the previous document (do NOT start a new segment) when:
+    - it shows "Pagina X din Y" / "Page X of Y" with X > 1, or any page-numbering
+      carry-over from the previous page;
+    - a table continues without a new document header (e.g. a bank statement's
+      transaction list with a running "Sold"/balance column, or an invoice's line
+      items continuing);
+    - it repeats the same serie/număr (document number) as the previous page;
+    - it shows "REPORT"/"Report pagina" carry-over rows, or contains only
+      totals/signatures that close the document started before.
+
+    A page STARTS a new document when:
+    - a new vendor letterhead/logo/company header appears;
+    - a new document title appears: FACTURĂ / FACTURA, CHITANȚĂ / CHITANTA,
+      BON FISCAL, EXTRAS DE CONT, CONTRACT, RAPORT Z, DISPOZIȚIE DE PLATĂ,
+      DISPOZIȚIE DE ÎNCASARE, CMR, MRN/declarație vamală,
+      Zulassungsbescheinigung/Fahrzeugbrief/talon, ITP/TÜV, or insurance policy;
+    - a fresh document number and date appear at the top of the page;
+    - the document type visibly changes (e.g. a receipt after an invoice).
+
+    CRITICAL tie-break rule: dacă nu ești sigur că o pagină începe un document
+    nou, tratează-o ca o CONTINUARE a documentului precedent (merge). A wrong
+    split corrupts bookkeeping; a wrong merge is recoverable. Reflect any
+    remaining doubt in that segment's confidence score, NOT by inventing extra
+    boundaries. A single multi-page document is a perfectly good answer:
+    one segment covering pages 1-{total_pages}.
+
+    For each segment report doc_type_hint (Invoice, Receipt, Bank Statement,
+    Contract, Z Report, Payment Disposition, Collection Disposition, or Unknown)
+    plus CMR, Customs Declaration, Vehicle Registration Certificate, Technical
+    Inspection (ITP), and Insurance
+    and confidence (0.0-1.0) that the segment is a SEPARATE document with these
+    exact boundaries.
+
+    The segments MUST cover ALL {total_pages} pages, in order, with no gaps and
+    no overlaps: the first segment starts at page 1, each next segment starts at
+    the previous end_page + 1, and the last segment ends at page {total_pages}.
+
+    Return JSON matching the schema: total_pages, segments (each with
+    start_page, end_page, doc_type_hint, confidence).
+    Example for a 5-page file holding an invoice (pages 1-2) and two receipts:
+    {"total_pages": 5, "segments": [{"start_page": 1, "end_page": 2,
+    "doc_type_hint": "Invoice", "confidence": 0.93}, {"start_page": 3,
+    "end_page": 3, "doc_type_hint": "Receipt", "confidence": 0.9},
+    {"start_page": 4, "end_page": 5, "doc_type_hint": "Receipt",
+    "confidence": 0.82}]}
+  expected_output: >
+    JSON with total_pages and an ordered, gapless, non-overlapping segments array.
+  agent: document_categorizer

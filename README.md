@@ -9,32 +9,46 @@ document management, LLM document extraction, contract generation, and RO e-Tran
 | Piece | Stack | Path |
 |---|---|---|
 | API | NestJS + Prisma + PostgreSQL (pgvector) + S3 | `backend/` |
-| Extraction worker | Python 3.11 + Anthropic structured outputs + pypdf (+ optional Textract) | `worker/` |
+| Extraction worker | Finova Python engine: strict structured outputs + CrewAI fallback + Textract/vision | `worker/finova/` |
 | Web app | React + Vite + TS + Redux Toolkit + Tailwind v4 | `frontend/` |
 | Infra (local) | Postgres (pgvector) + MinIO | `docker-compose.yml` |
+| Infra (production) | Immutable containers + migrations + backups | `docker-compose.production.yml`, `deploy/` |
 
 ### How extraction works
 1. Upload lands in **S3 first**, then a `PendingUpload` row — the durable queue.
-2. A cron worker claims rows via an **atomic compare-and-set**, spawns `worker/main.py`
-   (bounded concurrency lane), which runs: multi-source OCR (PDF text layer with per-page
-   char floor → optional Textract with a **ratio guard** → LLM vision fallback) →
-   **phase 0** categorization → **phase 1** typed extraction (Pydantic schema registry:
-   Invoice, CMR, Customs, Registration Certificate, ITP, Insurance, Bank Statement, …).
-3. Deterministic validators (VIN format+check digit, VAT arithmetic, date sanity,
-   statement balance) cap per-field confidence and flag `needsReview`.
-4. User corrections are persisted (`UserCorrection`) and fed back as context on future
-   extractions; a recovery sweep re-queues stuck rows with a poison-pill retry cap.
+2. A cron worker claims rows via an **atomic compare-and-set** and runs Finova's separate,
+   resumable **phase 0** classification and **phase 1** typed extraction subprocesses with
+   independent bounded-concurrency lanes. The queue persists each phase result and exposes
+   `QUEUED → PROCESSING → PHASE0_COMPLETE → PHASE1_COMPLETE → COMPLETED`, plus retry,
+   cancellation and split-parent states.
+3. The copied Finova engine runs strict Pydantic structured outputs, provider routing,
+   PDF text + Textract Analyze/Expense + LLM vision, scoped repair, its 627-account
+   embedding chart, deterministic validation and calibrated
+   per-field confidence. AutoImport adds strict CMR, customs, vehicle registration, ITP and
+   insurance schemas to the same registry.
+4. Deterministic validators (VIN format, VAT arithmetic and date sanity)
+   cap per-field confidence and flag `needsReview`; the review drawer orders flagged fields
+   first, displays validation evidence, and can hide high-confidence auto-accepted fields.
+5. User corrections are persisted (`UserCorrection`) and fed back as examples on future
+   extractions for every document type. A recovery sweep re-queues stuck rows with
+   exponential backoff and a poison-pill retry cap.
+6. Optional Finova batch-scan segmentation (`PENDING_UPLOAD_SPLIT_ENABLED=true`) detects
+   document boundaries in combined PDFs and fans them out as independently processed children.
 
 ### Feature map
 - **Vehicles**: lifecycle SOURCED→…→DELIVERED, costs → landed cost → margin per car.
-- **Documents**: dedupe by hash, needs-review UI with inline field corrections.
+- **Documents**: dedupe by hash, side-by-side PDF/image review, line-level accounting
+  corrections, proposed debit/credit notes, explicit approval and reversible reopening.
+- **Accounting**: approval-only balanced journal entries, idempotent posting, partner/article/
+  management catalogues and a read-only journal. Existing documents remain legacy; only
+  documents uploaded after each tenant's accounting cutover enter this flow.
 - **Contracts**: generate *contract de vânzare-cumpărare* / *proces-verbal* PDFs
   (price in words in Romanian, per-tenant number sequences), stored back as documents.
-- **SAGA export**: processed invoices export to the SAGA C XML import format
-  (`GET /api/saga/export.xml?from&to`, plus CSV) — Furnizor/Client mapped from the
-  extracted fields so SAGA routes Intrări/Ieșiri by CIF itself; non-RO suppliers are
-  marked taxare inversă. *Confirm the date format against the client's SAGA build on
-  the first import test.*
+- **SAGA export**: `/exporturi` previews and generates `SAGA_Export_<date>.zip` with
+  Facturi, Încasări, Plăți, Furnizori, Clienți and Articole XML. Only approved post-cutover
+  documents are included. Încasări/Plăți come from approved receipts and cash/payment
+  dispositions in the journal—never from bank reconciliation. Empty selected files are
+  omitted. The old invoice/partner endpoints remain temporary compatibility wrappers.
 - **e-Transport**: declaration pre-filled from extracted CMR/invoice, XML build,
   ANAF OAuth2 (logincert) client with proactive token refresh, status polling → UIT,
   printable UIT sheet. *Validate the XML against the current ANAF XSD before production.*
@@ -50,9 +64,9 @@ docker compose up -d
 
 # 2. Backend
 cd backend
-cp ../.env.example .env          # fill in ANTHROPIC_API_KEY at minimum
+cp ../.env.example .env          # fill in OPENAI_API_KEY (+ another provider key if selected)
 npm install
-npm run prisma:push              # creates schema + vector extension
+npm run prisma:migrate           # versioned schema on a new database
 npm run build && npm start       # or: npm run dev
 
 # 3. Worker deps (used as a subprocess by the backend)
@@ -69,15 +83,62 @@ npm run dev                      # http://localhost:5173
 
 Register a company from the login screen (first user becomes OWNER).
 
+An older local database created with `prisma db push` must be baselined once;
+follow [backend/prisma/BASELINING.md](backend/prisma/BASELINING.md) instead of
+running the initial migration over its existing tables.
+
+## Acceptance and parity tests
+
+```bash
+# Exact byte-for-byte parity for all six Finova SAGA XML files,
+# accounting/posting coverage, authorization and HTTP workflows
+cd backend
+npm test
+
+# Real extraction (optional; requires a real PDF/image and LLM/OCR credentials)
+LIVE_EXTRACTION_FILE=/absolute/path/invoice.pdf npm run test:extraction:live
+
+# Real browser acceptance: desktop + 360 px mobile, PDF review modal,
+# documents/search, vehicles, e-Transport and SAGA re-export
+cd ../frontend
+npx playwright install chromium
+npm run test:e2e
+```
+
+The SAGA golden fixture records the Finova source commit and compares both
+formatters byte-for-byte for Facturi, Încasări, Plăți, Furnizori, Clienți and
+Articole. See
+[backend/test/fixtures/saga-finova/README.md](backend/test/fixtures/saga-finova/README.md).
+CI repeats the clean migration, backend suite, production builds, and desktop/mobile
+browser suite on every pull request.
+
+The one non-automatable acceptance step is importing a representative ZIP in
+the beneficiary's licensed SAGA installation. Use
+[docs/saga-beneficiary-acceptance.md](docs/saga-beneficiary-acceptance.md) to
+record that sign-off.
+
+## Production delivery
+
+Production uses the versioned Prisma migration before starting the API, waits
+for PostgreSQL/MinIO readiness, and runs daily database plus document-store
+backups with retention. Setup, upgrade, backup verification, and guarded restore
+instructions are in
+[docs/production-deployment.md](docs/production-deployment.md).
+
 ## Configuration notes
-- **LLM**: `EXTRACTION_MODEL=claude-opus-4-8` (default) or `claude-sonnet-4-6` for
-  cost-sensitive volume. Without `ANTHROPIC_API_KEY`, uploads queue and fail with a clear error.
+- **LLM**: the Finova default is the pinned `FINOVA_EXTRACTION_LLM_MODEL=gpt-4o-mini-2024-07-18`.
+  `OPENAI_API_KEY` is required by the copied Finova preflight and embedding-based Romanian
+  account shortlist. Claude, Gemini and OpenRouter model identifiers additionally need their
+  matching provider key.
+- **PDF runtime**: `pdf2image` needs Poppler installed on the host. Textract is optional and
+  uses `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_REGION`.
 - **ANAF**: needs a qualified certificate enrolled in SPV; set `ANAF_CLIENT_ID/SECRET`
   and complete the OAuth2 flow per tenant. Defaults point at the ANAF **test** endpoint.
-- **Accuracy**: build the golden set early — mint golden cases from review-UI corrections;
-  a 20-doc eval is noise.
+- **Accuracy**: the deterministic Finova SAGA golden fixture protects XML parity.
+  Add reviewed real documents to the live extraction acceptance corpus as beneficiary
+  examples become available.
 
 ## Deliberately out of scope in this slice
-Multi-document PDF segmentation into child uploads, email/WhatsApp capture channels,
-pgvector similarity retrieval for corrections (recency heuristic in place), e-Factura/UBL,
-PWA manifest, e-signature. Seams for each exist where the spec calls for them.
+Bank-statement reconciliation, transaction matching, Open Banking, manual journal entries,
+financial reports, closing, payroll, stock, fixed assets, email/WhatsApp capture channels,
+e-Factura/UBL, PWA manifest and e-signature.
