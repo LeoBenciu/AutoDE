@@ -9,6 +9,7 @@ import {
   useVehicleQuery,
 } from '../store/api';
 import { StatusChip } from '../components/StatusChip';
+import { VehicleBrandLogo } from '../components/VehicleBrandLogo';
 
 const STATUSES = ['SOURCED', 'PURCHASED', 'IN_TRANSIT', 'CUSTOMS', 'IN_STOCK', 'RESERVED', 'SOLD', 'DELIVERED'];
 const COST_CATEGORIES = ['TRANSPORT', 'CUSTOMS', 'VAT', 'ITP', 'REGISTRATION', 'REFURB', 'OTHER'];
@@ -44,11 +45,14 @@ export default function VehicleDetail() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-ink">
-            {v.make} {v.model} {v.variant ?? ''}
-          </h1>
-          <p className="font-mono text-xs text-muted">{v.vin}</p>
+        <div className="flex items-center gap-3">
+          <VehicleBrandLogo make={v.make} size="lg" />
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-ink">
+              {v.make} {v.model} {v.variant ?? ''}
+            </h1>
+            <p className="font-mono text-xs text-muted">{v.vin}</p>
+          </div>
         </div>
         <select
           value={v.status}

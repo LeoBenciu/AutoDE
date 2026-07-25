@@ -103,7 +103,11 @@ async function main() {
 
     const pdf = await renderFixturePdf();
     const key = `tenants/${tenant.id}/acceptance/ui-acceptance.pdf`;
-    await s3.putObject(key, pdf, 'application/pdf');
+    // Selector-only browser runs can skip object storage on constrained local
+    // machines. Full CI leaves this unset and still exercises the real PDF.
+    if (process.env.UI_ACCEPTANCE_SKIP_DOCUMENT_STORAGE !== 'true') {
+      await s3.putObject(key, pdf, 'application/pdf');
+    }
     const document = await prisma.document.create({
       data: {
         tenantId: tenant.id,

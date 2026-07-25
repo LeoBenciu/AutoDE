@@ -136,6 +136,43 @@ test('@mobile 360 layout keeps document and extracted data usable', async ({
   });
 });
 
+test('@desktop vehicle selectors constrain model and retain brand logo', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/vehicule');
+  await expect(page.getByLabel('Sigla Volkswagen')).toBeVisible();
+  await page.getByRole('button', { name: 'Adaugă' }).click();
+
+  const brand = page.getByRole('combobox', { name: 'Marcă' });
+  const model = page.getByRole('combobox', { name: 'Model' });
+  await expect(model).toBeDisabled();
+  await brand.click();
+  await page.getByRole('option', { name: /Volvo/ }).click();
+  await expect(model).toBeEnabled();
+  await expect(model.locator('option')).toContainText(['V40', 'XC60', 'XC90']);
+  await page.screenshot({
+    path: testInfo.outputPath('vehicle-brand-model-selectors.png'),
+    fullPage: false,
+  });
+
+  await page.getByPlaceholder('VIN (17 caractere)').fill('YV1MV70V1K2549984');
+  await model.selectOption('V40');
+  await page.getByPlaceholder('An fabricație').fill('2019');
+  await page.getByPlaceholder('Kilometraj').fill('125000');
+  await page.getByPlaceholder('Preț achiziție').fill('10499');
+  await page.getByRole('combobox', { name: 'Țara de origine' }).selectOption('SE');
+  await page.getByRole('button', { name: 'Salvează' }).click();
+
+  const createdCard = page.getByRole('link', { name: /Volvo V40/ });
+  await expect(createdCard).toBeVisible();
+  await expect(createdCard.getByLabel('Sigla Volvo')).toBeVisible();
+  await expect(createdCard).toContainText('SE');
+  await page.screenshot({
+    path: testInfo.outputPath('vehicle-card-with-brand-logo.png'),
+    fullPage: false,
+  });
+});
+
 async function login(page: Page) {
   await page.goto('/');
   await page.getByPlaceholder('Email').fill(email);
