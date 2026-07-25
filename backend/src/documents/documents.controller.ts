@@ -64,6 +64,18 @@ export class DocumentsController {
     });
   }
 
+  @Post('pending/:id/retry')
+  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  retryPending(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.documents.retryPendingUpload(user.tenantId, id);
+  }
+
+  @Post('pending/:id/cancel')
+  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  cancelPending(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.documents.cancelPendingUpload(user.tenantId, id);
+  }
+
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.get(user.tenantId, id);
@@ -79,15 +91,33 @@ export class DocumentsController {
   correct(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { field: string; newValue: string },
+    @Body() body: { field: string; newValue: unknown },
   ) {
     return this.documents.correctField(user.tenantId, user.userId, id, body.field, body.newValue);
   }
 
   @Post(':id/reviewed')
-  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
   markReviewed(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
-    return this.documents.markReviewed(user.tenantId, id);
+    return this.documents.markReviewed(user.tenantId, user.userId, id);
+  }
+
+  @Get(':id/posting-preview')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  postingPreview(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.documents.previewPosting(user.tenantId, id);
+  }
+
+  @Post(':id/approve')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  approve(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.documents.approve(user.tenantId, user.userId, id);
+  }
+
+  @Post(':id/reopen')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  reopen(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.documents.reopen(user.tenantId, user.userId, id);
   }
 
   @Post(':id/assign')

@@ -1,4 +1,11 @@
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class CreatePartyDto {
   @IsOptional()
@@ -14,8 +21,44 @@ export class CreatePartyDto {
   taxId?: string;
 
   @IsOptional()
+  @IsBoolean()
+  isSupplier?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isClient?: boolean;
+
+  @IsOptional()
+  @IsString()
+  supplierCode?: string;
+
+  @IsOptional()
+  @IsString()
+  clientCode?: string;
+
+  @IsOptional()
+  @IsString()
+  supplierAnalytic?: string;
+
+  @IsOptional()
+  @IsString()
+  clientAnalytic?: string;
+
+  @IsOptional()
+  @IsString()
+  registration?: string;
+
+  @IsOptional()
   @IsString()
   country?: string;
+
+  @IsOptional()
+  @IsString()
+  county?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
 
   @IsOptional()
   @IsString()
@@ -26,12 +69,20 @@ export class CreatePartyDto {
   iban?: string;
 
   @IsOptional()
+  @IsString()
+  bankName?: string;
+
+  @IsOptional()
   @IsEmail()
   email?: string;
 
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  discount?: string;
 }
 
 export class UpdatePartyDto extends CreatePartyDto {

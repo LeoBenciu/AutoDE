@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Facturi>
+  <Factura>
+    <Antet>
+      <FurnizorNume>Furnizor &amp; Fii SRL</FurnizorNume>
+      <FurnizorCIF>12345678</FurnizorCIF>
+      <FurnizorNrRegCom>J40/1/2020</FurnizorNrRegCom>
+      <FurnizorCapital>200 LEI</FurnizorCapital>
+      <FurnizorTara>RO</FurnizorTara>
+      <FurnizorLocalitate>București</FurnizorLocalitate>
+      <FurnizorJudet>B</FurnizorJudet>
+      <FurnizorAdresa>Str. Test &lt;1&gt;</FurnizorAdresa>
+      <FurnizorTelefon>+40 700 000 000</FurnizorTelefon>
+      <FurnizorMail>office@example.test</FurnizorMail>
+      <FurnizorBanca>Banca Test</FurnizorBanca>
+      <FurnizorIBAN>RO49AAAA1B31007593840000</FurnizorIBAN>
+      <FurnizorInformatiiSuplimentare>furnizor recurent</FurnizorInformatiiSuplimentare>
+      <GUID_cod_client>GUID-CLIENT</GUID_cod_client>
+      <ClientNume>AutoImport Test SRL</ClientNume>
+      <ClientInformatiiSuplimentare></ClientInformatiiSuplimentare>
+      <ClientCIF>50675950</ClientCIF>
+      <ClientNrRegCom>J40/2/2024</ClientNrRegCom>
+      <ClientJudet>B</ClientJudet>
+      <ClientTara>RO</ClientTara>
+      <ClientLocalitate>București</ClientLocalitate>
+      <ClientAdresa>Bd. Unirii 1</ClientAdresa>
+      <ClientBanca>Banca Auto</ClientBanca>
+      <ClientIBAN>RO09BBBB1B31007593840001</ClientIBAN>
+      <ClientTelefon>+40 700 000 001</ClientTelefon>
+      <ClientMail>contabilitate@auto.test</ClientMail>
+      <FacturaNumar>BON-101</FacturaNumar>
+      <FacturaData>15-07-2026</FacturaData>
+      <FacturaScadenta>30-07-2026</FacturaScadenta>
+      <FacturaTaxareInversa>Nu</FacturaTaxareInversa>
+      <FacturaTVAIncasare>Da</FacturaTVAIncasare>
+      <FacturaTip>C</FacturaTip>
+      <FacturaInformatiiSuplimentare>Bon fiscal &quot;test&quot;</FacturaInformatiiSuplimentare>
+      <FacturaMoneda>RON</FacturaMoneda>
+      <FacturaGreutate></FacturaGreutate>
+      <FacturaAccize></FacturaAccize>
+      <FacturaIndexSPV></FacturaIndexSPV>
+      <FacturaIndexDescarcareSPV></FacturaIndexDescarcareSPV>
+      <Cod>FURN-01</Cod>
+    </Antet>
+    <Detalii>
+      <Continut>
+        <Linie>
+          <LinieNrCrt>1</LinieNrCrt>
+          <Gestiune>0001</Gestiune>
+          <Activitate>SERVICE</Activitate>
+          <Descriere>Piesă &amp; montaj</Descriere>
+          <CodArticolFurnizor>00001</CodArticolFurnizor>
+          <CodArticolClient>00001</CodArticolClient>
+          <GUID_cod_articol></GUID_cod_articol>
+          <CodBare></CodBare>
+          <InformatiiSuplimentare></InformatiiSuplimentare>
+          <UM>BUC</UM>
+          <Cantitate>2.0000</Cantitate>
+          <Pret>10.5000</Pret>
+          <Valoare>21.00</Valoare>
+          <ProcTVA>19</ProcTVA>
+          <TVA>3.99</TVA>
+          <Cont>3024</Cont>
+          <TipDeducere>N50</TipDeducere>
+          <PretVanzare></PretVanzare>
+        </Linie>
+      </Continut>
+    </Detalii>
+    <FacturaID>101</FacturaID>
+  </Factura>
+</Facturi>

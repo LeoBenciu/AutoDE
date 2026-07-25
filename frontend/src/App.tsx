@@ -9,6 +9,8 @@ import VehicleDetail from './pages/VehicleDetail';
 import Documents from './pages/Documents';
 import ETransport from './pages/ETransport';
 import Settings from './pages/Settings';
+import Journal from './pages/Journal';
+import Exports from './pages/Exports';
 
 export default function App() {
   const token = useSelector((s: RootState) => s.auth.accessToken);
@@ -26,6 +28,8 @@ export default function App() {
         <Route path="/vehicule" element={<Vehicles />} />
         <Route path="/vehicule/:id" element={<VehicleDetail />} />
         <Route path="/documente" element={<Documents />} />
+        <Route path="/jurnal" element={<Journal />} />
+        <Route path="/exporturi" element={<Exports />} />
         <Route path="/e-transport" element={<ETransport />} />
         <Route path="/setari" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />

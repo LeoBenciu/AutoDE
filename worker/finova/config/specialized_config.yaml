@@ -1,0 +1,29 @@
+# Specialized Agents Configuration
+# This file controls whether specialized agents are enabled
+
+specialized_agents:
+  enabled: true # Set to false to disable specialized agents (backward compatibility)
+
+  # Document types that support specialized agents
+  supported_types:
+    - 'Receipt'
+    - 'Bank Statement'
+    - 'Contract'
+    - 'Z Report'
+    - 'Payment Order'
+    - 'Collection Order'
+
+  # Fallback behavior
+  fallback_to_generic: true # If true, fall back to generic agent for unsupported types
+
+  # Performance settings
+  cache_optimization: true # Enable cache optimization for specialized agents
+  parallel_processing: true # Enable parallel processing for different document types
+
+  # Cost optimization
+  prompt_caching: true # Enable OpenAI prompt caching
+  text_extraction_cache: true # Enable text extraction caching
+
+  # Logging
+  verbose_logging: true # Enable verbose logging for specialized agents
+  performance_metrics: true # Enable performance metrics collection

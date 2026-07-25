@@ -9,6 +9,7 @@ import {
   useVehicleQuery,
 } from '../store/api';
 import { StatusChip } from '../components/StatusChip';
+import { VehicleBrandLogo } from '../components/VehicleBrandLogo';
 
 const STATUSES = ['SOURCED', 'PURCHASED', 'IN_TRANSIT', 'CUSTOMS', 'IN_STOCK', 'RESERVED', 'SOLD', 'DELIVERED'];
 const COST_CATEGORIES = ['TRANSPORT', 'CUSTOMS', 'VAT', 'ITP', 'REGISTRATION', 'REFURB', 'OTHER'];
@@ -21,7 +22,7 @@ export default function VehicleDetail() {
   const [upload, { isLoading: uploading }] = useUploadDocumentsMutation();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  if (isLoading || !v) return <p className="text-sm text-slate-500">Se încarcă…</p>;
+  if (isLoading || !v) return <p className="text-sm text-muted">Se încarcă…</p>;
 
   const fmt = (n: any, cur?: string) => (n != null ? `${Number(n).toLocaleString('ro-RO')} ${cur ?? ''}` : '—');
 
@@ -44,16 +45,19 @@ export default function VehicleDetail() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">
-            {v.make} {v.model} {v.variant ?? ''}
-          </h1>
-          <p className="font-mono text-xs text-slate-500">{v.vin}</p>
+        <div className="flex items-center gap-3">
+          <VehicleBrandLogo make={v.make} size="lg" />
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-ink">
+              {v.make} {v.model} {v.variant ?? ''}
+            </h1>
+            <p className="font-mono text-xs text-muted">{v.vin}</p>
+          </div>
         </div>
         <select
           value={v.status}
           onChange={(e) => updateVehicle({ id: vehicleId, body: { status: e.target.value } })}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          className="rounded-control border border-line-strong px-3 py-2 text-sm text-ink-soft focus:border-brand focus:outline-none"
         >
           {STATUSES.map((s) => (
             <option key={s} value={s}>{s}</option>
@@ -62,20 +66,20 @@ export default function VehicleDetail() {
       </div>
 
       {/* Dosarul mașinii — progress toward a complete file */}
-      <div className="rounded-xl bg-white p-4 shadow-sm">
+      <div className="rounded-card border border-line bg-white p-4">
         <div className="flex items-center justify-between">
-          <p className="font-semibold text-slate-900">Dosarul mașinii</p>
-          <p className="text-sm text-slate-500">{dosarDone}/{dosar.length} complete</p>
+          <p className="font-semibold text-ink">Dosarul mașinii</p>
+          <p className="text-sm text-muted">{dosarDone}/{dosar.length} complete</p>
         </div>
-        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-canvas">
           <div
             className="h-full rounded-full bg-emerald-500 transition-all"
             style={{ width: `${(dosarDone / dosar.length) * 100}%` }}
           />
         </div>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1">
           {dosar.map((s) => (
-            <span key={s.label} className={`text-xs ${s.done ? 'text-slate-400 line-through' : 'font-medium text-amber-700'}`}>
+            <span key={s.label} className={`text-xs ${s.done ? 'text-muted-2 line-through' : 'font-medium text-amber-700'}`}>
               {s.done ? '✓' : '○'} {s.label}
             </span>
           ))}
@@ -83,7 +87,7 @@ export default function VehicleDetail() {
       </div>
 
       {/* Money summary */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <Stat label="Preț achiziție" value={fmt(v.purchasePrice, v.purchaseCurrency)} />
         <Stat label="Cost total (landed)" value={fmt(v.computedLandedCost, v.purchaseCurrency)} />
         <Stat label="Preț vânzare" value={fmt(v.soldPrice ?? v.listPrice, v.soldCurrency)} />
@@ -95,9 +99,9 @@ export default function VehicleDetail() {
       </div>
 
       {/* Documents */}
-      <section className="rounded-xl bg-white p-4 shadow-sm">
+      <section className="rounded-card border border-line bg-white p-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-slate-900">Documente ({v.documents?.length ?? 0})</h2>
+          <h2 className="font-semibold text-ink">Documente ({v.documents?.length ?? 0})</h2>
           <div>
             <input
               ref={fileRef}
@@ -115,7 +119,7 @@ export default function VehicleDetail() {
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+              className="rounded-control bg-brand px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:opacity-50"
             >
               {uploading ? 'Se încarcă…' : '📷 Încarcă'}
             </button>
@@ -123,18 +127,18 @@ export default function VehicleDetail() {
         </div>
         <div className="mt-3 space-y-2">
           {(v.documents ?? []).map((d: any) => (
-            <div key={d.id} className="flex items-center justify-between rounded-lg border border-slate-100 p-3">
+            <div key={d.id} className="flex items-center justify-between rounded-xl border border-line p-3">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-slate-900">{d.name}</p>
-                <p className="text-xs text-slate-500">{d.type ?? 'Necategorisit'}</p>
+                <p className="truncate text-sm font-medium text-ink">{d.name}</p>
+                <p className="text-xs text-muted">{d.type ?? 'Necategorisit'}</p>
               </div>
               <div className="flex items-center gap-2">
-                {d.needsReview && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">De verificat</span>}
+                {d.needsReview && <NeedsReviewChip />}
                 <StatusChip status={d.processingStatus} />
               </div>
             </div>
           ))}
-          {(v.documents ?? []).length === 0 && <p className="text-sm text-slate-500">Niciun document — fotografiază factura, CMR-ul sau talonul.</p>}
+          {(v.documents ?? []).length === 0 && <p className="text-sm text-muted">Niciun document — fotografiază factura, CMR-ul sau talonul.</p>}
         </div>
       </section>
 
@@ -149,20 +153,20 @@ export default function VehicleDetail() {
       />
 
       {/* e-Transport */}
-      <section className="rounded-xl bg-white p-4 shadow-sm">
-        <h2 className="font-semibold text-slate-900">e-Transport</h2>
+      <section className="rounded-card border border-line bg-white p-4">
+        <h2 className="font-semibold text-ink">e-Transport</h2>
         <div className="mt-3 space-y-2">
           {(v.transports ?? []).map((t: any) => (
-            <div key={t.id} className="flex items-center justify-between rounded-lg border border-slate-100 p-3 text-sm">
-              <span>
-                {t.uit ? <b className="font-mono">{t.uit}</b> : `Declarație #${t.id}`} · {t.vehiclePlate ?? '—'}
+            <div key={t.id} className="flex items-center justify-between rounded-xl border border-line p-3 text-sm">
+              <span className="text-ink-soft">
+                {t.uit ? <b className="font-mono text-ink">{t.uit}</b> : `Declarație #${t.id}`} · {t.vehiclePlate ?? '—'}
               </span>
               <StatusChip status={t.status} />
             </div>
           ))}
           {(v.transports ?? []).length === 0 && (
-            <p className="text-sm text-slate-500">
-              Nicio declarație. Generează codul UIT din pagina <b>e-Transport</b> înainte ca mașina să intre în țară.
+            <p className="text-sm text-muted">
+              Nicio declarație. Generează codul UIT din pagina <b className="text-ink-soft">e-Transport</b> înainte ca mașina să intre în țară.
             </p>
           )}
         </div>
@@ -171,11 +175,22 @@ export default function VehicleDetail() {
   );
 }
 
+function NeedsReviewChip() {
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-xs font-semibold"
+      style={{ backgroundColor: 'oklch(0.93 0.05 80)', color: 'oklch(0.45 0.13 80)' }}
+    >
+      De verificat
+    </span>
+  );
+}
+
 function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className="rounded-xl bg-white p-4 shadow-sm">
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className={`mt-1 text-lg font-bold ${highlight ? 'text-emerald-600' : 'text-slate-900'}`}>{value}</p>
+    <div className="rounded-card border border-line bg-white p-4">
+      <p className="text-xs text-muted">{label}</p>
+      <p className={`mt-1 text-lg font-bold ${highlight ? 'text-emerald-600' : 'text-ink'}`}>{value}</p>
     </div>
   );
 }
@@ -192,20 +207,20 @@ function CostsSection({ vehicle, vehicleId }: { vehicle: any; vehicleId: number 
   };
 
   return (
-    <section className="rounded-xl bg-white p-4 shadow-sm">
-      <h2 className="font-semibold text-slate-900">Costuri</h2>
+    <section className="rounded-card border border-line bg-white p-4">
+      <h2 className="font-semibold text-ink">Costuri</h2>
       <div className="mt-3 space-y-1">
         {(vehicle.costs ?? []).map((c: any) => {
           // Contrast effect: each cost is anchored against the purchase price.
           const pct = Number(vehicle.purchasePrice) > 0 ? (Number(c.amount) / Number(vehicle.purchasePrice)) * 100 : null;
           return (
-            <div key={c.id} className="flex justify-between border-b border-slate-50 py-1.5 text-sm">
-              <span className="text-slate-600">
+            <div key={c.id} className="flex justify-between border-b border-line py-1.5 text-sm">
+              <span className="text-muted">
                 {c.category} {c.note ? `· ${c.note}` : ''}
               </span>
-              <span className="font-medium">
+              <span className="font-medium text-ink">
                 {Number(c.amount).toLocaleString('ro-RO')} {c.currency}
-                {pct != null && <span className="ml-1 font-normal text-slate-400">({pct.toFixed(1).replace('.', ',')}%)</span>}
+                {pct != null && <span className="ml-1 font-normal text-muted-2">({pct.toFixed(1).replace('.', ',')}%)</span>}
               </span>
             </div>
           );
@@ -215,7 +230,7 @@ function CostsSection({ vehicle, vehicleId }: { vehicle: any; vehicleId: number 
         <select
           value={form.category}
           onChange={(e) => setForm({ ...form, category: e.target.value })}
-          className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+          className="rounded-control border border-line-strong px-2.5 py-2 text-sm focus:border-brand focus:outline-none"
         >
           {COST_CATEGORIES.map((c) => (
             <option key={c}>{c}</option>
@@ -227,15 +242,15 @@ function CostsSection({ vehicle, vehicleId }: { vehicle: any; vehicleId: number 
           placeholder="Sumă"
           value={form.amount}
           onChange={(e) => setForm({ ...form, amount: e.target.value })}
-          className="w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+          className="w-28 rounded-control border border-line-strong px-2.5 py-2 text-sm focus:border-brand focus:outline-none"
         />
         <input
           placeholder="Notă"
           value={form.note}
           onChange={(e) => setForm({ ...form, note: e.target.value })}
-          className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+          className="flex-1 rounded-control border border-line-strong px-2.5 py-2 text-sm focus:border-brand focus:outline-none"
         />
-        <button className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white">Adaugă</button>
+        <button className="rounded-control bg-brand px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-hover">Adaugă</button>
       </form>
     </section>
   );
@@ -277,17 +292,17 @@ function ContractSection({
   };
 
   return (
-    <section className="rounded-xl bg-white p-4 shadow-sm">
-      <h2 className="font-semibold text-slate-900">Contracte</h2>
+    <section className="rounded-card border border-line bg-white p-4">
+      <h2 className="font-semibold text-ink">Contracte</h2>
       <div className="mt-2 space-y-1">
         {contracts.map((c: any) => (
-          <p key={c.id} className="text-sm text-slate-600">
+          <p key={c.id} className="text-sm text-muted">
             {c.contractNumber} · {c.contractType} · {c.totalValue ? `${Number(c.totalValue).toLocaleString('ro-RO')} ${c.currency}` : ''}
           </p>
         ))}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <select value={buyerId} onChange={(e) => setBuyerId(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
+        <select value={buyerId} onChange={(e) => setBuyerId(e.target.value)} className="rounded-control border border-line-strong px-2.5 py-2 text-sm focus:border-brand focus:outline-none">
           <option value="">Cumpărător…</option>
           {parties.map((p: any) => (
             <option key={p.id} value={p.id}>{p.name}</option>
@@ -299,24 +314,24 @@ function ContractSection({
           placeholder="Preț (RON)"
           value={price}
           onChange={(e) => setPrice(e.target.value)}
-          className="w-32 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+          className="w-32 rounded-control border border-line-strong px-2.5 py-2 text-sm focus:border-brand focus:outline-none"
         />
         <button
           onClick={() => submit('vanzare-cumparare')}
           disabled={isLoading}
-          className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded-control bg-brand px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:opacity-50"
         >
           Contract vânzare
         </button>
         <button
           onClick={() => submit('proces-verbal')}
           disabled={isLoading}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-50"
+          className="rounded-control border border-line-strong px-3.5 py-2 text-sm font-semibold text-ink-soft disabled:opacity-50"
         >
           Proces-verbal
         </button>
       </div>
-      {message && <p className="mt-2 text-sm text-slate-600">{message}</p>}
+      {message && <p className="mt-2 text-sm text-muted">{message}</p>}
     </section>
   );
 }

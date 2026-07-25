@@ -1,13 +1,67 @@
-import { Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { CurrentUser, JwtAuthGuard, Roles, RolesGuard } from '../auth/guards';
 import { AuthUser } from '../auth/jwt.strategy';
-import { SagaService } from './saga.service';
+import { SagaExportRequest, SagaService } from './saga.service';
 
 @Controller('saga')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SagaController {
   constructor(private readonly saga: SagaService) {}
+
+  @Post('preview')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  preview(
+    @CurrentUser() user: AuthUser,
+    @Body() request: SagaExportRequest,
+  ) {
+    return this.saga.preview(user.tenantId, request);
+  }
+
+  @Get('preferences')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  preferences(@CurrentUser() user: AuthUser) {
+    return this.saga.getPreferences(user.tenantId);
+  }
+
+  @Post('preferences')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  savePreferences(
+    @CurrentUser() user: AuthUser,
+    @Body() request: SagaExportRequest,
+  ) {
+    return this.saga.savePreferences(user.tenantId, request);
+  }
+
+  @Post('export')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  async exportZip(
+    @CurrentUser() user: AuthUser,
+    @Body() request: SagaExportRequest,
+    @Res() res: Response,
+  ) {
+    const result = await this.saga.exportZip(
+      user.tenantId,
+      user.userId,
+      request,
+    );
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.fileName}"`,
+    );
+    res.setHeader('X-SAGA-File-Count', String(result.fileCount));
+    res.send(result.content);
+  }
 
   @Get('export.:format')
   @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')

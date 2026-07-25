@@ -1,7 +1,20 @@
-anthropic>=0.69.0
+# Finova extraction runtime (kept aligned with Finova's worker requirements).
+crewai[tools]>=0.140.0,<1.0.0
 pydantic>=2.7
+typing-extensions>=4.12
+PyYAML>=6.0
+numpy>=2.1.0,<2.3.0
+
+# PDF, OCR, vision and image auto-orientation.
+PyPDF2>=3.0
 pypdf>=4.2
-# Optional OCR sources — enable when the corresponding infra is configured:
-# boto3>=1.34          # AWS Textract (Expense + Analyze)
-# pytesseract>=0.3.10  # OSD auto-orientation for rotated scans
-# pdf2image>=1.17      # page-at-a-time rendering for tesseract
+boto3>=1.35.0
+pdf2image>=1.17
+pillow>=10.0
+pytesseract>=0.3.10
+
+# Provider clients and worker diagnostics.
+openai>=1.50.0
+anthropic>=0.69.0
+requests>=2.32
+psutil>=6.0

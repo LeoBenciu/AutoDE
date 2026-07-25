@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Furnizori>
+  <Linie>
+    <Cod>00001</Cod>
+    <Denumire>Furnizor &amp; Fii SRL</Denumire>
+    <Cod_fiscal>12345678</Cod_fiscal>
+    <Tara>RO</Tara>
+    <Localitate>București</Localitate>
+    <Adresa>Str. Test &lt;1&gt;</Adresa>
+    <Cont_banca>RO49AAAA1B31007593840000</Cont_banca>
+    <Banca>Banca Test</Banca>
+    <Tel>+40 700 000 000</Tel>
+    <Email>office@example.test</Email>
+    <Informatii></Informatii>
+    <Guid_cod>FURN-01</Guid_cod>
+  </Linie>
+</Furnizori>

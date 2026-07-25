@@ -12,20 +12,37 @@ datasource db {
 // ---------- Tenancy & auth ----------
 
 model Tenant {
-  id        Int      @id @default(autoincrement())
-  name      String
-  cui       String? // CUI/CIF of the dealership
-  address   String?
-  createdAt DateTime @default(now())
+  id                  Int      @id @default(autoincrement())
+  name                String
+  cui                 String? // CUI/CIF of the dealership
+  registrationNumber  String?
+  address             String?
+  country             String   @default("RO")
+  county              String?
+  city                String?
+  iban                String?
+  bankName            String?
+  email               String?
+  phone               String?
+  defaultCurrency     String   @default("RON")
+  isVatPayer          Boolean  @default(true)
+  hasTvaLaIncasare    Boolean  @default(false)
+  accountingCutoverAt DateTime @default(now())
+  sagaExportConfig    Json?
+  createdAt           DateTime @default(now())
 
-  users        User[]
-  parties      Party[]
-  vehicles     Vehicle[]
-  documents    Document[]
-  contracts    Contract[]
-  declarations ETransportDeclaration[]
-  auditLogs    AuditLog[]
-  anafToken    AnafToken?
+  users          User[]
+  parties        Party[]
+  articles       Article[]
+  managements    Management[]
+  vehicles       Vehicle[]
+  documents      Document[]
+  pendingUploads PendingUpload[]
+  ledgerEntries  GeneralLedgerEntry[]
+  contracts      Contract[]
+  declarations   ETransportDeclaration[]
+  auditLogs      AuditLog[]
+  anafToken      AnafToken?
 }
 
 enum Role {
@@ -37,19 +54,21 @@ enum Role {
 }
 
 model User {
-  id           Int       @id @default(autoincrement())
-  email        String    @unique
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
   passwordHash String
   name         String
-  role         Role      @default(VIEWER)
-  active       Boolean   @default(true)
+  role         Role     @default(VIEWER)
+  active       Boolean  @default(true)
   tenantId     Int
-  tenant       Tenant    @relation(fields: [tenantId], references: [id])
-  createdAt    DateTime  @default(now())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  createdAt    DateTime @default(now())
 
   refreshTokens RefreshToken[]
   corrections   UserCorrection[]
   auditLogs     AuditLog[]
+  approvedDocs  Document[]             @relation("DocumentApprover")
+  relationships DocumentRelationship[] @relation("RelationshipCreator")
 }
 
 model RefreshToken {
@@ -70,18 +89,30 @@ enum PartyKind {
 }
 
 model Party {
-  id       Int       @id @default(autoincrement())
-  kind     PartyKind @default(COMPANY)
-  name     String
-  taxId    String? // CUI/CIF (RO), VAT number (EU) or CNP (individual)
-  country  String    @default("RO")
-  address  String?
-  iban     String?
-  email    String?
-  phone    String?
-  tenantId Int
-  tenant   Tenant    @relation(fields: [tenantId], references: [id])
-  createdAt DateTime @default(now())
+  id               Int       @id @default(autoincrement())
+  kind             PartyKind @default(COMPANY)
+  name             String
+  taxId            String? // CUI/CIF (RO), VAT number (EU) or CNP (individual)
+  isSupplier       Boolean   @default(false)
+  isClient         Boolean   @default(false)
+  supplierCode     String?
+  clientCode       String?
+  supplierAnalytic String?
+  clientAnalytic   String?
+  registration     String?
+  country          String    @default("RO")
+  county           String?
+  city             String?
+  address          String?
+  iban             String?
+  bankName         String?
+  email            String?
+  phone            String?
+  discount         String?
+  tenantId         Int
+  tenant           Tenant    @relation(fields: [tenantId], references: [id])
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   documents      Document[]
   contracts      Contract[]
@@ -89,6 +120,54 @@ model Party {
   vehiclesSold   Vehicle[]  @relation("VehicleSeller")
 
   @@index([tenantId])
+  @@index([tenantId, taxId])
+  @@index([tenantId, isSupplier])
+  @@index([tenantId, isClient])
+}
+
+model Article {
+  id           Int      @id @default(autoincrement())
+  tenantId     Int
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code         String
+  name         String
+  analyticCode String?
+  vatRate      String   @default("TWENTYONE")
+  unit         String   @default("BUCATA")
+  type         String   @default("MARFURI")
+  accountCode  String?
+  management   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, code])
+  @@index([tenantId, name])
+}
+
+model Management {
+  id           Int      @id @default(autoincrement())
+  tenantId     Int
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code         String
+  name         String
+  type         String   @default("CANTITATIV_VALORICA")
+  analyticCode String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, code])
+}
+
+model ChartOfAccount {
+  id          Int      @id @default(autoincrement())
+  accountCode String   @unique
+  accountName String
+  accountType String
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([accountType])
 }
 
 enum VehicleStatus {
@@ -173,8 +252,31 @@ enum ProcessingStatus {
   FAILED
 }
 
+enum DocumentReviewStatus {
+  LEGACY
+  PENDING_APPROVAL
+  APPROVED
+  REOPENED
+}
+
+enum PostingStatus {
+  NONE
+  POSTED
+  ERROR
+}
+
+enum LedgerSourceType {
+  INVOICE_IN
+  INVOICE_OUT
+  RECEIPT
+  RECEIPT_IN
+  RECEIPT_OUT
+  PAYMENT_DISPOSITION
+  COLLECTION_DISPOSITION
+}
+
 model Document {
-  id                    Int              @id @default(autoincrement())
+  id                    Int                  @id @default(autoincrement())
   name                  String
   type                  String? // Invoice, CMR, Customs Declaration, Registration Certificate, ...
   s3Key                 String
@@ -182,62 +284,114 @@ model Document {
   fileSize              Int
   documentHash          String
   tenantId              Int
-  tenant                Tenant           @relation(fields: [tenantId], references: [id])
+  tenant                Tenant               @relation(fields: [tenantId], references: [id])
   vehicleId             Int?
-  vehicle               Vehicle?         @relation(fields: [vehicleId], references: [id])
+  vehicle               Vehicle?             @relation(fields: [vehicleId], references: [id])
   partyId               Int?
-  party                 Party?           @relation(fields: [partyId], references: [id])
-  processingStatus      ProcessingStatus @default(PENDING)
-  needsReview           Boolean          @default(false)
-  uploadedAt            DateTime         @default(now())
+  party                 Party?               @relation(fields: [partyId], references: [id])
+  processingStatus      ProcessingStatus     @default(PENDING)
+  needsReview           Boolean              @default(false)
+  reviewStatus          DocumentReviewStatus @default(LEGACY)
+  postingStatus         PostingStatus        @default(NONE)
+  approvedAt            DateTime?
+  approvedById          Int?
+  approvedBy            User?                @relation("DocumentApprover", fields: [approvedById], references: [id])
+  postedAt              DateTime?
+  postingError          String?
+  uploadedAt            DateTime             @default(now())
   processingStartedAt   DateTime?
   processingCompletedAt DateTime?
+  phase0StartedAt       DateTime?
+  phase0CompletedAt     DateTime?
+  phase0Duration        Int?
+  phase1StartedAt       DateTime?
+  phase1CompletedAt     DateTime?
+  phase1Duration        Int?
+  processingDuration    Int?
   archivedAt            DateTime?
   deletedAt             DateTime?
 
-  processedData ProcessedData?
-  costs         VehicleCost[]
-  contracts     Contract[]
-  corrections   UserCorrection[]
-  parentLinks   DocumentRelationship[] @relation("ParentDoc")
-  childLinks    DocumentRelationship[] @relation("ChildDoc")
+  processedData         ProcessedData?
+  costs                 VehicleCost[]
+  contracts             Contract[]
+  corrections           UserCorrection[]
+  ledgerEntries         GeneralLedgerEntry[]
+  parentLinks           DocumentRelationship[]  @relation("ParentDoc")
+  childLinks            DocumentRelationship[]  @relation("ChildDoc")
   declarationsAsInvoice ETransportDeclaration[] @relation("DeclInvoice")
   declarationsAsUit     ETransportDeclaration[] @relation("DeclUit")
 
   @@index([tenantId, documentHash])
   @@index([tenantId, vehicleId])
+  @@index([tenantId, reviewStatus, uploadedAt])
+  @@index([tenantId, postingStatus, postedAt])
 }
 
 model ProcessedData {
-  id              Int      @id @default(autoincrement())
-  documentId      Int      @unique
-  document        Document @relation(fields: [documentId], references: [id])
-  documentType    String?
-  typeConfidence  Float?
-  extractedFields Json
-  fieldConfidence Json?
+  id               Int      @id @default(autoincrement())
+  documentId       Int      @unique
+  document         Document @relation(fields: [documentId], references: [id])
+  documentType     String?
+  typeConfidence   Float?
+  extractedFields  Json
+  fieldConfidence  Json?
   validationIssues Json?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model DocumentRelationship {
-  id        Int      @id @default(autoincrement())
-  parentId  Int
-  parent    Document @relation("ParentDoc", fields: [parentId], references: [id])
-  childId   Int
-  child     Document @relation("ChildDoc", fields: [childId], references: [id])
-  relation  String? // e.g. "same-vehicle", "segmented-from"
-  createdAt DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  parentId      Int
+  parent        Document @relation("ParentDoc", fields: [parentId], references: [id])
+  childId       Int
+  child         Document @relation("ChildDoc", fields: [childId], references: [id])
+  relation      String? // e.g. "payment", "same-vehicle", "segmented-from"
+  paymentAmount Decimal? @db.Decimal(14, 2)
+  notes         String?
+  createdById   Int?
+  createdBy     User?    @relation("RelationshipCreator", fields: [createdById], references: [id])
+  createdAt     DateTime @default(now())
 
   @@unique([parentId, childId])
 }
 
+model GeneralLedgerEntry {
+  id             Int              @id @default(autoincrement())
+  tenantId       Int
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  postingDate    DateTime
+  accountCode    String
+  debit          Decimal          @default(0) @db.Decimal(14, 2)
+  credit         Decimal          @default(0) @db.Decimal(14, 2)
+  currency       String           @default("RON")
+  originalAmount Decimal?         @db.Decimal(14, 2)
+  exchangeRate   Decimal?         @db.Decimal(14, 6)
+  sourceType     LedgerSourceType
+  sourceId       String
+  postingKey     String           @unique
+  description    String?
+  reference      String?
+  documentId     Int?
+  document       Document?        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdAt      DateTime         @default(now())
+
+  @@index([tenantId, postingDate])
+  @@index([tenantId, accountCode])
+  @@index([tenantId, sourceType])
+  @@index([documentId])
+}
+
 enum PendingUploadStatus {
+  QUEUED
   UPLOADED
   PROCESSING
+  PHASE0_COMPLETE
+  PHASE1_COMPLETE
   COMPLETED
   ERROR
+  CANCELLED
+  SPLIT
 }
 
 // Durable upload queue: files land in S3 first, extraction is async.
@@ -249,33 +403,48 @@ model PendingUpload {
   fileSize            Int
   documentHash        String
   tenantId            Int
+  tenant              Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   vehicleId           Int?
   partyId             Int?
-  status              PendingUploadStatus @default(UPLOADED)
+  status              PendingUploadStatus @default(QUEUED)
+  processingPhase     Int                 @default(0)
+  phase0Data          Json?
+  phase1Data          Json?
   retryCount          Int                 @default(0)
   maxRetries          Int                 @default(3)
   errorMessage        String?
   documentId          Int?
   processingStartedAt DateTime?
+  lastAttemptAt       DateTime?
+  parentUploadId      Int?
+  parentUpload        PendingUpload?      @relation("PendingUploadSplit", fields: [parentUploadId], references: [id], onDelete: SetNull)
+  childUploads        PendingUpload[]     @relation("PendingUploadSplit")
+  pageStart           Int?
+  pageEnd             Int?
+  segmentIndex        Int?
+  segmentCount        Int?
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 
+  @@unique([parentUploadId, segmentIndex])
   @@index([status, updatedAt])
+  @@index([tenantId, status])
+  @@index([parentUploadId])
 }
 
 model UserCorrection {
-  id         Int      @id @default(autoincrement())
+  id         Int                          @id @default(autoincrement())
   documentId Int
-  document   Document @relation(fields: [documentId], references: [id])
+  document   Document                     @relation(fields: [documentId], references: [id])
   tenantId   Int
   userId     Int
-  user       User     @relation(fields: [userId], references: [id])
+  user       User                         @relation(fields: [userId], references: [id])
   field      String
   oldValue   String?
   newValue   String
   // pgvector embedding of "<doc type> <field>: <corrected value>" for RAG on future extractions
   embedding  Unsupported("vector(1536)")?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime                     @default(now())
 
   @@index([tenantId, field])
 }
@@ -330,35 +499,35 @@ enum ETransportStatus {
 }
 
 model ETransportDeclaration {
-  id             Int              @id @default(autoincrement())
-  tenantId       Int
-  tenant         Tenant           @relation(fields: [tenantId], references: [id])
-  vehicleId      Int?
-  vehicle        Vehicle?         @relation(fields: [vehicleId], references: [id])
-  operationType  String           @default("AIC") // intra-community acquisition
-  uit            String?
-  status         ETransportStatus @default(DRAFT)
-  validFrom      DateTime?
-  validUntil     DateTime?
-  declaredAt     DateTime?
-  xmlPayload     String           @db.Text
-  anafUploadId   String?
-  anafResponse   Json?
+  id                Int              @id @default(autoincrement())
+  tenantId          Int
+  tenant            Tenant           @relation(fields: [tenantId], references: [id])
+  vehicleId         Int?
+  vehicle           Vehicle?         @relation(fields: [vehicleId], references: [id])
+  operationType     String           @default("AIC") // intra-community acquisition
+  uit               String?
+  status            ETransportStatus @default(DRAFT)
+  validFrom         DateTime?
+  validUntil        DateTime?
+  declaredAt        DateTime?
+  xmlPayload        String           @db.Text
+  anafUploadId      String?
+  anafResponse      Json?
   // The purchase invoice this transport belongs to; the UIT is stored with it.
   invoiceDocumentId Int?
-  invoiceDocument   Document? @relation("DeclInvoice", fields: [invoiceDocumentId], references: [id])
+  invoiceDocument   Document?        @relation("DeclInvoice", fields: [invoiceDocumentId], references: [id])
   // The saved printable UIT sheet, once the declaration is confirmed.
   uitDocumentId     Int?
-  uitDocument       Document? @relation("DeclUit", fields: [uitDocumentId], references: [id])
-  idempotencyKey String           @unique @default(uuid())
-  transporter    Json // { name, taxId, country }
-  vehiclePlate   String?
-  trailerPlate   String?
-  loadingPlace   Json // { country, county, city, address }
-  unloadingPlace Json
-  goods          Json // [{ description, tariffCode, weightKg, valueRon }]
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  uitDocument       Document?        @relation("DeclUit", fields: [uitDocumentId], references: [id])
+  idempotencyKey    String           @unique @default(uuid())
+  transporter       Json // { name, taxId, country }
+  vehiclePlate      String?
+  trailerPlate      String?
+  loadingPlace      Json // { country, county, city, address }
+  unloadingPlace    Json
+  goods             Json // [{ description, tariffCode, weightKg, valueRon }]
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   @@index([tenantId, status])
 }
