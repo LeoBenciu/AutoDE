@@ -15,6 +15,7 @@ import {
   useUpdateUserMutation,
   useUsersQuery,
 } from '../store/api';
+import { apiUrl } from '../store/apiBase';
 import type { RootState } from '../store/store';
 
 const ROLES = ['OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT', 'VIEWER'];
@@ -215,7 +216,9 @@ function AccountingSettings({
     }
 
     const requestId = createRequestId();
-    const endpoint = `/api/accounting/company/anaf/${encodeURIComponent(cui)}`;
+    const endpoint = apiUrl(
+      `/accounting/company/anaf/${encodeURIComponent(cui)}`,
+    );
     const startedAt = performance.now();
     console.info('[ANAF company import] request started', {
       requestId,
@@ -712,6 +715,11 @@ function apiError(error: any): string {
   }
   if (error?.status === 'PARSING_ERROR') {
     const status = error?.originalStatus;
+    if (typeof body === 'string' && /<!doctype html|<html[\s>]/i.test(body)) {
+      return `Serverul frontend a returnat aplicația HTML pentru o cerere API${
+        status ? ` (HTTP ${status})` : ''
+      }. Configurează VITE_API_URL către backend și reconstruiește frontendul.`;
+    }
     return status === 404
       ? 'Endpoint-ul solicitat nu există pe versiunea de backend publicată (HTTP 404).'
       : `Serverul a returnat un răspuns nevalid${status ? ` (HTTP ${status})` : ''}.`;

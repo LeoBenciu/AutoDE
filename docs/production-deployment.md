@@ -55,6 +55,37 @@ curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/api/health/ready
 ```
 
+### Frontend and backend on separate services
+
+The bundled Docker Compose deployment needs no `VITE_API_URL`: nginx proxies
+same-origin `/api` requests to the backend container.
+
+When the frontend is hosted separately (for example, as a static site), set
+this build-time variable on the **frontend** service:
+
+```dotenv
+VITE_API_URL=https://autoimport-api.example.com
+```
+
+The `/api` suffix is optional. Vite embeds this value into the JavaScript
+bundle, so trigger a clean frontend rebuild and redeploy after changing it.
+For Docker builds, pass the same value as the `VITE_API_URL` build argument.
+
+Without this setting or a platform proxy for `/api`, the static host may apply
+its SPA fallback and return `index.html` with HTTP 200 to API requests. In the
+browser this appears as a JSON parsing error, and the backend receives no
+request or log.
+
+Verify the public backend independently:
+
+```bash
+curl --fail https://autoimport-api.example.com/api/health/ready
+```
+
+Then use the browser Network panel to confirm requests such as
+`/api/accounting/company` are sent to the backend host rather than the
+frontend host.
+
 For an existing database previously managed with `prisma db push`, complete
 the one-time process in
 [`backend/prisma/BASELINING.md`](../backend/prisma/BASELINING.md) before
