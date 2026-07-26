@@ -52,8 +52,8 @@ export class AccountingService implements OnModuleInit {
     return tenant;
   }
 
-  companyFromAnaf(cui: string) {
-    return lookupAnafCompany(cui);
+  companyFromAnaf(cui: string, requestId?: string) {
+    return lookupAnafCompany(cui, { requestId });
   }
 
   async updateCompany(tenantId: number, values: Record<string, unknown>) {

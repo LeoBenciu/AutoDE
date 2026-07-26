@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   ParseIntPipe,
   Patch,
@@ -24,8 +25,11 @@ export class AccountingController {
   }
 
   @Get('company/anaf/:cui')
-  companyFromAnaf(@Param('cui') cui: string) {
-    return this.accounting.companyFromAnaf(cui);
+  companyFromAnaf(
+    @Param('cui') cui: string,
+    @Headers('x-request-id') requestId?: string,
+  ) {
+    return this.accounting.companyFromAnaf(cui, requestId);
   }
 
   @Patch('company')

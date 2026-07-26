@@ -152,7 +152,12 @@ function AccountingSettings({
 }: {
   onMessage: (message: string) => void;
 }) {
-  const { data: company } = useCompanyQuery();
+  const {
+    data: company,
+    isLoading: loadingCompany,
+    error: companyError,
+    refetch: refetchCompany,
+  } = useCompanyQuery();
   const [updateCompany, { isLoading: savingCompany }] =
     useUpdateCompanyMutation();
   const [loadCompanyFromAnaf, { isFetching: loadingCompanyFromAnaf }] =
@@ -209,8 +214,27 @@ function AccountingSettings({
       return;
     }
 
+    const requestId = createRequestId();
+    const endpoint = `/api/accounting/company/anaf/${encodeURIComponent(cui)}`;
+    const startedAt = performance.now();
+    console.info('[ANAF company import] request started', {
+      requestId,
+      cui,
+      endpoint,
+      timestamp: new Date().toISOString(),
+    });
+
     try {
-      const details = await loadCompanyFromAnaf(cui).unwrap();
+      const details = await loadCompanyFromAnaf({ cui, requestId }).unwrap();
+      console.info('[ANAF company import] request succeeded', {
+        requestId,
+        cui,
+        endpoint,
+        durationMs: Math.round(performance.now() - startedAt),
+        returnedFields: Object.entries(details)
+          .filter(([, value]) => value !== null && value !== '')
+          .map(([key]) => key),
+      });
       setForm((current) => ({
         ...current,
         cui: details.cui ?? cui,
@@ -235,7 +259,18 @@ function AccountingSettings({
         'Datele disponibile au fost preluate din ANAF. Verifică-le, apoi salvează compania.',
       );
     } catch (error: any) {
-      onMessage(apiError(error));
+      console.error('[ANAF company import] request failed', {
+        requestId,
+        cui,
+        endpoint,
+        durationMs: Math.round(performance.now() - startedAt),
+        status: error?.status,
+        originalStatus: error?.originalStatus,
+        response: compactErrorData(error?.data),
+        errorMessage: error?.error ?? error?.message ?? null,
+        rawError: error,
+      });
+      onMessage(`${apiError(error)} · ID diagnostic: ${requestId}`);
     }
   };
 
@@ -264,7 +299,23 @@ function AccountingSettings({
         ))}
       </div>
 
-      {tab === 'company' && (
+      {tab === 'company' && loadingCompany && (
+        <p className="p-5 text-sm text-muted">Se încarcă datele companiei…</p>
+      )}
+      {tab === 'company' && companyError && (
+        <div className="m-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <p className="font-semibold">Datele companiei nu au putut fi încărcate.</p>
+          <p className="mt-1">{apiError(companyError)}</p>
+          <button
+            type="button"
+            onClick={() => refetchCompany()}
+            className="mt-3 rounded-control border border-red-300 bg-white px-3 py-2 font-semibold hover:bg-red-100"
+          >
+            Reîncearcă
+          </button>
+        </div>
+      )}
+      {tab === 'company' && company && (
         <form onSubmit={saveCompany} className="p-5">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Denumire firmă" value={form.name} onChange={(name) => setForm({ ...form, name })} required />
@@ -652,5 +703,37 @@ const fieldClass =
 function apiError(error: any): string {
   const body = error?.data;
   if (Array.isArray(body?.message)) return body.message.join(' · ');
-  return body?.message ?? error?.message ?? 'Acțiunea nu a putut fi finalizată';
+  if (body?.message) return body.message;
+  if (error?.status === 401) {
+    return 'Sesiunea a expirat. Deconectează-te și autentifică-te din nou.';
+  }
+  if (error?.status === 'FETCH_ERROR') {
+    return 'Backend-ul nu poate fi contactat. Verifică dacă serviciul API este pornit și publicat.';
+  }
+  if (error?.status === 'PARSING_ERROR') {
+    const status = error?.originalStatus;
+    return status === 404
+      ? 'Endpoint-ul solicitat nu există pe versiunea de backend publicată (HTTP 404).'
+      : `Serverul a returnat un răspuns nevalid${status ? ` (HTTP ${status})` : ''}.`;
+  }
+  if (typeof body === 'string' && body.trim()) return body.trim().slice(0, 240);
+  return (
+    error?.error ??
+    error?.message ??
+    `Acțiunea nu a putut fi finalizată${
+      typeof error?.status === 'number' ? ` (HTTP ${error.status})` : ''
+    }`
+  );
+}
+
+function createRequestId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return uuid
+    ? `anaf-${uuid}`
+    : `anaf-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function compactErrorData(value: unknown): unknown {
+  if (typeof value === 'string') return value.slice(0, 500);
+  return value;
 }

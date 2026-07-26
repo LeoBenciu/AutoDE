@@ -166,9 +166,11 @@ export const api = createApi({
       query: () => '/accounting/company',
       providesTags: ['Accounting'],
     }),
-    companyFromAnaf: build.query<any, string>({
-      query: (cui) =>
-        `/accounting/company/anaf/${encodeURIComponent(cui)}`,
+    companyFromAnaf: build.query<any, { cui: string; requestId: string }>({
+      query: ({ cui, requestId }) => ({
+        url: `/accounting/company/anaf/${encodeURIComponent(cui)}`,
+        headers: { 'x-request-id': requestId },
+      }),
     }),
     updateCompany: build.mutation<any, any>({
       query: (body) => ({ url: '/accounting/company', method: 'PATCH', body }),
