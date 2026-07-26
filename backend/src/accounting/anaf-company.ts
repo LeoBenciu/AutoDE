@@ -1,12 +1,14 @@
 import {
   BadGatewayException,
   BadRequestException,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 
 const ANAF_COMPANY_LOOKUP_URL =
   'https://webservicesp.anaf.ro/api/PlatitorTvaRest/v9/tva';
+const logger = new Logger('AnafCompanyLookup');
 
 type AnafRecord = Record<string, unknown>;
 
@@ -51,12 +53,17 @@ export async function lookupAnafCompany(
     now?: Date;
     fetcher?: typeof fetch;
     url?: string;
+    requestId?: string;
   } = {},
 ): Promise<AnafCompanyDetails> {
   const cui = normalizeRomanianCui(value);
   const lookupDate = romanianDate(options.now ?? new Date());
   const fetcher = options.fetcher ?? fetch;
+  const startedAt = Date.now();
+  const logPrefix = options.requestId ? `[${options.requestId}] ` : '';
   let response: Response;
+
+  logger.log(`${logPrefix}Pornire verificare ANAF pentru CUI ${cui}`);
 
   try {
     response = await fetcher(
@@ -70,15 +77,26 @@ export async function lookupAnafCompany(
         signal: AbortSignal.timeout(7000),
       },
     );
-  } catch {
+  } catch (error) {
+    logger.error(
+      `${logPrefix}Conexiunea către ANAF a eșuat pentru CUI ${cui}: ${errorMessage(error)}`,
+      error instanceof Error ? error.stack : undefined,
+    );
     throw new ServiceUnavailableException(
       'Serviciul ANAF nu este disponibil momentan. Încearcă din nou.',
     );
   }
 
+  logger.log(
+    `${logPrefix}ANAF a răspuns pentru CUI ${cui} cu HTTP ${response.status} în ${Date.now() - startedAt} ms`,
+  );
+
   // ANAF occasionally returns its normal `found`/`notFound` payload with a
   // 404 status, so parse that status the same way Finova does.
   if (!response.ok && response.status !== 404) {
+    logger.warn(
+      `${logPrefix}Răspuns ANAF nereușit pentru CUI ${cui}: HTTP ${response.status}`,
+    );
     throw new BadGatewayException(
       `ANAF nu a putut procesa verificarea CUI-ului (${response.status}).`,
     );
@@ -87,7 +105,10 @@ export async function lookupAnafCompany(
   let payload: unknown;
   try {
     payload = await response.json();
-  } catch {
+  } catch (error) {
+    logger.warn(
+      `${logPrefix}Răspuns ANAF nevalid pentru CUI ${cui}: ${errorMessage(error)}`,
+    );
     if (response.status === 404) {
       throw new NotFoundException(
         'Nu s-au găsit date în ANAF pentru acest CUI.',
@@ -98,11 +119,13 @@ export async function lookupAnafCompany(
 
   const company = firstFoundCompany(payload);
   if (!company) {
+    logger.warn(`${logPrefix}ANAF nu a găsit CUI ${cui}`);
     throw new NotFoundException(
       'Nu s-au găsit date în ANAF pentru acest CUI.',
     );
   }
 
+  logger.log(`${logPrefix}Verificare ANAF finalizată pentru CUI ${cui}`);
   return mapAnafCompany(company, cui, lookupDate);
 }
 
@@ -174,4 +197,8 @@ function romanianDate(date: Date): string {
     month: '2-digit',
     day: '2-digit',
   }).format(date);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
