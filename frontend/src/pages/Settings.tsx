@@ -7,6 +7,7 @@ import {
   useCreateManagementMutation,
   useCreatePartyMutation,
   useCreateUserMutation,
+  useLazyCompanyFromAnafQuery,
   useManagementsQuery,
   usePartiesQuery,
   useUpdateCompanyMutation,
@@ -154,10 +155,13 @@ function AccountingSettings({
   const { data: company } = useCompanyQuery();
   const [updateCompany, { isLoading: savingCompany }] =
     useUpdateCompanyMutation();
+  const [loadCompanyFromAnaf, { isFetching: loadingCompanyFromAnaf }] =
+    useLazyCompanyFromAnafQuery();
   const [tab, setTab] = useState<'company' | 'partners' | 'articles' | 'managements'>(
     'company',
   );
   const [form, setForm] = useState<Record<string, any>>({});
+  const [anafMessage, setAnafMessage] = useState('');
 
   useEffect(() => {
     if (company) {
@@ -185,6 +189,51 @@ function AccountingSettings({
     onMessage('');
     try {
       await updateCompany(form).unwrap();
+    } catch (error: any) {
+      onMessage(apiError(error));
+    }
+  };
+
+  const importCompanyFromAnaf = async () => {
+    onMessage('');
+    setAnafMessage('');
+    const cui = String(form.cui ?? '')
+      .trim()
+      .replace(/\s+/g, '')
+      .replace(/^RO/i, '');
+
+    if (!/^\d{2,10}$/.test(cui)) {
+      onMessage(
+        'CUI invalid. Folosește între 2 și 10 cifre, opțional cu prefixul RO.',
+      );
+      return;
+    }
+
+    try {
+      const details = await loadCompanyFromAnaf(cui).unwrap();
+      setForm((current) => ({
+        ...current,
+        cui: details.cui ?? cui,
+        name: details.name || current.name,
+        registrationNumber:
+          details.registrationNumber || current.registrationNumber,
+        address: details.address || current.address,
+        country: details.country || current.country,
+        county: details.county || current.county,
+        city: details.city || current.city,
+        iban: details.iban || current.iban,
+        email: details.email || current.email,
+        phone: details.phone || current.phone,
+        ...(typeof details.isVatPayer === 'boolean'
+          ? { isVatPayer: details.isVatPayer }
+          : {}),
+        ...(typeof details.hasTvaLaIncasare === 'boolean'
+          ? { hasTvaLaIncasare: details.hasTvaLaIncasare }
+          : {}),
+      }));
+      setAnafMessage(
+        'Datele disponibile au fost preluate din ANAF. Verifică-le, apoi salvează compania.',
+      );
     } catch (error: any) {
       onMessage(apiError(error));
     }
@@ -219,7 +268,29 @@ function AccountingSettings({
         <form onSubmit={saveCompany} className="p-5">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Denumire firmă" value={form.name} onChange={(name) => setForm({ ...form, name })} required />
-            <Field label="CUI / CIF" value={form.cui} onChange={(cui) => setForm({ ...form, cui })} required />
+            <label className="text-xs font-medium text-muted">
+              CUI / CIF
+              <div className="mt-1 flex gap-2">
+                <input
+                  aria-label="CUI / CIF"
+                  required
+                  value={form.cui ?? ''}
+                  onChange={(event) => {
+                    setForm({ ...form, cui: event.target.value });
+                    setAnafMessage('');
+                  }}
+                  className={`min-w-0 flex-1 ${fieldClass}`}
+                />
+                <button
+                  type="button"
+                  onClick={importCompanyFromAnaf}
+                  disabled={loadingCompanyFromAnaf}
+                  className="shrink-0 rounded-control border border-brand px-3 py-2 text-sm font-semibold text-brand hover:bg-blue-50 disabled:opacity-50"
+                >
+                  {loadingCompanyFromAnaf ? 'Se caută…' : 'Importă ANAF'}
+                </button>
+              </div>
+            </label>
             <Field label="Nr. registrul comerțului" value={form.registrationNumber} onChange={(registrationNumber) => setForm({ ...form, registrationNumber })} />
             <Field label="Țară" value={form.country} onChange={(country) => setForm({ ...form, country })} />
             <Field label="Județ" value={form.county} onChange={(county) => setForm({ ...form, county })} />
@@ -231,6 +302,11 @@ function AccountingSettings({
             <Field label="Telefon" value={form.phone} onChange={(phone) => setForm({ ...form, phone })} />
             <Field label="Monedă implicită" value={form.defaultCurrency} onChange={(defaultCurrency) => setForm({ ...form, defaultCurrency })} />
           </div>
+          {anafMessage && (
+            <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              {anafMessage}
+            </p>
+          )}
           <div className="mt-4 flex flex-wrap gap-5">
             <label className="flex items-center gap-2 text-sm text-ink-soft">
               <input
