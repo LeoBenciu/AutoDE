@@ -5,6 +5,7 @@ import {
   useSagaPreviewMutation,
   useSaveSagaPreferencesMutation,
 } from '../store/api';
+import { apiUrl } from '../store/apiBase';
 import type { RootState } from '../store/store';
 
 const EXPORT_TYPES = [
@@ -70,7 +71,7 @@ export default function Exports() {
     setExporting(true);
     setMessage('');
     try {
-      const response = await fetch('/api/saga/export', {
+      const response = await fetch(apiUrl('/saga/export'), {
         method: 'POST',
         headers: {
           authorization: `Bearer ${token}`,

@@ -7,6 +7,7 @@ import {
   useUpdateEtransportMutation,
   useVehiclesQuery,
 } from '../store/api';
+import { apiUrl } from '../store/apiBase';
 import { StatusChip } from '../components/StatusChip';
 
 const PlusIcon = () => (
@@ -118,7 +119,7 @@ export default function ETransport() {
                 )}
                 {d.uit && (
                   <a
-                    href={`/api/etransport/${d.id}/uit-sheet`}
+                    href={apiUrl(`/etransport/${d.id}/uit-sheet`)}
                     className="rounded-lg border border-line-strong bg-white px-3.5 py-2 text-[13px] text-ink-soft"
                   >
                     Fișă UIT

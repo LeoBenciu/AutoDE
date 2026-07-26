@@ -100,6 +100,8 @@ services:
     build:
       context: .
       dockerfile: deploy/frontend.Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
     image: autoimport-frontend:${IMAGE_TAG:-local}
     restart: unless-stopped
     ports:
