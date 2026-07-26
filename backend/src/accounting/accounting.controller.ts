@@ -23,6 +23,11 @@ export class AccountingController {
     return this.accounting.company(user.tenantId);
   }
 
+  @Get('company/anaf/:cui')
+  companyFromAnaf(@Param('cui') cui: string) {
+    return this.accounting.companyFromAnaf(cui);
+  }
+
   @Patch('company')
   @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
   updateCompany(

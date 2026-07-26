@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
+import { lookupAnafCompany } from './anaf-company';
 import { PostingService } from './posting.service';
 
 const DEFAULT_ACCOUNTS = [
@@ -49,6 +50,10 @@ export class AccountingService implements OnModuleInit {
     const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) throw new NotFoundException('Compania nu a fost găsită');
     return tenant;
+  }
+
+  companyFromAnaf(cui: string) {
+    return lookupAnafCompany(cui);
   }
 
   async updateCompany(tenantId: number, values: Record<string, unknown>) {

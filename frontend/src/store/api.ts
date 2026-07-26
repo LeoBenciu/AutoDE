@@ -166,6 +166,10 @@ export const api = createApi({
       query: () => '/accounting/company',
       providesTags: ['Accounting'],
     }),
+    companyFromAnaf: build.query<any, string>({
+      query: (cui) =>
+        `/accounting/company/anaf/${encodeURIComponent(cui)}`,
+    }),
     updateCompany: build.mutation<any, any>({
       query: (body) => ({ url: '/accounting/company', method: 'PATCH', body }),
       invalidatesTags: ['Accounting', 'Saga'],
@@ -268,6 +272,7 @@ export const {
   useCreateUserMutation,
   useUpdateUserMutation,
   useCompanyQuery,
+  useLazyCompanyFromAnafQuery,
   useUpdateCompanyMutation,
   useLedgerQuery,
   useChartOfAccountsQuery,
