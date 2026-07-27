@@ -3,10 +3,12 @@ import { randomUUID } from 'crypto';
 import { NextFunction, Request, Response } from 'express';
 
 const anafHttpLogger = new Logger('AnafCompanyHttp');
+const httpLogger = new Logger('Http');
 
 export function configureApp(app: INestApplication): INestApplication {
   app.setGlobalPrefix('api');
   app.enableCors({ origin: true, credentials: true });
+  app.use(logEveryRequest);
   app.use(logAnafCompanyRequest);
   app.useGlobalPipes(
     new ValidationPipe({
@@ -16,6 +18,27 @@ export function configureApp(app: INestApplication): INestApplication {
     }),
   );
   return app;
+}
+
+function logEveryRequest(
+  request: Request,
+  response: Response,
+  next: NextFunction,
+) {
+  const startedAt = Date.now();
+  const contentLength = request.header('content-length');
+  httpLogger.log(
+    `→ ${request.method} ${request.originalUrl} ` +
+      `origin=${request.header('origin') ?? '-'} ` +
+      `auth=${request.header('authorization') ? 'yes' : 'no'} ` +
+      `len=${contentLength ?? '-'}`,
+  );
+  response.on('finish', () => {
+    httpLogger.log(
+      `← ${request.method} ${request.originalUrl} ${response.statusCode} ${Date.now() - startedAt}ms`,
+    );
+  });
+  next();
 }
 
 function logAnafCompanyRequest(

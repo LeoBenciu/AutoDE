@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   Param,
   ParseIntPipe,
   Post,
@@ -19,6 +20,8 @@ import { DocumentsService, UploadedDoc } from './documents.service';
 @Controller('documents')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class DocumentsController {
+  private readonly logger = new Logger(DocumentsController.name);
+
   constructor(private readonly documents: DocumentsService) {}
 
   @Post('upload')
@@ -30,6 +33,14 @@ export class DocumentsController {
     @Body('vehicleId') vehicleId?: string,
     @Body('partyId') partyId?: string,
   ) {
+    this.logger.log(
+      `upload hit: tenant=${user.tenantId} files=${files?.length ?? 0} ` +
+        `[${(files ?? []).map((f) => `${f.originalname}(${f.size}b)`).join(', ')}] ` +
+        `vehicleId=${vehicleId ?? '-'} partyId=${partyId ?? '-'}`,
+    );
+    if (!files?.length) {
+      this.logger.warn('upload hit but no files were parsed from the request');
+    }
     const results: Array<Awaited<ReturnType<DocumentsService['upload']>>> = [];
     for (const file of files ?? []) {
       results.push(
