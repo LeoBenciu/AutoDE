@@ -219,7 +219,7 @@ function OriginalSellerSection({ vehicle }: { vehicle: any }) {
           <h2 className="font-semibold text-ink">Vânzător inițial</h2>
           <p className="text-xs text-muted">
             {vehicle.seller
-              ? `${vehicle.seller.name} · ${vehicle.seller.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI'} ${vehicle.seller.taxId || '—'}`
+              ? `${vehicle.seller.name} · ${vehicle.seller.identifierType === 'FOREIGN_ID' ? 'ID extern' : vehicle.seller.identifierType || (vehicle.seller.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI')} ${vehicle.seller.taxId || '—'}`
               : 'Nu este selectat'}
           </p>
         </div>
@@ -236,7 +236,7 @@ function OriginalSellerSection({ vehicle }: { vehicle: any }) {
             onClick={() => setMode('new')}
             className={`rounded-control px-2.5 py-1.5 ${mode === 'new' ? 'bg-brand text-white' : 'border border-line-strong text-ink-soft'}`}
           >
-            CUI/CNP nou
+            Identificator nou
           </button>
         </div>
       </div>
@@ -251,7 +251,7 @@ function OriginalSellerSection({ vehicle }: { vehicle: any }) {
             <option value="">Fără vânzător inițial</option>
             {parties.map((party: any) => (
               <option key={party.id} value={party.id}>
-                {party.name} · {party.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI'} {party.taxId || '—'}
+                {party.name} · {party.identifierType === 'FOREIGN_ID' ? 'ID extern' : party.identifierType || (party.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI')} {party.taxId || '—'}
               </option>
             ))}
           </select>
@@ -274,11 +274,21 @@ function OriginalSellerSection({ vehicle }: { vehicle: any }) {
               onChange={(event) => setSeller({ ...seller, name: event.target.value })}
             />
             <input
-              aria-label={seller.kind === 'INDIVIDUAL' ? 'CNP vânzător' : 'CUI vânzător'}
+              aria-label={seller.kind === 'INDIVIDUAL' ? (seller.country === 'RO' ? 'CNP vânzător' : 'Identificator extern vânzător') : 'CUI vânzător'}
               className={field}
-              placeholder={seller.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI / CIF'}
+              placeholder={seller.kind === 'INDIVIDUAL' ? (seller.country === 'RO' ? 'CNP' : 'Identificator extern') : 'CUI / CIF'}
               value={seller.taxId}
               onChange={(event) => setSeller({ ...seller, taxId: event.target.value })}
+            />
+            <input
+              aria-label="Țară vânzător"
+              className={`${field} w-24`}
+              placeholder="Țară"
+              maxLength={2}
+              value={seller.country}
+              onChange={(event) =>
+                setSeller({ ...seller, country: event.target.value.toUpperCase() })
+              }
             />
           </>
         )}

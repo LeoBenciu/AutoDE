@@ -249,6 +249,9 @@ export class DocumentsService {
     const parsedValue = normalizeCorrectionValue(field, newValue);
     const oldValue = oldRaw == null ? null : serializeCorrection(oldRaw);
     writePath(fields, field, parsedValue);
+    if (invalidatesVehicleCostCategoryReview(field)) {
+      fields.vehicle_cost_categories_reviewed = false;
+    }
     const fieldConfidence = {
       ...((processed.fieldConfidence ?? {}) as Record<string, unknown>),
       [field]: 1,
@@ -430,6 +433,15 @@ function normalizeCorrectionValue(field: string, value: unknown): unknown {
     }
   }
   return value;
+}
+
+function invalidatesVehicleCostCategoryReview(field: string): boolean {
+  return (
+    field === 'vehicle_transaction' ||
+    field === 'vehicle_cost_category' ||
+    field === 'line_items' ||
+    field.startsWith('line_items[')
+  );
 }
 
 function serializeCorrection(value: unknown): string {

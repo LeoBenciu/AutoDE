@@ -17,7 +17,12 @@ import { resolveExchangeRateToRon } from './fx';
 import {
   removeDocumentVehicleCosts,
   syncApprovedDocumentVehicleEffects,
+  vehicleCostReviewErrors,
 } from '../vehicles/vehicle-document-sync';
+import {
+  PartyIdentifierTypeValue,
+  privateSellerIdentityErrors,
+} from '../parties/party-identity';
 
 export interface JournalDraftLine {
   accountCode: string;
@@ -79,6 +84,7 @@ export class PostingService {
       context.tenant,
       references,
       accounts,
+      context.document.vehicleId,
     );
   }
 
@@ -120,6 +126,7 @@ export class PostingService {
       context.tenant,
       references,
       baseAccounts,
+      context.document.vehicleId,
     );
     if (initialPreview.errors.length > 0) {
       throw new BadRequestException({
@@ -159,6 +166,7 @@ export class PostingService {
           context.tenant,
           references,
           accounts,
+          context.document.vehicleId,
         );
         if (finalPreview.errors.length > 0) {
           throw new BadRequestException({
@@ -435,6 +443,7 @@ export class PostingService {
     },
     references: ReferenceDocument[],
     accounts: ResolvedAccounts,
+    vehicleId?: number | null,
   ): Promise<PostingPreview> {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -503,6 +512,14 @@ export class PostingService {
       if (!canonical.vendor) {
         errors.push('Numele persoanei care vinde vehiculul este obligatoriu');
       }
+      errors.push(
+        ...privateSellerIdentityErrors({
+          kind: canonical.vendorKind,
+          country: canonical.vendorCountry,
+          identifierType: canonical.vendorIdentifierType,
+          taxId: canonical.vendorEin,
+        }),
+      );
       const raw = canonical.raw;
       const missingVehicleFields = [
         !raw.vin ? 'VIN' : '',
@@ -518,6 +535,7 @@ export class PostingService {
         );
       }
     }
+    errors.push(...vehicleCostReviewErrors(canonical, vehicleId));
     if (
       canonical.documentType === 'Receipt' &&
       canonical.receiptType !== 'payment_receipt' &&
@@ -1134,6 +1152,7 @@ export class PostingService {
       supplierCanonical.vendorCountry,
       supplierCanonical.vendorIban,
       supplierCanonical.vendorKind,
+      supplierCanonical.vendorIdentifierType,
     );
     const client = await this.upsertParty(
       tx,
@@ -1144,6 +1163,7 @@ export class PostingService {
       clientCanonical.buyerCountry,
       undefined,
       clientCanonical.buyerKind,
+      clientCanonical.buyerIdentifierType,
     );
 
     for (const line of canonical.lineItems) {
@@ -1183,6 +1203,7 @@ export class PostingService {
     country: string,
     iban?: string,
     kind: 'INDIVIDUAL' | 'COMPANY' = 'COMPANY',
+    identifierType: PartyIdentifierTypeValue = 'CUI',
   ): Promise<any | null> {
     const taxId = normalizeEin(rawEin);
     if (!taxId && !name) return null;
@@ -1198,6 +1219,7 @@ export class PostingService {
           name: name || taxId,
           taxId: taxId || null,
           kind,
+          identifierType,
           country: country || 'RO',
           iban,
         },
@@ -1214,6 +1236,7 @@ export class PostingService {
           name: name || existing.name,
           taxId: taxId || existing.taxId,
           kind,
+          identifierType,
           country: country || existing.country,
           iban: iban || existing.iban,
           isSupplier: true,
@@ -1232,6 +1255,7 @@ export class PostingService {
         name: name || existing.name,
         taxId: taxId || existing.taxId,
         kind,
+        identifierType,
         country: country || existing.country,
         isClient: true,
         clientAnalytic: analytic,

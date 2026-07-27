@@ -273,6 +273,7 @@ class BankTransactionsChunk(StrictBase):
 
 ContractPartyRole = Literal["client", "vendor", "contractor"]
 ContractPartyKind = Literal["INDIVIDUAL", "COMPANY"]
+ContractPartyIdentifierType = Literal["CUI", "CNP", "FOREIGN_ID"]
 DeliverableStatus = Literal["pending", "completed"]
 
 
@@ -281,6 +282,7 @@ class ContractParty(StrictBase):
     ein: str
     role: ContractPartyRole
     kind: ContractPartyKind
+    identifier_type: ContractPartyIdentifierType
     country: Optional[str]
 
 

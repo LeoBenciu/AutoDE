@@ -36,6 +36,10 @@ export class VehicleSellerDto {
   taxId: string;
 
   @IsOptional()
+  @IsEnum(['CUI', 'CNP', 'FOREIGN_ID'])
+  identifierType?: 'CUI' | 'CNP' | 'FOREIGN_ID';
+
+  @IsOptional()
   @IsString()
   country?: string;
 

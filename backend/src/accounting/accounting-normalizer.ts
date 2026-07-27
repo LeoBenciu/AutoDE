@@ -1,3 +1,9 @@
+import {
+  normalizeIdentifierType,
+  normalizePartyCountry,
+  PartyIdentifierTypeValue,
+} from '../parties/party-identity';
+
 export type AccountingDirection = 'incoming' | 'outgoing';
 export type VatDeductibility = 'FULL' | 'PARTIAL_50' | 'NONE';
 
@@ -25,11 +31,13 @@ export interface CanonicalAccountingDocument {
   vendorEin: string;
   vendorCountry: string;
   vendorKind: 'INDIVIDUAL' | 'COMPANY';
+  vendorIdentifierType: PartyIdentifierTypeValue;
   vendorIban?: string;
   buyer: string;
   buyerEin: string;
   buyerCountry: string;
   buyerKind: 'INDIVIDUAL' | 'COMPANY';
+  buyerIdentifierType: PartyIdentifierTypeValue;
   documentNumber: string;
   documentDate?: string;
   dueDate?: string;
@@ -122,6 +130,18 @@ export function normalizeAccountingDocument(
   let direction = normalizeDirection(raw.direction);
   if (companyEin && buyerEin === companyEin) direction = 'incoming';
   if (companyEin && vendorEin === companyEin) direction = 'outgoing';
+  const vendorCountry = normalizeCountry(
+    raw.vendor_country ?? raw.supplier_country ?? contractVendor?.country,
+  );
+  const vendorKind = normalizePartyKind(
+    raw.vendor_kind ?? raw.supplier_kind ?? contractVendor?.kind,
+  );
+  const buyerCountry = normalizeCountry(
+    raw.buyer_country ?? raw.customer_country ?? contractBuyer?.country,
+  );
+  const buyerKind = normalizePartyKind(
+    raw.buyer_kind ?? raw.customer_kind ?? contractBuyer?.kind,
+  );
 
   const totalAmount = positiveNumber(
     raw.total_amount ??
@@ -220,20 +240,26 @@ export function normalizeAccountingDocument(
         contractVendor?.name,
     ),
     vendorEin,
-    vendorCountry: normalizeCountry(
-      raw.vendor_country ?? raw.supplier_country ?? contractVendor?.country,
-    ),
-    vendorKind: normalizePartyKind(
-      raw.vendor_kind ?? raw.supplier_kind ?? contractVendor?.kind,
+    vendorCountry,
+    vendorKind,
+    vendorIdentifierType: normalizeIdentifierType(
+      raw.vendor_identifier_type ??
+        raw.supplier_identifier_type ??
+        contractVendor?.identifier_type,
+      vendorKind,
+      vendorCountry,
     ),
     vendorIban: optionalString(raw.vendor_iban ?? raw.supplier_iban),
     buyer: stringValue(raw.buyer ?? raw.customer_name ?? contractBuyer?.name),
     buyerEin,
-    buyerCountry: normalizeCountry(
-      raw.buyer_country ?? raw.customer_country ?? contractBuyer?.country,
-    ),
-    buyerKind: normalizePartyKind(
-      raw.buyer_kind ?? raw.customer_kind ?? contractBuyer?.kind,
+    buyerCountry,
+    buyerKind,
+    buyerIdentifierType: normalizeIdentifierType(
+      raw.buyer_identifier_type ??
+        raw.customer_identifier_type ??
+        contractBuyer?.identifier_type,
+      buyerKind,
+      buyerCountry,
     ),
     documentNumber: stringValue(
       raw.document_number ??
@@ -456,8 +482,7 @@ function normalizeCurrency(value: unknown): string {
 }
 
 function normalizeCountry(value: unknown): string {
-  const text = stringValue(value).toUpperCase();
-  return text || 'RO';
+  return normalizePartyCountry(stringValue(value));
 }
 
 function positiveNumber(value: unknown): number {

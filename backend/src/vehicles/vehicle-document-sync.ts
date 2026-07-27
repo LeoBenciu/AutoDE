@@ -48,6 +48,68 @@ export function isVehiclePurchaseDocument(
   );
 }
 
+export function isVehicleCostDocument(
+  canonical: CanonicalAccountingDocument,
+  vehicleId?: number | null,
+): boolean {
+  if (
+    !['Invoice', 'Receipt'].includes(canonical.documentType) ||
+    canonical.direction === 'outgoing' ||
+    canonical.receiptType === 'payment_receipt' ||
+    isVehiclePurchaseDocument(canonical)
+  ) {
+    return false;
+  }
+  const hasExplicitCostCategory =
+    isCostCategory(
+      text(canonical.raw.vehicle_cost_category).toUpperCase(),
+    ) ||
+    canonical.lineItems.some((line) =>
+      isCostCategory(text(line.raw.vehicle_cost_category).toUpperCase()),
+    );
+  return (
+    text(canonical.raw.vehicle_transaction).toLowerCase() === 'cost' ||
+    hasExplicitCostCategory ||
+    vehicleId != null
+  );
+}
+
+export function vehicleCostReviewErrors(
+  canonical: CanonicalAccountingDocument,
+  vehicleId?: number | null,
+): string[] {
+  if (!isVehicleCostDocument(canonical, vehicleId)) return [];
+
+  const errors: string[] = [];
+  if (vehicleId == null) {
+    errors.push('Asociază documentul de cost cu vehiculul înainte de aprobare');
+  }
+
+  const documentCategory = text(
+    canonical.raw.vehicle_cost_category,
+  ).toUpperCase();
+  const missingLines = canonical.lineItems
+    .map((line, index) => {
+      const lineCategory = text(line.raw.vehicle_cost_category).toUpperCase();
+      return isCostCategory(lineCategory) || isCostCategory(documentCategory)
+        ? undefined
+        : index + 1;
+    })
+    .filter((index): index is number => index != null);
+  if (canonical.lineItems.length === 0 && !isCostCategory(documentCategory)) {
+    errors.push('Selectează categoria costului pentru document');
+  } else if (missingLines.length > 0) {
+    errors.push(
+      `Selectează categoria de cost pentru ${missingLines.length === 1 ? 'linia' : 'liniile'} ${missingLines.join(', ')}`,
+    );
+  }
+
+  if (canonical.raw.vehicle_cost_categories_reviewed !== true) {
+    errors.push('Confirmă categoriile de cost înainte de aprobare');
+  }
+  return errors;
+}
+
 /**
  * Finds the vehicle identified by the document, or creates it for a purchase
  * invoice/contract once all required stock-card fields have been extracted.

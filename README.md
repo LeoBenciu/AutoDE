@@ -73,9 +73,10 @@ document management, LLM document extraction, contract generation, and RO e-Tran
 4. Upload CMR and registration papers; they attach to the same VIN and enrich the vehicle
    file. Create and confirm e-Transport/UIT when that flow applies.
 5. Upload transport, registration, ITP, refurbishment and other supplier invoices/receipts,
-   assign a vehicle if the VIN is not printed, verify, then approve. Their economic amounts
-   become categorized vehicle costs; ITP/customs/etc. remain cost categories, not special
-   upload types.
+   assign a vehicle if the VIN is not printed, select a document-wide cost category or one
+   category per line, and explicitly confirm the category review before approval. Their
+   economic amounts become categorized vehicle costs; ITP/customs/etc. remain cost
+   categories, not special upload types.
 6. Mark the vehicle **IN_STOCK** when physically received and ready, then export the approved
    period from **SAGA exports**. Use manual vehicle/cost entry only for missing source documents
    or exceptional adjustments.

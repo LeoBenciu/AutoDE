@@ -60,8 +60,9 @@ extract_invoice_data_task:
       for a vehicle; otherwise set "other".
     - For a cost invoice, set vehicle_cost_category to TRANSPORT, CUSTOMS, VAT,
       ITP, REGISTRATION, REFURB, or OTHER. Use null for purchase/other invoices.
-      Also classify every line item in vehicle_cost_category when it is a
-      vehicle-related cost; otherwise use null.
+      Also classify EVERY line item in vehicle_cost_category for a cost invoice;
+      use OTHER when none of the specific categories applies. Only use null on
+      lines that are not vehicle-related.
 
     CRITICAL: Extract line_items array - THIS IS MANDATORY. EVERY invoice MUST have line_items. Look carefully at the document for itemized lists, tables, product/service descriptions with quantities and prices. Extract ALL items from ALL pages of the document. If the document text contains "=== PAGE X ===" markers, this indicates a multi-page document - you MUST extract line items from EVERY page, not just the first page. Count the total number of line items as you extract them - if you see line items continuing on subsequent pages, you MUST include ALL of them. Do NOT stop after the first page or after a certain number of items.     Each line item must have: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (e.g., '624' for transport - THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING invoices - see rules below), vehicle_cost_category (vehicle cost category or null). The line_items array CANNOT be empty - if you cannot find explicit line items, you must look harder or extract from the invoice structure. For multi-page invoices, continue reading through all pages until you have extracted every single line item. Verify completeness by checking that you've processed all pages and all line items visible in the document.
 
@@ -156,7 +157,7 @@ extract_receipt_data_task:
     - When in doubt and items are listed → 'independent_receipt'
     - Examples of independent receipts: supermarket receipts, gas station receipts, retail store receipts, restaurant bills with items
 
-    Common fields for all receipts: receipt_number, receipt_type ('payment_receipt' OR 'independent_receipt'), vendor, vendor_ein (number only, remove 'RO'), buyer, buyer_ein (number only, remove 'RO'), total_amount (paid/received - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), document_date (DD-MM-YYYY, must not be after {current_date}), payment_method (MANDATORY - must be either 'cash' or 'bank' - analyze the document carefully: if payment was made by cash/numerar use 'cash', if payment was made by bank transfer/transfer bancar OR card/card bancar use 'bank' - card payments are treated as bank payments - this is critical for bank reconciliation), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - detect from document or default to RON), vin (17-character chassis number or null), vehicle_cost_category (TRANSPORT, CUSTOMS, VAT, ITP, REGISTRATION, REFURB, OTHER, or null), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
+    Common fields for all receipts: receipt_number, receipt_type ('payment_receipt' OR 'independent_receipt'), vendor, vendor_ein (number only, remove 'RO'), buyer, buyer_ein (number only, remove 'RO'), total_amount (paid/received - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), document_date (DD-MM-YYYY, must not be after {current_date}), payment_method (MANDATORY - must be either 'cash' or 'bank' - analyze the document carefully: if payment was made by cash/numerar use 'cash', if payment was made by bank transfer/transfer bancar OR card/card bancar use 'bank' - card payments are treated as bank payments - this is critical for bank reconciliation), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - detect from document or default to RON), vin (17-character chassis number or null), vehicle_cost_category (TRANSPORT, CUSTOMS, VAT, ITP, REGISTRATION, REFURB, OTHER, or null; when the receipt is a vehicle cost choose a category, using OTHER if needed), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
 
     For PAYMENT RECEIPTS only: invoice_reference (MANDATORY - extract invoice number from phrases like "Pentru factura", "Factura nr.", "Invoice No.", "Payment for invoice", "Referinta: factura" - look in headers, footers, and reference sections. Also add to referenced_numbers array.)
 
@@ -215,9 +216,12 @@ extract_contract_data_task:
     CURRENT DATE: {current_date}
 
     Extract: contract_number, contract_type, direction, parties array with: name,
-    ein (CUI/CNP when printed, number only and remove 'RO'), role
+    ein (CUI/CNP/foreign personal identifier when printed; remove spaces and
+    the Romanian VAT prefix 'RO' but preserve meaningful letters), role
     (vendor=the seller, client=the buyer, contractor only for another service
-    party), kind (INDIVIDUAL or COMPANY), country (ISO code or null),
+    party), kind (INDIVIDUAL or COMPANY), identifier_type (CNP for a Romanian
+    individual, FOREIGN_ID for an individual from another country, CUI for a
+    company), country (ISO code or null),
     contract_date (DD-MM-YYYY, must not be after {current_date}), start_date
     (DD-MM-YYYY; use contract_date when no separate start exists), end_date
     (DD-MM-YYYY; use contract_date when the sale has no term), total_value
@@ -236,7 +240,14 @@ extract_contract_data_task:
       first_registration_date (DD-MM-YYYY), and mileage_km exactly as printed.
       Use null for absent fields and never guess.
     - The individual selling the car is the vendor with kind=INDIVIDUAL. The
-      dealership is the client with kind=COMPANY. Do not invent a CNP/CUI.
+      dealership is the client with kind=COMPANY.
+    - For a Romanian individual vendor, extract the 13-digit CNP and set
+      identifier_type=CNP. For a non-Romanian individual vendor, extract the
+      printed passport/national/personal identifier and set
+      identifier_type=FOREIGN_ID. Never substitute an address, phone number, or
+      document serial for the personal identifier.
+    - Do not invent a CNP, foreign identifier, or CUI. Keep ein empty when the
+      identifier is absent so the document is sent to manual review.
     Use DD-MM-YYYY format. Output as JSON.
   expected_output: >
     JSON with contract details and currency.

@@ -109,6 +109,9 @@ class ContractParty(BaseModel):
     tax_id: Optional[str] = None
     role: Optional[str] = Field(None, description="e.g. seller, buyer, lessor")
     kind: Optional[str] = Field(None, description="INDIVIDUAL or COMPANY")
+    identifier_type: Optional[str] = Field(
+        None, description="CNP, FOREIGN_ID, or CUI"
+    )
     country: Optional[str] = None
 
 

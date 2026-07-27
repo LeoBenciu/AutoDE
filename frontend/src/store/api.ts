@@ -119,7 +119,12 @@ export const api = createApi({
     }),
     assignDocument: build.mutation<any, { id: number; vehicleId?: number | null; partyId?: number | null }>({
       query: ({ id, ...body }) => ({ url: `/documents/${id}/assign`, method: 'POST', body }),
-      invalidatesTags: (_r, _e, { id }) => ['Document', { type: 'Document', id }, 'Vehicle'],
+      invalidatesTags: (_r, _e, { id }) => [
+        'Document',
+        { type: 'Document', id },
+        { type: 'Accounting', id },
+        'Vehicle',
+      ],
     }),
     archiveDocument: build.mutation<any, { id: number; archived: boolean }>({
       query: ({ id, archived }) => ({ url: `/documents/${id}/${archived ? 'archive' : 'unarchive'}`, method: 'POST' }),
