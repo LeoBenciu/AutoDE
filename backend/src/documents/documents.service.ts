@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
@@ -16,6 +22,8 @@ export interface UploadedDoc {
 
 @Injectable()
 export class DocumentsService {
+  private readonly logger = new Logger(DocumentsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
@@ -38,7 +46,19 @@ export class DocumentsService {
     });
 
     const s3Key = `tenants/${tenantId}/uploads/${randomUUID()}/${sanitizeName(file.originalname)}`;
-    await this.s3.putObject(s3Key, file.buffer, file.mimetype);
+    try {
+      await this.s3.putObject(s3Key, file.buffer, file.mimetype);
+    } catch (error: any) {
+      this.logger.error(
+        `S3 putObject failed for bucket "${this.s3.bucket}" key "${s3Key}" (${file.size} bytes): ${
+          error?.name ?? 'Error'
+        } ${error?.message ?? error}`,
+        error?.stack,
+      );
+      throw new InternalServerErrorException(
+        'Fișierul nu a putut fi salvat în stocare. Verifică configurația S3 și încearcă din nou.',
+      );
+    }
 
     const pending = await this.prisma.pendingUpload.create({
       data: {

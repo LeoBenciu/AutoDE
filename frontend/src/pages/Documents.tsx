@@ -19,6 +19,7 @@ import {
 } from '../store/api';
 import { StatusChip } from '../components/StatusChip';
 import { DocumentPreview } from '../components/DocumentPreview';
+import { API_BASE_URL } from '../store/apiBase';
 import type { RootState } from '../store/store';
 
 const DOC_TYPES = [
@@ -89,9 +90,37 @@ export default function Documents() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [uploadError, setUploadError] = useState('');
 
-  const onFiles = (files: File[]) => {
-    if (files.length) upload({ files });
+  const onFiles = async (files: File[]) => {
+    console.log(
+      '[upload] onFiles called with',
+      files.length,
+      'file(s):',
+      files.map((f) => ({ name: f.name, size: f.size, type: f.type })),
+    );
+    if (!files.length) {
+      console.warn('[upload] no files selected — aborting');
+      return;
+    }
+    setUploadError('');
+    console.log('[upload] POST', `${API_BASE_URL}/documents/upload`);
+    try {
+      const result = await upload({ files }).unwrap();
+      console.log('[upload] SUCCESS', result);
+    } catch (error: any) {
+      console.error('[upload] FAILED', {
+        status: error?.status,
+        data: error?.data,
+        error,
+      });
+      setUploadError(
+        error?.data?.message ??
+          error?.error ??
+          error?.message ??
+          `Încărcarea a eșuat (status ${error?.status ?? '?'}). Verifică consola pentru detalii.`,
+      );
+    }
   };
 
   return (
@@ -156,6 +185,19 @@ export default function Documents() {
         </p>
         <p className="mt-1.5 text-[12.5px] text-muted">Facturi, contracte, chitanțe, dispoziții, CMR și taloane — PDF sau poze</p>
       </div>
+
+      {uploadError && (
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <span>{uploadError}</span>
+          <button
+            onClick={() => setUploadError('')}
+            aria-label="Închide"
+            className="shrink-0 text-red-400 hover:text-red-600"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Processing queue */}
       {(data?.pending?.length ?? 0) > 0 && (
