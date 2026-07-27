@@ -1042,7 +1042,8 @@ def extract_json_from_text(text: str) -> dict:
                                             if full_line_items_match:
                                                 full_array_start = full_line_items_match.end()
                                                 array_content = text[full_array_start:]
-                                                print(f"🔍 [FIX] Fallback (Ultimate): Re-extracted array_content from full text (length: {len(array_content)} chars, has {len(list(re.finditer(r'"isNew"\s*:\s*false', array_content)))} markers)", file=sys.stderr)
+                                                isnew_marker_count = len(re.findall(r'"isNew"\s*:\s*false', array_content))
+                                                print(f"🔍 [FIX] Fallback (Ultimate): Re-extracted array_content from full text (length: {len(array_content)} chars, has {isnew_marker_count} markers)", file=sys.stderr)
 
                                         # Find ALL ']' characters and test each one with bracket counting
                                         all_brackets = []
@@ -2013,7 +2014,8 @@ def process_with_retry(crew_instance, inputs: dict, max_retries: int = 2) -> tup
                                                 if array_end_pos > 0:
                                                     array_content_preview = raw_output[array_start_pos:array_end_pos]
                                                     print(f"🚨 [CRITICAL] PHASE 1: line_items array found at position {array_start_pos}, ends at {array_end_pos} (length: {array_end_pos - array_start_pos} chars)", file=sys.stderr)
-                                                    print(f"🚨 [CRITICAL] PHASE 1: Array content 'isNew' count: {array_content_preview.count('\"isNew\": false')}", file=sys.stderr)
+                                                    isnew_false_count = array_content_preview.count('"isNew": false')
+                                                    print(f"🚨 [CRITICAL] PHASE 1: Array content 'isNew' count: {isnew_false_count}", file=sys.stderr)
                                                     print(f"🚨 [CRITICAL] PHASE 1: Last 500 chars of array: ...{array_content_preview[-500:]}", file=sys.stderr)
                                                 else:
                                                     print(f"🚨 [CRITICAL] PHASE 1: Could not find closing bracket for line_items array!", file=sys.stderr)
