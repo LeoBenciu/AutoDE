@@ -8,6 +8,11 @@ import {
   UpdateVehicleDto,
   VehicleSellerDto,
 } from './dto';
+import {
+  normalizeIdentifierType,
+  normalizePartyCountry,
+  privateSellerIdentityErrors,
+} from '../parties/party-identity';
 
 @Injectable()
 export class VehiclesService {
@@ -178,9 +183,27 @@ export class VehiclesService {
       if (sellerId === null) return null;
       const existing = await tx.party.findFirst({
         where: { id: sellerId, tenantId },
-        select: { id: true, isSupplier: true },
+        select: {
+          id: true,
+          kind: true,
+          country: true,
+          identifierType: true,
+          taxId: true,
+          isSupplier: true,
+        },
       });
       if (!existing) throw new NotFoundException('Vânzătorul inițial nu a fost găsit');
+      if (existing.kind === 'INDIVIDUAL') {
+        const identityErrors = privateSellerIdentityErrors({
+          kind: existing.kind,
+          country: existing.country,
+          identifierType: existing.identifierType,
+          taxId: existing.taxId,
+        });
+        if (identityErrors.length > 0) {
+          throw new BadRequestException(identityErrors.join('; '));
+        }
+      }
       if (!existing.isSupplier) {
         await tx.party.update({
           where: { id: existing.id },
@@ -199,15 +222,33 @@ export class VehiclesService {
           : 'CUI-ul vânzătorului este obligatoriu',
       );
     }
+    const country = normalizePartyCountry(seller.country);
+    const identifierType = normalizeIdentifierType(
+      seller.identifierType,
+      seller.kind,
+      country,
+    );
+    if (seller.kind === 'INDIVIDUAL') {
+      const identityErrors = privateSellerIdentityErrors({
+        kind: seller.kind,
+        country,
+        identifierType,
+        taxId,
+      });
+      if (identityErrors.length > 0) {
+        throw new BadRequestException(identityErrors.join('; '));
+      }
+    }
     const existing = await tx.party.findFirst({ where: { tenantId, taxId } });
     if (existing) {
       const updated = await tx.party.update({
         where: { id: existing.id },
         data: {
           kind: seller.kind,
+          identifierType,
           name: seller.name,
           isSupplier: true,
-          country: seller.country?.toUpperCase() || existing.country,
+          country,
           address: seller.address || existing.address,
         },
       });
@@ -217,10 +258,11 @@ export class VehiclesService {
       data: {
         tenantId,
         kind: seller.kind,
+        identifierType,
         name: seller.name,
         taxId,
         isSupplier: true,
-        country: seller.country?.toUpperCase() || 'RO',
+        country,
         address: seller.address,
       },
     });

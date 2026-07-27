@@ -30,6 +30,14 @@ const ROLE_LABELS: Record<string, string> = {
   ACCOUNTANT: 'Contabil',
   VIEWER: 'Doar citire',
 };
+const VAT_RATE_LABELS: Record<string, string> = {
+  ZERO: '0%',
+  FIVE: '5%',
+  NINE: '9%',
+  ELEVEN: '11%',
+  NINETEEN: '19%',
+  TWENTYONE: '21%',
+};
 
 export default function Settings() {
   const me = useSelector((state: RootState) => state.auth.user);
@@ -415,8 +423,10 @@ function PartnersCatalogue({
   const [importParties] = useImportPartiesMutation();
   const empty = {
     kind: 'COMPANY',
+    identifierType: 'CUI',
     name: '',
     taxId: '',
+    country: 'RO',
     isSupplier: true,
     isClient: false,
     supplierAnalytic: '',
@@ -426,7 +436,7 @@ function PartnersCatalogue({
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      await createParty({ ...form, country: 'RO' }).unwrap();
+      await createParty(form).unwrap();
       setForm(empty);
     } catch (error: any) {
       onMessage(apiError(error));
@@ -453,7 +463,19 @@ function PartnersCatalogue({
           aria-label="Tip partener"
           className={fieldClass}
           value={form.kind}
-          onChange={(event) => setForm({ ...form, kind: event.target.value })}
+          onChange={(event) => {
+            const kind = event.target.value;
+            setForm({
+              ...form,
+              kind,
+              identifierType:
+                kind === 'COMPANY'
+                  ? 'CUI'
+                  : form.country === 'RO'
+                    ? 'CNP'
+                    : 'FOREIGN_ID',
+            });
+          }}
         >
           <option value="COMPANY">Companie</option>
           <option value="INDIVIDUAL">Persoană fizică</option>
@@ -463,9 +485,43 @@ function PartnersCatalogue({
           aria-label={form.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI / CIF'}
           className={fieldClass}
           placeholder={form.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI / CIF'}
+          required={form.kind === 'INDIVIDUAL' && form.isSupplier}
           value={form.taxId}
           onChange={(event) => setForm({ ...form, taxId: event.target.value })}
         />
+        <input
+          aria-label="Țară partener"
+          className={fieldClass}
+          placeholder="Țară (ISO)"
+          maxLength={2}
+          required
+          value={form.country}
+          onChange={(event) => {
+            const country = event.target.value.toUpperCase();
+            setForm({
+              ...form,
+              country,
+              identifierType:
+                form.kind === 'COMPANY'
+                  ? 'CUI'
+                  : country === 'RO'
+                    ? 'CNP'
+                    : 'FOREIGN_ID',
+            });
+          }}
+        />
+        <select
+          aria-label="Tip identificator"
+          className={fieldClass}
+          value={form.identifierType}
+          onChange={(event) =>
+            setForm({ ...form, identifierType: event.target.value })
+          }
+        >
+          <option value="CUI">CUI</option>
+          <option value="CNP">CNP</option>
+          <option value="FOREIGN_ID">Identificator extern</option>
+        </select>
         <input className={fieldClass} placeholder="Analitic furnizor (401.x)" value={form.supplierAnalytic} onChange={(event) => setForm({ ...form, supplierAnalytic: event.target.value })} />
         <input className={fieldClass} placeholder="Analitic client (411.x)" value={form.clientAnalytic} onChange={(event) => setForm({ ...form, clientAnalytic: event.target.value })} />
         <div className="flex items-center gap-4 sm:col-span-2">
@@ -503,6 +559,15 @@ function PartyRow({
 }) {
   const [draft, setDraft] = useState({
     kind: party.kind ?? 'COMPANY',
+    identifierType:
+      party.identifierType ??
+      (party.kind === 'INDIVIDUAL'
+        ? party.country === 'RO'
+          ? 'CNP'
+          : 'FOREIGN_ID'
+        : 'CUI'),
+    taxId: party.taxId ?? '',
+    country: party.country ?? 'RO',
     isSupplier: party.isSupplier,
     isClient: party.isClient,
     supplierAnalytic: party.supplierAnalytic ?? '',
@@ -514,18 +579,74 @@ function PartyRow({
       <div className="min-w-44 flex-1">
         <p className="text-sm font-semibold text-ink">{party.name}</p>
         <p className="text-xs text-muted">
-          {party.kind === 'INDIVIDUAL' ? 'Persoană fizică' : 'Companie'} · {party.taxId || (party.kind === 'INDIVIDUAL' ? 'Fără CNP' : 'Fără CUI')}
+          {party.kind === 'INDIVIDUAL' ? 'Persoană fizică' : 'Companie'} ·{' '}
+          {party.identifierType === 'FOREIGN_ID'
+            ? 'Identificator extern'
+            : party.identifierType || (party.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI')}
+          : {party.taxId || 'Lipsă'}
         </p>
       </div>
       <select
         aria-label={`Tip partener ${party.name}`}
         className={`${fieldClass} w-36`}
         value={draft.kind}
-        onChange={(event) => setDraft({ ...draft, kind: event.target.value })}
+        onChange={(event) => {
+          const kind = event.target.value;
+          setDraft({
+            ...draft,
+            kind,
+            identifierType:
+              kind === 'COMPANY'
+                ? 'CUI'
+                : draft.country === 'RO'
+                  ? 'CNP'
+                  : 'FOREIGN_ID',
+          });
+        }}
       >
         <option value="COMPANY">Companie</option>
         <option value="INDIVIDUAL">Persoană fizică</option>
       </select>
+      <input
+        aria-label={`Țară ${party.name}`}
+        className={`${fieldClass} w-20`}
+        maxLength={2}
+        value={draft.country}
+        onChange={(event) => {
+          const country = event.target.value.toUpperCase();
+          setDraft({
+            ...draft,
+            country,
+            identifierType:
+              draft.kind === 'COMPANY'
+                ? 'CUI'
+                : country === 'RO'
+                  ? 'CNP'
+                  : 'FOREIGN_ID',
+          });
+        }}
+      />
+      <select
+        aria-label={`Tip identificator ${party.name}`}
+        className={`${fieldClass} w-40`}
+        value={draft.identifierType}
+        onChange={(event) =>
+          setDraft({ ...draft, identifierType: event.target.value })
+        }
+      >
+        <option value="CUI">CUI</option>
+        <option value="CNP">CNP</option>
+        <option value="FOREIGN_ID">ID extern</option>
+      </select>
+      <input
+        aria-label={`Identificator ${party.name}`}
+        className={`${fieldClass} w-40`}
+        placeholder={
+          draft.identifierType === 'FOREIGN_ID' ? 'Identificator extern' : draft.identifierType
+        }
+        value={draft.taxId}
+        onChange={(event) => setDraft({ ...draft, taxId: event.target.value })}
+      />
       <label className="flex items-center gap-1 text-xs text-muted">
         <input type="checkbox" checked={draft.isSupplier} onChange={(event) => setDraft({ ...draft, isSupplier: event.target.checked })} /> Furnizor
       </label>
@@ -593,7 +714,9 @@ function ArticlesCatalogue({
         <input className={fieldClass} placeholder="Cod analitic SAGA" value={form.analyticCode} onChange={(event) => setForm({ ...form, analyticCode: event.target.value })} />
         <input className={fieldClass} placeholder="Cont" value={form.accountCode} onChange={(event) => setForm({ ...form, accountCode: event.target.value })} />
         <select className={fieldClass} value={form.vatRate} onChange={(event) => setForm({ ...form, vatRate: event.target.value })}>
-          {['ZERO', 'FIVE', 'NINE', 'ELEVEN', 'NINETEEN', 'TWENTYONE'].map((value) => <option key={value} value={value}>TVA {value}</option>)}
+          {Object.entries(VAT_RATE_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>TVA {label}</option>
+          ))}
         </select>
         <input className={fieldClass} placeholder="UM" value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} />
         <input className={fieldClass} placeholder="Tip SAGA" value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} />
@@ -605,7 +728,7 @@ function ArticlesCatalogue({
           article.code,
           article.name,
           article.analyticCode || '—',
-          article.vatRate,
+          VAT_RATE_LABELS[article.vatRate] ?? article.vatRate,
           article.unit,
           article.accountCode || '—',
         ])}

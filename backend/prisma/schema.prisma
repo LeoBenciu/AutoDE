@@ -89,11 +89,18 @@ enum PartyKind {
   COMPANY
 }
 
+enum PartyIdentifierType {
+  CUI
+  CNP
+  FOREIGN_ID
+}
+
 model Party {
-  id               Int       @id @default(autoincrement())
-  kind             PartyKind @default(COMPANY)
+  id               Int                  @id @default(autoincrement())
+  kind             PartyKind            @default(COMPANY)
+  identifierType   PartyIdentifierType?
   name             String
-  taxId            String? // CUI/CIF (RO), VAT number (EU) or CNP (individual)
+  taxId            String? // CUI/CIF (company), CNP or foreign personal identifier
   isSupplier       Boolean   @default(false)
   isClient         Boolean   @default(false)
   supplierCode     String?

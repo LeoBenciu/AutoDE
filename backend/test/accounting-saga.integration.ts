@@ -3,6 +3,7 @@ import JSZip from 'jszip';
 import { PostingService } from '../src/accounting/posting.service';
 import { AuditService } from '../src/common/audit.service';
 import { PrismaService } from '../src/common/prisma.service';
+import { privateSellerIdentityErrors } from '../src/parties/party-identity';
 import { SagaService } from '../src/saga/saga.service';
 
 const prisma = new PrismaService();
@@ -33,6 +34,22 @@ async function main() {
   const posting = new PostingService(prisma);
   const saga = new SagaService(prisma, new AuditService(prisma));
   const today = new Date().toISOString().slice(0, 10);
+  assert.ok(
+    privateSellerIdentityErrors({
+      kind: 'INDIVIDUAL',
+      country: 'RO',
+      identifierType: 'CNP',
+      taxId: '1234',
+    }).includes('CNP-ul vânzătorului trebuie să conțină exact 13 cifre'),
+  );
+  assert.ok(
+    privateSellerIdentityErrors({
+      kind: 'INDIVIDUAL',
+      country: 'RO',
+      identifierType: 'CNP',
+      taxId: '1800101223344',
+    }).some((error) => error.includes('cifra de control')),
+  );
 
   const createDocument = async (
     type: string,
@@ -597,6 +614,58 @@ async function main() {
     assert.equal(invoicedVehicle?.make, 'BMW');
     assert.equal(invoicedVehicle?.model, 'X3');
 
+    const incompletePrivateSeller = await createDocument(
+      'Contract',
+      'CA-MISSING-ID',
+      {
+        direction: 'incoming',
+        contract_type: 'vanzare-cumparare autoturism',
+        total_value: 25_000,
+        vehicle_transaction: 'purchase',
+        vin: 'WVWZZZ1JZXW000003',
+        vehicle_make: 'Volkswagen',
+        vehicle_model: 'Polo',
+        vehicle_year: 2019,
+        parties: [
+          {
+            name: 'Vânzător fără identificator',
+            ein: '',
+            role: 'vendor',
+            kind: 'INDIVIDUAL',
+            identifier_type: 'CNP',
+            country: 'RO',
+          },
+          {
+            name: marker,
+            ein: '50675950',
+            role: 'client',
+            kind: 'COMPANY',
+            identifier_type: 'CUI',
+            country: 'RO',
+          },
+        ],
+      },
+    );
+    const incompletePrivateSellerPreview = await posting.preview(
+      tenant.id,
+      incompletePrivateSeller.id,
+    );
+    assert.ok(
+      incompletePrivateSellerPreview.errors.includes(
+        'CNP-ul vânzătorului este obligatoriu',
+      ),
+    );
+    await assert.rejects(() =>
+      posting.approve(tenant.id, user.id, incompletePrivateSeller.id),
+    );
+    assert.equal(
+      await prisma.party.count({
+        where: { tenantId: tenant.id, name: 'Vânzător fără identificator' },
+      }),
+      0,
+      'approval failure must not persist an incomplete private seller',
+    );
+
     const purchaseContract = await createDocument('Contract', 'CA-1', {
       direction: 'incoming',
       contract_number: 'CA-1',
@@ -611,9 +680,10 @@ async function main() {
       parties: [
         {
           name: 'Ion Vânzător',
-          ein: '1800101223344',
+          ein: '1800101223340',
           role: 'vendor',
           kind: 'INDIVIDUAL',
+          identifier_type: 'CNP',
           country: 'RO',
         },
         {
@@ -621,6 +691,7 @@ async function main() {
           ein: '50675950',
           role: 'client',
           kind: 'COMPANY',
+          identifier_type: 'CUI',
           country: 'RO',
         },
       ],
@@ -653,7 +724,48 @@ async function main() {
     assert.equal(purchasedVehicle?.status, 'PURCHASED');
     assert.equal(Number(purchasedVehicle?.purchasePrice), 50_000);
     assert.equal(purchasedVehicle?.seller?.kind, 'INDIVIDUAL');
+    assert.equal(purchasedVehicle?.seller?.identifierType, 'CNP');
     assert.equal(purchasedVehicle?.seller?.name, 'Ion Vânzător');
+
+    const foreignSellerContract = await createDocument('Contract', 'CA-FR-1', {
+      direction: 'incoming',
+      contract_type: 'vehicle sale contract',
+      total_value: 12_000,
+      vehicle_transaction: 'purchase',
+      vin: 'WVWZZZ1JZXW000004',
+      vehicle_make: 'Volkswagen',
+      vehicle_model: 'Passat',
+      vehicle_year: 2018,
+      parties: [
+        {
+          name: 'Max Mustermann',
+          ein: 'L01X9988',
+          role: 'vendor',
+          kind: 'INDIVIDUAL',
+          identifier_type: 'FOREIGN_ID',
+          country: 'DE',
+        },
+        {
+          name: marker,
+          ein: '50675950',
+          role: 'client',
+          kind: 'COMPANY',
+          identifier_type: 'CUI',
+          country: 'RO',
+        },
+      ],
+    });
+    const foreignSellerApproved = await posting.approve(
+      tenant.id,
+      user.id,
+      foreignSellerContract.id,
+    );
+    assert.deepEqual(foreignSellerApproved.posting.errors, []);
+    const foreignSeller = await prisma.party.findFirst({
+      where: { tenantId: tenant.id, taxId: 'L01X9988' },
+    });
+    assert.equal(foreignSeller?.identifierType, 'FOREIGN_ID');
+    assert.equal(foreignSeller?.country, 'DE');
 
     const refurbishment = await createDocument('Invoice', 'REFURB-1', {
       direction: 'incoming',
@@ -663,6 +775,7 @@ async function main() {
       buyer_ein: '50675950',
       vehicle_transaction: 'cost',
       vehicle_cost_category: 'REFURB',
+      vehicle_cost_categories_reviewed: false,
       vin: 'WVWZZZ1JZXW000001',
       currency: 'EUR',
       exchange_rate: 5,
@@ -685,9 +798,38 @@ async function main() {
         },
       ],
     });
+    const unassignedCostPreview = await posting.preview(
+      tenant.id,
+      refurbishment.id,
+    );
+    assert.ok(
+      unassignedCostPreview.errors.includes(
+        'Asociază documentul de cost cu vehiculul înainte de aprobare',
+      ),
+    );
+    assert.ok(
+      unassignedCostPreview.errors.includes(
+        'Confirmă categoriile de cost înainte de aprobare',
+      ),
+    );
     await prisma.document.update({
       where: { id: refurbishment.id },
       data: { vehicleId: purchasedVehicle!.id },
+    });
+    await assert.rejects(() =>
+      posting.approve(tenant.id, user.id, refurbishment.id),
+    );
+    const refurbishmentData = await prisma.processedData.findUniqueOrThrow({
+      where: { documentId: refurbishment.id },
+    });
+    await prisma.processedData.update({
+      where: { documentId: refurbishment.id },
+      data: {
+        extractedFields: {
+          ...(refurbishmentData.extractedFields as Record<string, unknown>),
+          vehicle_cost_categories_reviewed: true,
+        },
+      },
     });
     await posting.approve(tenant.id, user.id, refurbishment.id);
     const documentCosts = await prisma.vehicleCost.findMany({
@@ -701,6 +843,50 @@ async function main() {
       where: { id: purchasedVehicle!.id },
     });
     assert.equal(Number(vehicleWithCost?.landedCost), 50_500);
+
+    const uncategorizedCost = await createDocument(
+      'Invoice',
+      'COST-NO-CATEGORY',
+      {
+        direction: 'incoming',
+        vendor: 'Cost fără categorie SRL',
+        vendor_ein: 'RO7654321',
+        buyer: marker,
+        buyer_ein: '50675950',
+        vehicle_transaction: 'cost',
+        vehicle_cost_categories_reviewed: true,
+        total_amount: 100,
+        net_amount: 100,
+        vat_amount: 0,
+        line_items: [
+          {
+            name: 'Serviciu auto',
+            quantity: 1,
+            unit_price: 100,
+            total: 100,
+            vat_amount: 0,
+            vat: 'ZERO',
+            account_code: '628',
+            articleCode: 'COST-NO-CATEGORY',
+            um: 'UNITATE_DE_SERVICE',
+            vat_deductibility: 'FULL',
+          },
+        ],
+      },
+    );
+    await prisma.document.update({
+      where: { id: uncategorizedCost.id },
+      data: { vehicleId: purchasedVehicle!.id },
+    });
+    const uncategorizedCostPreview = await posting.preview(
+      tenant.id,
+      uncategorizedCost.id,
+    );
+    assert.ok(
+      uncategorizedCostPreview.errors.includes(
+        'Selectează categoria de cost pentru linia 1',
+      ),
+    );
 
     const invalid = await createDocument('Invoice', 'INVALID-1', {
       vendor: 'Furnizor',

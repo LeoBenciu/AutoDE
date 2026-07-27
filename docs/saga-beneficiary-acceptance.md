@@ -9,6 +9,8 @@ Automated tests cannot substitute for this import.
 Use a dedicated tenant and an agreed date range containing at least:
 
 - an incoming invoice with multiple VAT rates;
+- a private-person vehicle purchase contract with a reviewed CNP/foreign identifier;
+- a vehicle cost invoice with its reviewed category;
 - an outgoing invoice;
 - an independent incoming and outgoing receipt;
 - a receipt linked to an invoice;
@@ -35,6 +37,10 @@ blocking/excluded items before downloading the ZIP.
 - [ ] Confirm empty XML types were omitted exactly as shown in preview.
 - [ ] Confirm invoice numbers, dates, currency, VAT, deductibility, units,
       management, article, and partner analytics.
+- [ ] Confirm the private purchase contract imports with the expected vehicle
+      line and private-seller payable treatment.
+- [ ] Confirm the reviewed vehicle-cost document imports once and its amount
+      matches the landed-cost row in AutoImport.
 - [ ] Confirm every receipt/disposition appears exactly once in Încasări or
       Plăți and never in both.
 - [ ] Confirm partial payments reference the intended invoice.

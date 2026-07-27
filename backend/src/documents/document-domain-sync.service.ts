@@ -9,6 +9,7 @@ import {
   unwrapExtractedFields,
 } from '../accounting/accounting-normalizer';
 import { PrismaService } from '../common/prisma.service';
+import { privateSellerIdentityErrors } from '../parties/party-identity';
 
 /**
  * Applies extracted vehicle documents to the operational catalogue. Extraction
@@ -265,6 +266,18 @@ export class DocumentDomainSyncService {
     assignedPartyId?: number | null,
   ): Promise<number | null> {
     const taxId = normalizeEin(canonical.vendorEin);
+    const identityErrors = privateSellerIdentityErrors({
+      kind: canonical.vendorKind,
+      country: canonical.vendorCountry,
+      identifierType: canonical.vendorIdentifierType,
+      taxId,
+    });
+    if (identityErrors.length > 0) {
+      this.logger.warn(
+        `contract seller identity requires review: ${identityErrors.join('; ')}`,
+      );
+      return null;
+    }
     if (taxId) {
       const existing = await tx.party.findFirst({ where: { tenantId, taxId } });
       if (existing) {
@@ -272,6 +285,7 @@ export class DocumentDomainSyncService {
           where: { id: existing.id },
           data: {
             kind: canonical.vendorKind,
+            identifierType: canonical.vendorIdentifierType,
             name: canonical.vendor || existing.name,
             country: countryCode(canonical.vendorCountry, existing.country),
             isSupplier: true,
@@ -284,6 +298,7 @@ export class DocumentDomainSyncService {
           data: {
             tenantId,
             kind: canonical.vendorKind,
+            identifierType: canonical.vendorIdentifierType,
             name: canonical.vendor,
             taxId,
             country: countryCode(canonical.vendorCountry, 'RO'),

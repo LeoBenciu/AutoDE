@@ -3,6 +3,11 @@ import { PrismaService } from '../common/prisma.service';
 import { normalizeEin } from '../accounting/accounting-normalizer';
 import { parseCsv, pick } from '../common/csv';
 import { CreatePartyDto, UpdatePartyDto } from './dto';
+import {
+  normalizeIdentifierType,
+  normalizePartyCountry,
+  privateSellerIdentityErrors,
+} from './party-identity';
 
 export interface UploadedCsv {
   originalname: string;
@@ -41,15 +46,41 @@ export class PartiesService {
 
   async create(tenantId: number, dto: CreatePartyDto) {
     const taxId = dto.taxId ? normalizeEin(dto.taxId) : undefined;
+    const kind = ((dto.kind as 'INDIVIDUAL' | 'COMPANY' | undefined) ??
+      inferPartyKind(taxId));
+    const country = normalizePartyCountry(dto.country);
+    const identifierType = normalizeIdentifierType(
+      dto.identifierType,
+      kind,
+      country,
+    );
     if (taxId) {
       const existing = await this.prisma.party.findFirst({
         where: { tenantId, taxId },
       });
       if (existing) {
+        const resultingKind =
+          (dto.kind as 'INDIVIDUAL' | 'COMPANY' | undefined) ?? existing.kind;
+        const resultingCountry = dto.country
+          ? normalizePartyCountry(dto.country)
+          : existing.country;
+        const resultingIdentifierType = normalizeIdentifierType(
+          dto.identifierType ?? existing.identifierType,
+          resultingKind,
+          resultingCountry,
+        );
+        assertPrivateSupplierIdentity({
+          kind: resultingKind,
+          country: resultingCountry,
+          identifierType: resultingIdentifierType,
+          taxId,
+          isSupplier: dto.isSupplier ?? existing.isSupplier,
+        });
         return this.prisma.party.update({
           where: { id: existing.id },
           data: {
-            kind: (dto.kind as any) ?? existing.kind,
+            kind: resultingKind,
+            identifierType: resultingIdentifierType,
             name: dto.name,
             isSupplier: dto.isSupplier ?? existing.isSupplier,
             isClient: dto.isClient ?? existing.isClient,
@@ -58,7 +89,7 @@ export class PartiesService {
             supplierAnalytic: dto.supplierAnalytic ?? existing.supplierAnalytic,
             clientAnalytic: dto.clientAnalytic ?? existing.clientAnalytic,
             registration: dto.registration ?? existing.registration,
-            country: dto.country?.toUpperCase() ?? existing.country,
+            country: resultingCountry,
             county: dto.county ?? existing.county,
             city: dto.city ?? existing.city,
             address: dto.address ?? existing.address,
@@ -71,10 +102,18 @@ export class PartiesService {
         });
       }
     }
+    assertPrivateSupplierIdentity({
+      kind,
+      country,
+      identifierType,
+      taxId,
+      isSupplier: dto.isSupplier ?? false,
+    });
     return this.prisma.party.create({
       data: {
         tenantId,
-        kind: (dto.kind as any) ?? inferPartyKind(taxId),
+        kind,
+        identifierType,
         name: dto.name,
         taxId,
         isSupplier: dto.isSupplier ?? false,
@@ -84,7 +123,7 @@ export class PartiesService {
         supplierAnalytic: dto.supplierAnalytic,
         clientAnalytic: dto.clientAnalytic,
         registration: dto.registration,
-        country: dto.country?.toUpperCase() ?? 'RO',
+        country,
         county: dto.county,
         city: dto.city,
         address: dto.address,
@@ -132,6 +171,24 @@ export class PartiesService {
         phone: pick(row, 'phone', 'telefon', 'tel') ?? undefined,
         discount: pick(row, 'discount', 'reducere') ?? undefined,
       };
+      const identifierType = normalizeIdentifierType(
+        pick(row, 'identifiertype', 'identifier type', 'tip identificator'),
+        shared.kind,
+        shared.country,
+      );
+      const identityErrors =
+        role === 'supplier'
+          ? privateSellerIdentityErrors({
+              kind: shared.kind,
+              country: shared.country,
+              identifierType,
+              taxId,
+            })
+          : [];
+      if (shared.kind === 'INDIVIDUAL' && identityErrors.length > 0) {
+        errors.push(`Rândul ${index + 2}: ${identityErrors.join('; ')}`);
+        continue;
+      }
       const roleData =
         role === 'supplier'
           ? { isSupplier: true, supplierCode: code, supplierAnalytic: analytic }
@@ -154,12 +211,17 @@ export class PartiesService {
       if (existing) {
         await this.prisma.party.update({
           where: { id: existing.id },
-          data: { ...shared, ...roleData, taxId: taxId ?? existing.taxId },
+          data: {
+            ...shared,
+            ...roleData,
+            identifierType,
+            taxId: taxId ?? existing.taxId,
+          },
         });
         updated += 1;
       } else {
         await this.prisma.party.create({
-          data: { tenantId, taxId, ...shared, ...roleData },
+          data: { tenantId, taxId, identifierType, ...shared, ...roleData },
         });
         created += 1;
       }
@@ -168,16 +230,51 @@ export class PartiesService {
   }
 
   async update(tenantId: number, id: number, dto: UpdatePartyDto) {
-    await this.get(tenantId, id);
+    const existing = await this.get(tenantId, id);
+    const taxId =
+      dto.taxId !== undefined
+        ? dto.taxId
+          ? normalizeEin(dto.taxId)
+          : null
+        : existing.taxId;
+    const kind =
+      (dto.kind as 'INDIVIDUAL' | 'COMPANY' | undefined) ?? existing.kind;
+    const country = normalizePartyCountry(dto.country ?? existing.country);
+    const identifierType = normalizeIdentifierType(
+      dto.identifierType ?? existing.identifierType,
+      kind,
+      country,
+    );
+    assertPrivateSupplierIdentity({
+      kind,
+      country,
+      identifierType,
+      taxId,
+      isSupplier: dto.isSupplier ?? existing.isSupplier,
+    });
     return this.prisma.party.update({
       where: { id },
       data: {
         ...dto,
-        taxId: dto.taxId ? normalizeEin(dto.taxId) : dto.taxId,
-        kind: dto.kind as any,
+        taxId,
+        kind,
+        country,
+        identifierType,
       },
     });
   }
+}
+
+function assertPrivateSupplierIdentity(input: {
+  kind: 'INDIVIDUAL' | 'COMPANY';
+  country: string;
+  identifierType: 'CUI' | 'CNP' | 'FOREIGN_ID';
+  taxId?: string | null;
+  isSupplier: boolean;
+}) {
+  if (!input.isSupplier || input.kind !== 'INDIVIDUAL') return;
+  const errors = privateSellerIdentityErrors(input);
+  if (errors.length > 0) throw new BadRequestException(errors.join('; '));
 }
 
 function inferPartyKind(taxId?: string): 'INDIVIDUAL' | 'COMPANY' {

@@ -34,6 +34,16 @@ const DOC_TYPES = [
   'Other',
 ];
 
+const COST_CATEGORY_OPTIONS: Array<[string, string]> = [
+  ['TRANSPORT', 'Transport'],
+  ['CUSTOMS', 'Taxe vamale'],
+  ['VAT', 'TVA nerecuperabilă'],
+  ['ITP', 'ITP / inspecție'],
+  ['REGISTRATION', 'Înmatriculare / RAR'],
+  ['REFURB', 'Recondiționare / reparații'],
+  ['OTHER', 'Alt cost'],
+];
+
 function ReviewChip() {
   return (
     <span
@@ -307,6 +317,25 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
 
   if (!doc) return null;
   const fields = (doc.processedData?.extractedFields ?? {}) as Record<string, any>;
+  const contractVendor = Array.isArray(fields.parties)
+    ? fields.parties.find((party: any) =>
+        ['vendor', 'seller', 'vanzator', 'vânzător'].includes(
+          String(party?.role ?? '').toLowerCase(),
+        ),
+      )
+    : undefined;
+  const vendorKind = fields.vendor_kind ?? contractVendor?.kind ?? 'INDIVIDUAL';
+  const vendorCountry = String(
+    fields.vendor_country ?? contractVendor?.country ?? 'RO',
+  ).toUpperCase();
+  const vendorIdentifierType =
+    fields.vendor_identifier_type ??
+    contractVendor?.identifier_type ??
+    (vendorKind === 'COMPANY'
+      ? 'CUI'
+      : vendorCountry === 'RO'
+        ? 'CNP'
+        : 'FOREIGN_ID');
   const isPurchaseContract =
     doc.type === 'Contract' &&
     (fields.vehicle_transaction === 'purchase' ||
@@ -323,7 +352,11 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   const issueFields = new Set(issues.map((i) => i.field));
 
   const entries = Object.entries(fields).filter(
-    ([key, value]) => !key.startsWith('_') && value != null && typeof value !== 'object',
+    ([key, value]) =>
+      !key.startsWith('_') &&
+      key !== 'vehicle_cost_categories_reviewed' &&
+      value != null &&
+      typeof value !== 'object',
   );
   const isFlagged = (key: string) =>
     issueFields.has(key) || (confidence[key] != null && confidence[key] < 0.7);
@@ -348,6 +381,22 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
       ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
       : doc.processedData?.typeConfidence ?? 0;
   const lineItems = Array.isArray(fields.line_items) ? fields.line_items : [];
+  const hasExtractedVehicleCostCategory =
+    COST_CATEGORY_OPTIONS.some(
+      ([category]) => category === fields.vehicle_cost_category,
+    ) ||
+    lineItems.some((line: any) =>
+      COST_CATEGORY_OPTIONS.some(
+        ([category]) => category === line?.vehicle_cost_category,
+      ),
+    );
+  const isVehicleCostDocument =
+    ['Invoice', 'Receipt'].includes(doc.type) &&
+    fields.receipt_type !== 'payment_receipt' &&
+    fields.vehicle_transaction !== 'purchase' &&
+    (fields.vehicle_transaction === 'cost' ||
+      hasExtractedVehicleCostCategory ||
+      doc.vehicleId != null);
   const runAccountingAction = async (action: 'approve' | 'reopen') => {
     setActionMessage('');
     try {
@@ -524,6 +573,64 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
               disabled={doc.reviewStatus === 'APPROVED'}
               onSave={(value) => correct({ id, field: 'direction', newValue: value }).unwrap()}
             />
+            {['Invoice', 'Receipt'].includes(doc.type) &&
+              fields.receipt_type !== 'payment_receipt' && (
+                <LineField
+                  label="Rol în fluxul vehiculului"
+                  value={fields.vehicle_transaction ?? 'other'}
+                  options={[
+                    ['purchase', 'Achiziție vehicul'],
+                    ['cost', 'Cost asociat vehiculului'],
+                    ['other', 'Fără legătură cu vehiculul'],
+                  ]}
+                  disabled={doc.reviewStatus === 'APPROVED'}
+                  onSave={(value) =>
+                    correct({
+                      id,
+                      field: 'vehicle_transaction',
+                      newValue: value,
+                    }).unwrap()
+                  }
+                />
+              )}
+            {isVehicleCostDocument && (
+              <>
+                <LineField
+                  label="Categorie implicită"
+                  value={fields.vehicle_cost_category ?? ''}
+                  options={COST_CATEGORY_OPTIONS}
+                  disabled={doc.reviewStatus === 'APPROVED'}
+                  onSave={(value) =>
+                    correct({
+                      id,
+                      field: 'vehicle_cost_category',
+                      newValue: value,
+                    }).unwrap()
+                  }
+                />
+                <label
+                  className={`col-span-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold lg:col-span-4 ${
+                    fields.vehicle_cost_categories_reviewed === true
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : 'border-amber-300 bg-amber-50 text-amber-800'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={fields.vehicle_cost_categories_reviewed === true}
+                    disabled={doc.reviewStatus === 'APPROVED'}
+                    onChange={(event) =>
+                      correct({
+                        id,
+                        field: 'vehicle_cost_categories_reviewed',
+                        newValue: event.target.checked,
+                      }).unwrap()
+                    }
+                  />
+                  Am verificat categoria implicită și categoriile fiecărei linii
+                </label>
+              </>
+            )}
             {doc.type === 'Contract' && (
               <>
                 <LineField
@@ -544,15 +651,71 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                 />
                 <LineField
                   label="Vânzător"
-                  value={fields.vendor ?? ''}
+                  value={fields.vendor ?? contractVendor?.name ?? ''}
                   disabled={doc.reviewStatus === 'APPROVED'}
                   onSave={(value) =>
                     correct({ id, field: 'vendor', newValue: value }).unwrap()
                   }
                 />
                 <LineField
-                  label="CNP / CUI vânzător"
-                  value={fields.vendor_ein ?? ''}
+                  label="Tip vânzător"
+                  value={vendorKind}
+                  options={[
+                    ['INDIVIDUAL', 'Persoană fizică'],
+                    ['COMPANY', 'Companie'],
+                  ]}
+                  disabled={doc.reviewStatus === 'APPROVED'}
+                  onSave={(value) =>
+                    correct({
+                      id,
+                      field: 'vendor_kind',
+                      newValue: value,
+                    }).unwrap()
+                  }
+                />
+                <LineField
+                  label="Țară vânzător (ISO)"
+                  value={vendorCountry}
+                  disabled={doc.reviewStatus === 'APPROVED'}
+                  onSave={(value) =>
+                    correct({
+                      id,
+                      field: 'vendor_country',
+                      newValue: value.toUpperCase(),
+                    }).unwrap()
+                  }
+                />
+                <LineField
+                  label="Tip identificator"
+                  value={vendorIdentifierType}
+                  options={[
+                    ['CNP', 'CNP'],
+                    ['FOREIGN_ID', 'Identificator extern'],
+                    ['CUI', 'CUI'],
+                  ]}
+                  disabled={doc.reviewStatus === 'APPROVED'}
+                  onSave={(value) =>
+                    correct({
+                      id,
+                      field: 'vendor_identifier_type',
+                      newValue: value,
+                    }).unwrap()
+                  }
+                />
+                <LineField
+                  label={
+                    vendorKind === 'INDIVIDUAL'
+                      ? vendorCountry === 'RO'
+                        ? 'CNP vânzător'
+                        : 'Identificator extern vânzător'
+                      : 'CUI vânzător'
+                  }
+                  value={
+                    fields.vendor_ein ??
+                    contractVendor?.ein ??
+                    contractVendor?.tax_id ??
+                    ''
+                  }
                   disabled={doc.reviewStatus === 'APPROVED'}
                   onSave={(value) =>
                     correct({
@@ -562,6 +725,13 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                     }).unwrap()
                   }
                 />
+                {fields.vehicle_transaction === 'purchase' && (
+                  <p className="col-span-2 text-xs text-muted lg:col-span-4">
+                    Pentru achiziția de la persoană fizică: CNP obligatoriu
+                    pentru România; identificator personal extern obligatoriu
+                    pentru altă țară.
+                  </p>
+                )}
               </>
             )}
             {doc.type === 'Receipt' && (
@@ -727,6 +897,9 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                         articleCode: '',
                         management: '',
                         account_code: doc.type === 'Invoice' ? '628' : '628',
+                        vehicle_cost_category: isVehicleCostDocument
+                          ? fields.vehicle_cost_category ?? ''
+                          : null,
                       },
                     ],
                   })
@@ -848,6 +1021,21 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                         disabled={doc.reviewStatus === 'APPROVED'}
                         onSave={(value) => correct({ id, field: `line_items[${index}].account_code`, newValue: value }).unwrap()}
                       />
+                      {isVehicleCostDocument && (
+                        <LineField
+                          label="Categorie cost vehicul"
+                          value={item.vehicle_cost_category ?? ''}
+                          options={COST_CATEGORY_OPTIONS}
+                          disabled={doc.reviewStatus === 'APPROVED'}
+                          onSave={(value) =>
+                            correct({
+                              id,
+                              field: `line_items[${index}].vehicle_cost_category`,
+                              newValue: value,
+                            }).unwrap()
+                          }
+                        />
+                      )}
                     </div>
                   </div>
                 );

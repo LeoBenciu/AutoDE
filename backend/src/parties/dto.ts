@@ -12,6 +12,10 @@ export class CreatePartyDto {
   @IsEnum(['INDIVIDUAL', 'COMPANY'])
   kind?: string;
 
+  @IsOptional()
+  @IsEnum(['CUI', 'CNP', 'FOREIGN_ID'])
+  identifierType?: string;
+
   @IsString()
   @IsNotEmpty()
   name: string;
