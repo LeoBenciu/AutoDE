@@ -2462,17 +2462,10 @@ def standardize_document_type(doc_type: str) -> str:
         'dispozitie de incasare': 'Collection Disposition',  # Cash operation - needs posting
         'cmr': 'CMR',
         'scrisoare de transport': 'CMR',
-        'customs declaration': 'Customs Declaration',
-        'declaratie vamala': 'Customs Declaration',
         'vehicle registration certificate': 'Vehicle Registration Certificate',
         'registration certificate': 'Vehicle Registration Certificate',
         'talon': 'Vehicle Registration Certificate',
         'zulassungsbescheinigung': 'Vehicle Registration Certificate',
-        'technical inspection (itp)': 'Technical Inspection (ITP)',
-        'technical inspection': 'Technical Inspection (ITP)',
-        'itp': 'Technical Inspection (ITP)',
-        'insurance': 'Insurance',
-        'asigurare': 'Insurance',
         'other': 'Other',
     }
 

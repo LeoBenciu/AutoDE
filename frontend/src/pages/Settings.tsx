@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import {
   useArticlesQuery,
@@ -7,6 +7,9 @@ import {
   useCreateManagementMutation,
   useCreatePartyMutation,
   useCreateUserMutation,
+  useImportArticlesMutation,
+  useImportManagementsMutation,
+  useImportPartiesMutation,
   useLazyCompanyFromAnafQuery,
   useManagementsQuery,
   usePartiesQuery,
@@ -15,6 +18,7 @@ import {
   useUpdateUserMutation,
   useUsersQuery,
 } from '../store/api';
+import type { ImportResult } from '../store/api';
 import { apiUrl } from '../store/apiBase';
 import type { RootState } from '../store/store';
 
@@ -408,7 +412,9 @@ function PartnersCatalogue({
   const { data: parties = [] } = usePartiesQuery();
   const [createParty, { isLoading }] = useCreatePartyMutation();
   const [updateParty] = useUpdatePartyMutation();
+  const [importParties] = useImportPartiesMutation();
   const empty = {
+    kind: 'COMPANY',
     name: '',
     taxId: '',
     isSupplier: true,
@@ -428,9 +434,38 @@ function PartnersCatalogue({
   };
   return (
     <div className="p-5">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <CsvImport
+          label="Importă furnizori (CSV)"
+          hint="Coloane: cod, denumire, cui/cnp, tip, analitic, adresa, iban…"
+          onImport={(file) => importParties({ file, role: 'supplier' }).unwrap()}
+          onMessage={onMessage}
+        />
+        <CsvImport
+          label="Importă clienți (CSV)"
+          hint="Coloane: cod, denumire, cui, analitic, adresa, iban…"
+          onImport={(file) => importParties({ file, role: 'client' }).unwrap()}
+          onMessage={onMessage}
+        />
+      </div>
       <form onSubmit={submit} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <select
+          aria-label="Tip partener"
+          className={fieldClass}
+          value={form.kind}
+          onChange={(event) => setForm({ ...form, kind: event.target.value })}
+        >
+          <option value="COMPANY">Companie</option>
+          <option value="INDIVIDUAL">Persoană fizică</option>
+        </select>
         <input className={fieldClass} placeholder="Denumire partener" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-        <input className={fieldClass} placeholder="CUI / CIF" value={form.taxId} onChange={(event) => setForm({ ...form, taxId: event.target.value })} />
+        <input
+          aria-label={form.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI / CIF'}
+          className={fieldClass}
+          placeholder={form.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI / CIF'}
+          value={form.taxId}
+          onChange={(event) => setForm({ ...form, taxId: event.target.value })}
+        />
         <input className={fieldClass} placeholder="Analitic furnizor (401.x)" value={form.supplierAnalytic} onChange={(event) => setForm({ ...form, supplierAnalytic: event.target.value })} />
         <input className={fieldClass} placeholder="Analitic client (411.x)" value={form.clientAnalytic} onChange={(event) => setForm({ ...form, clientAnalytic: event.target.value })} />
         <div className="flex items-center gap-4 sm:col-span-2">
@@ -467,6 +502,7 @@ function PartyRow({
   onSave: (body: any) => Promise<unknown>;
 }) {
   const [draft, setDraft] = useState({
+    kind: party.kind ?? 'COMPANY',
     isSupplier: party.isSupplier,
     isClient: party.isClient,
     supplierAnalytic: party.supplierAnalytic ?? '',
@@ -477,8 +513,19 @@ function PartyRow({
     <div className="flex flex-wrap items-center gap-3 p-3">
       <div className="min-w-44 flex-1">
         <p className="text-sm font-semibold text-ink">{party.name}</p>
-        <p className="text-xs text-muted">{party.taxId || 'Fără CUI'}</p>
+        <p className="text-xs text-muted">
+          {party.kind === 'INDIVIDUAL' ? 'Persoană fizică' : 'Companie'} · {party.taxId || (party.kind === 'INDIVIDUAL' ? 'Fără CNP' : 'Fără CUI')}
+        </p>
       </div>
+      <select
+        aria-label={`Tip partener ${party.name}`}
+        className={`${fieldClass} w-36`}
+        value={draft.kind}
+        onChange={(event) => setDraft({ ...draft, kind: event.target.value })}
+      >
+        <option value="COMPANY">Companie</option>
+        <option value="INDIVIDUAL">Persoană fizică</option>
+      </select>
       <label className="flex items-center gap-1 text-xs text-muted">
         <input type="checkbox" checked={draft.isSupplier} onChange={(event) => setDraft({ ...draft, isSupplier: event.target.checked })} /> Furnizor
       </label>
@@ -512,6 +559,7 @@ function ArticlesCatalogue({
 }) {
   const { data: articles = [] } = useArticlesQuery();
   const [create, { isLoading }] = useCreateArticleMutation();
+  const [importArticles] = useImportArticlesMutation();
   const empty = {
     code: '',
     name: '',
@@ -533,6 +581,12 @@ function ArticlesCatalogue({
   };
   return (
     <div className="p-5">
+      <CsvImport
+        label="Importă articole (CSV)"
+        hint="Coloane: cod, denumire, um, tva, den_tip, analitic, cont"
+        onImport={(file) => importArticles(file).unwrap()}
+        onMessage={onMessage}
+      />
       <form onSubmit={submit} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <input className={fieldClass} placeholder="Cod intern" required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} />
         <input className={fieldClass} placeholder="Denumire" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
@@ -567,6 +621,7 @@ function ManagementsCatalogue({
 }) {
   const { data: managements = [] } = useManagementsQuery();
   const [create, { isLoading }] = useCreateManagementMutation();
+  const [importManagements] = useImportManagementsMutation();
   const [form, setForm] = useState({
     code: '',
     name: '',
@@ -584,6 +639,12 @@ function ManagementsCatalogue({
   };
   return (
     <div className="p-5">
+      <CsvImport
+        label="Importă gestiuni (CSV)"
+        hint="Coloane: cod, denumire, tip_gestiune, analitic"
+        onImport={(file) => importManagements(file).unwrap()}
+        onMessage={onMessage}
+      />
       <form onSubmit={submit} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <input className={fieldClass} placeholder="Cod gestiune" required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} />
         <input className={fieldClass} placeholder="Denumire" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
@@ -599,6 +660,73 @@ function ManagementsCatalogue({
           management.analyticCode || '—',
         ])}
       />
+    </div>
+  );
+}
+
+function CsvImport({
+  label,
+  hint,
+  onImport,
+  onMessage,
+}: {
+  label: string;
+  hint: string;
+  onImport: (file: File) => Promise<ImportResult>;
+  onMessage: (message: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ImportResult | null>(null);
+
+  const handle = async (file?: File | null) => {
+    if (!file) return;
+    setBusy(true);
+    setResult(null);
+    onMessage('');
+    try {
+      setResult(await onImport(file));
+    } catch (error: any) {
+      onMessage(apiError(error));
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div className="mb-4 rounded-xl border border-dashed border-line-strong bg-slate-50 p-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={(event) => handle(event.target.files?.[0])}
+        />
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => inputRef.current?.click()}
+          className="rounded-control border border-line-strong px-3 py-2 text-sm font-semibold text-ink-soft disabled:opacity-50"
+        >
+          {busy ? 'Se importă…' : label}
+        </button>
+        <p className="text-xs text-muted">{hint}</p>
+      </div>
+      {result && (
+        <p className="mt-2 text-xs text-emerald-700">
+          Import finalizat: {result.created} adăugate, {result.updated} actualizate din {result.total} rânduri.
+          {result.errors.length > 0 && ` ${result.errors.length} rânduri ignorate.`}
+        </p>
+      )}
+      {result && result.errors.length > 0 && (
+        <ul className="mt-1 max-h-24 list-disc overflow-y-auto pl-5 text-xs text-amber-700">
+          {result.errors.slice(0, 10).map((error, index) => (
+            <li key={index}>{error}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

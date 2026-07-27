@@ -725,9 +725,7 @@ PHASE0_CONFIDENCE_THRESHOLD = 0.7
 UNCALIBRATED_FREETEXT_FIELDS = {
     "vendor", "buyer", "company_name", "bank_name", "person_name",
     "description", "payment_terms", "contract_type",
-    "sender_name", "consignee_name", "carrier_name", "customs_office",
-    "declarant_name", "make", "model", "result", "insurer_name",
-    "insured_name", "summary",
+    "sender_name", "consignee_name", "carrier_name", "make", "model", "summary",
 }
 # Ceiling for uncalibrated free-text confidence — just under the 0.9 "high" band.
 FREETEXT_CONFIDENCE_CAP = 0.85

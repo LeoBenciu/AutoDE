@@ -17,10 +17,7 @@ DocumentType = Literal[
     "Z Report",
     "Payment Disposition",
     "CMR",
-    "Customs Declaration",
     "Vehicle Registration Certificate",
-    "Technical Inspection (ITP)",
-    "Insurance",
     "Other",
 ]
 
@@ -40,6 +37,7 @@ class LineItem(BaseModel):
     unit_price: Optional[float] = None
     net_amount: Optional[float] = Field(None, description="Line total WITHOUT VAT (net convention)")
     vat_rate: Optional[float] = None
+    vehicle_cost_category: Optional[str] = None
 
 
 class Invoice(BaseModel):
@@ -58,6 +56,7 @@ class Invoice(BaseModel):
     net_amount: Optional[float] = None
     vat_amount: Optional[float] = None
     total_amount: Optional[float] = Field(None, description="Gross total = net + VAT")
+    tariff_code: Optional[str] = Field(None, description="NC/tariff code only when printed")
     line_items: List[LineItem] = Field(default_factory=list)
     # Auto-specific: invoices for cars usually carry the vehicle identity
     vin: Optional[str] = Field(None, description="17-char chassis/VIN if present")
@@ -65,6 +64,12 @@ class Invoice(BaseModel):
     vehicle_model: Optional[str] = None
     first_registration_date: Optional[str] = Field(None, description="ISO date")
     mileage_km: Optional[int] = None
+    vehicle_variant: Optional[str] = None
+    vehicle_year: Optional[int] = None
+    vehicle_transaction: Optional[str] = Field(
+        None, description="purchase, cost, or other"
+    )
+    vehicle_cost_category: Optional[str] = None
 
 
 class Receipt(BaseModel):
@@ -76,6 +81,8 @@ class Receipt(BaseModel):
     total_amount: Optional[float] = None
     vat_amount: Optional[float] = None
     payment_method: Optional[str] = None
+    vin: Optional[str] = None
+    vehicle_cost_category: Optional[str] = None
 
 
 class BankStatementTransaction(BaseModel):
@@ -101,6 +108,8 @@ class ContractParty(BaseModel):
     name: str
     tax_id: Optional[str] = None
     role: Optional[str] = Field(None, description="e.g. seller, buyer, lessor")
+    kind: Optional[str] = Field(None, description="INDIVIDUAL or COMPANY")
+    country: Optional[str] = None
 
 
 class Deliverable(BaseModel):
@@ -119,9 +128,20 @@ class Contract(BaseModel):
     end_date: Optional[str] = None
     total_value: Optional[float] = None
     currency: Optional[str] = None
+    tariff_code: Optional[str] = Field(None, description="NC/tariff code only when printed")
     payment_terms: Optional[str] = None
     deliverables: List[Deliverable] = Field(default_factory=list)
     vin: Optional[str] = None
+    vehicle_make: Optional[str] = None
+    vehicle_model: Optional[str] = None
+    vehicle_variant: Optional[str] = None
+    vehicle_year: Optional[int] = None
+    first_registration_date: Optional[str] = None
+    mileage_km: Optional[int] = None
+    vehicle_transaction: Optional[str] = Field(
+        None, description="purchase for a vehicle acquisition, otherwise other"
+    )
+    direction: Optional[str] = None
 
 
 class ZReport(BaseModel):
@@ -156,19 +176,9 @@ class CMR(BaseModel):
     vehicle_plate: Optional[str] = Field(None, description="Tractor/truck registration plate")
     trailer_plate: Optional[str] = None
     goods_description: Optional[str] = None
+    tariff_code: Optional[str] = Field(None, description="NC/tariff code only when printed")
+    gross_weight_kg: Optional[float] = None
     vin: Optional[str] = Field(None, description="VIN of the transported car, if listed")
-
-
-class CustomsDeclaration(BaseModel):
-    mrn: Optional[str] = Field(None, description="Movement Reference Number")
-    date: Optional[str] = None
-    customs_office: Optional[str] = None
-    declarant_name: Optional[str] = None
-    customs_value: Optional[float] = None
-    currency: Optional[str] = None
-    duties_paid: Optional[float] = None
-    vat_paid: Optional[float] = None
-    vin: Optional[str] = None
 
 
 class RegistrationCertificate(BaseModel):
@@ -178,8 +188,10 @@ class RegistrationCertificate(BaseModel):
     make: Optional[str] = None
     model: Optional[str] = None
     variant: Optional[str] = None
+    vehicle_year: Optional[int] = None
     first_registration_date: Optional[str] = Field(None, description="ISO date")
     registration_number: Optional[str] = None
+    registration_country: Optional[str] = None
     owner_name: Optional[str] = None
     fuel_type: Optional[str] = None
     engine_capacity_cm3: Optional[int] = None
@@ -187,28 +199,6 @@ class RegistrationCertificate(BaseModel):
     emissions_class: Optional[str] = None
     mass_kg: Optional[int] = None
     color: Optional[str] = None
-
-
-class TechnicalInspection(BaseModel):
-    vin: Optional[str] = None
-    registration_number: Optional[str] = None
-    inspection_date: Optional[str] = None
-    valid_until: Optional[str] = None
-    result: Optional[str] = None
-    station_name: Optional[str] = None
-    mileage_km: Optional[int] = None
-
-
-class Insurance(BaseModel):
-    policy_number: Optional[str] = None
-    insurer_name: Optional[str] = None
-    insured_name: Optional[str] = None
-    vin: Optional[str] = None
-    registration_number: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    premium_amount: Optional[float] = None
-    currency: Optional[str] = None
 
 
 class OtherDocument(BaseModel):
@@ -225,10 +215,7 @@ SCHEMA_REGISTRY: dict[str, Type[BaseModel]] = {
     "Z Report": ZReport,
     "Payment Disposition": PaymentDisposition,
     "CMR": CMR,
-    "Customs Declaration": CustomsDeclaration,
     "Vehicle Registration Certificate": RegistrationCertificate,
-    "Technical Inspection (ITP)": TechnicalInspection,
-    "Insurance": Insurance,
     "Other": OtherDocument,
 }
 

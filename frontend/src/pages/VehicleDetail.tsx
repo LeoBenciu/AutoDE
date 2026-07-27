@@ -1,5 +1,5 @@
-import { FormEvent, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { FormEvent, useEffect, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import {
   useAddCostMutation,
   useGenerateContractMutation,
@@ -98,6 +98,8 @@ export default function VehicleDetail() {
         />
       </div>
 
+      <OriginalSellerSection vehicle={v} />
+
       {/* Documents */}
       <section className="rounded-card border border-line bg-white p-4">
         <div className="flex items-center justify-between">
@@ -175,6 +177,125 @@ export default function VehicleDetail() {
   );
 }
 
+function OriginalSellerSection({ vehicle }: { vehicle: any }) {
+  const { data: parties = [] } = usePartiesQuery();
+  const [update, { isLoading }] = useUpdateVehicleMutation();
+  const [mode, setMode] = useState<'existing' | 'new'>('existing');
+  const [sellerId, setSellerId] = useState(vehicle.sellerId ? String(vehicle.sellerId) : '');
+  const [seller, setSeller] = useState({
+    kind: 'INDIVIDUAL',
+    name: '',
+    taxId: '',
+    country: vehicle.originCountry || 'DE',
+  });
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    setSellerId(vehicle.sellerId ? String(vehicle.sellerId) : '');
+  }, [vehicle.sellerId]);
+
+  const save = async () => {
+    setMessage('');
+    try {
+      await update({
+        id: vehicle.id,
+        body:
+          mode === 'existing'
+            ? { sellerId: sellerId ? Number(sellerId) : null }
+            : { seller },
+      }).unwrap();
+      setMessage('Vânzătorul inițial a fost salvat.');
+      if (mode === 'new') setMode('existing');
+    } catch (error: any) {
+      setMessage(error?.data?.message ?? 'Vânzătorul nu a putut fi salvat');
+    }
+  };
+
+  const field = 'rounded-control border border-line-strong px-2.5 py-2 text-sm focus:border-brand focus:outline-none';
+  return (
+    <section className="rounded-card border border-line bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="font-semibold text-ink">Vânzător inițial</h2>
+          <p className="text-xs text-muted">
+            {vehicle.seller
+              ? `${vehicle.seller.name} · ${vehicle.seller.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI'} ${vehicle.seller.taxId || '—'}`
+              : 'Nu este selectat'}
+          </p>
+        </div>
+        <div className="flex gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setMode('existing')}
+            className={`rounded-control px-2.5 py-1.5 ${mode === 'existing' ? 'bg-brand text-white' : 'border border-line-strong text-ink-soft'}`}
+          >
+            Partener existent
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('new')}
+            className={`rounded-control px-2.5 py-1.5 ${mode === 'new' ? 'bg-brand text-white' : 'border border-line-strong text-ink-soft'}`}
+          >
+            CUI/CNP nou
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {mode === 'existing' ? (
+          <select
+            aria-label="Vânzător inițial"
+            className={`${field} min-w-64 flex-1`}
+            value={sellerId}
+            onChange={(event) => setSellerId(event.target.value)}
+          >
+            <option value="">Fără vânzător inițial</option>
+            {parties.map((party: any) => (
+              <option key={party.id} value={party.id}>
+                {party.name} · {party.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI'} {party.taxId || '—'}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <>
+            <select
+              aria-label="Tip vânzător"
+              className={field}
+              value={seller.kind}
+              onChange={(event) => setSeller({ ...seller, kind: event.target.value })}
+            >
+              <option value="INDIVIDUAL">Persoană fizică</option>
+              <option value="COMPANY">Companie</option>
+            </select>
+            <input
+              aria-label="Nume vânzător"
+              className={`${field} flex-1`}
+              placeholder="Nume / denumire"
+              value={seller.name}
+              onChange={(event) => setSeller({ ...seller, name: event.target.value })}
+            />
+            <input
+              aria-label={seller.kind === 'INDIVIDUAL' ? 'CNP vânzător' : 'CUI vânzător'}
+              className={field}
+              placeholder={seller.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI / CIF'}
+              value={seller.taxId}
+              onChange={(event) => setSeller({ ...seller, taxId: event.target.value })}
+            />
+          </>
+        )}
+        <button
+          type="button"
+          onClick={save}
+          disabled={isLoading || (mode === 'new' && (!seller.name || !seller.taxId))}
+          className="rounded-control bg-brand px-3.5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {isLoading ? 'Se salvează…' : 'Salvează'}
+        </button>
+      </div>
+      {message && <p className="mt-2 text-xs text-muted">{message}</p>}
+    </section>
+  );
+}
+
 function NeedsReviewChip() {
   return (
     <span
@@ -208,7 +329,17 @@ function CostsSection({ vehicle, vehicleId }: { vehicle: any; vehicleId: number 
 
   return (
     <section className="rounded-card border border-line bg-white p-4">
-      <h2 className="font-semibold text-ink">Costuri</h2>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h2 className="font-semibold text-ink">Costuri din documente</h2>
+          <p className="mt-0.5 text-xs text-muted">
+            Facturile și bonurile atașate vehiculului intră aici după aprobare și pot fi exportate în SAGA.
+          </p>
+        </div>
+        <Link to="/documente" className="text-xs font-semibold text-brand hover:underline">
+          Încarcă document contabil
+        </Link>
+      </div>
       <div className="mt-3 space-y-1">
         {(vehicle.costs ?? []).map((c: any) => {
           // Contrast effect: each cost is anchored against the purchase price.
@@ -217,6 +348,11 @@ function CostsSection({ vehicle, vehicleId }: { vehicle: any; vehicleId: number 
             <div key={c.id} className="flex justify-between border-b border-line py-1.5 text-sm">
               <span className="text-muted">
                 {c.category} {c.note ? `· ${c.note}` : ''}
+                {c.autoGenerated && (
+                  <span className="ml-1.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                    din document
+                  </span>
+                )}
               </span>
               <span className="font-medium text-ink">
                 {Number(c.amount).toLocaleString('ro-RO')} {c.currency}
@@ -226,6 +362,10 @@ function CostsSection({ vehicle, vehicleId }: { vehicle: any; vehicleId: number 
           );
         })}
       </div>
+      <details className="mt-3 rounded-control border border-dashed border-line-strong p-2.5">
+        <summary className="cursor-pointer text-xs font-semibold text-muted">
+          Adaugă manual un cost excepțional
+        </summary>
       <form onSubmit={submit} className="mt-3 flex flex-wrap gap-2">
         <select
           value={form.category}
@@ -252,6 +392,7 @@ function CostsSection({ vehicle, vehicleId }: { vehicle: any; vehicleId: number 
         />
         <button className="rounded-control bg-brand px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-hover">Adaugă</button>
       </form>
+      </details>
     </section>
   );
 }

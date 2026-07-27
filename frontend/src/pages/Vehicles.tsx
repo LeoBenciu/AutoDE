@@ -1,6 +1,10 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useCreateVehicleMutation, useVehiclesQuery } from '../store/api';
+import {
+  useCreateVehicleMutation,
+  usePartiesQuery,
+  useVehiclesQuery,
+} from '../store/api';
 import { StatusChip } from '../components/StatusChip';
 import { VehicleBrandLogo } from '../components/VehicleBrandLogo';
 import {
@@ -35,13 +39,21 @@ export default function Vehicles() {
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight text-ink">Vehicule</h1>
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover"
-        >
-          <PlusIcon />
-          Adaugă
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/documente"
+            className="rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover"
+          >
+            Încarcă factură / contract
+          </Link>
+          <button
+            onClick={() => setShowForm(true)}
+            className="flex items-center gap-2 rounded-control border border-line-strong px-4 py-2.5 text-sm font-semibold text-ink-soft transition-colors hover:bg-surface"
+          >
+            <PlusIcon />
+            Adaugă manual
+          </button>
+        </div>
       </div>
 
       <div className="mt-5 flex flex-col gap-2.5 sm:flex-row">
@@ -122,15 +134,15 @@ export default function Vehicles() {
             <p className="mx-auto mt-1.5 mb-4 max-w-xs text-[13.5px] text-muted">
               {filtered
                 ? 'Încearcă alt filtru sau termen de căutare.'
-                : 'Adaugă primul tău vehicul pentru a începe urmărirea.'}
+                : 'Încarcă factura sau contractul de achiziție; vehiculul va fi creat automat din datele extrase.'}
             </p>
             {!filtered && (
-              <button
-                onClick={() => setShowForm(true)}
+              <Link
+                to="/documente"
                 className="rounded-control bg-brand px-4 py-2.5 text-[13.5px] font-semibold text-white transition-colors hover:bg-brand-hover"
               >
-                + Adaugă vehicul
-              </button>
+                Încarcă documentul de achiziție
+              </Link>
             )}
           </div>
         )}
@@ -143,11 +155,21 @@ export default function Vehicles() {
 
 function NewVehicleModal({ onClose }: { onClose: () => void }) {
   const [create, { isLoading }] = useCreateVehicleMutation();
+  const { data: parties = [] } = usePartiesQuery();
   const [error, setError] = useState('');
   const [form, setForm] = useState({
     vin: '', make: '', model: '', year: new Date().getFullYear(),
     mileageKm: '', purchasePrice: '', purchaseCurrency: 'EUR', originCountry: 'DE',
   });
+  const [sellerMode, setSellerMode] = useState<'none' | 'existing' | 'new'>('none');
+  const [sellerId, setSellerId] = useState('');
+  const [seller, setSeller] = useState({
+    kind: 'INDIVIDUAL',
+    name: '',
+    taxId: '',
+    country: 'DE',
+  });
+  const availableModels = modelsForBrand(form.make);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -158,6 +180,10 @@ function NewVehicleModal({ onClose }: { onClose: () => void }) {
         year: Number(form.year),
         mileageKm: form.mileageKm ? Number(form.mileageKm) : undefined,
         purchasePrice: Number(form.purchasePrice),
+        ...(sellerMode === 'existing' && sellerId
+          ? { sellerId: Number(sellerId) }
+          : {}),
+        ...(sellerMode === 'new' ? { seller } : {}),
       }).unwrap();
       onClose();
     } catch (err: any) {
@@ -170,9 +196,14 @@ function NewVehicleModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-[rgba(15,15,25,0.5)] p-0 sm:items-center sm:p-5" onClick={onClose}>
-      <div className="w-full max-w-md rounded-t-2xl bg-white p-6 shadow-[0_20px_60px_-15px_rgba(20,20,40,0.4)] sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-6 shadow-[0_20px_60px_-15px_rgba(20,20,40,0.4)] sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-[18px] flex items-center justify-between">
-          <h3 className="text-[17px] font-bold text-ink">Adaugă vehicul</h3>
+          <div>
+            <h3 className="text-[17px] font-bold text-ink">Adaugă manual vehiculul</h3>
+            <p className="mt-0.5 text-xs text-muted">
+              Folosește această opțiune doar când nu ai un document de achiziție.
+            </p>
+          </div>
           <button onClick={onClose} className="p-1 text-lg leading-none text-muted hover:text-ink">✕</button>
         </div>
         <form onSubmit={submit} className="space-y-3">
@@ -190,19 +221,30 @@ function NewVehicleModal({ onClose }: { onClose: () => void }) {
               value={form.make}
               onChange={(make) => setForm({ ...form, make, model: '' })}
             />
-            <select
-              aria-label="Model"
-              className={`${field} ${!form.make ? 'cursor-not-allowed bg-canvas text-muted-2' : ''}`}
-              value={form.model}
-              onChange={set('model')}
-              disabled={!form.make}
-              required
-            >
-              <option value="">{form.make ? 'Alege modelul' : 'Selectează marca întâi'}</option>
-              {modelsForBrand(form.make).map((model) => (
-                <option key={model} value={model}>{model}</option>
-              ))}
-            </select>
+            {form.make && availableModels.length === 0 ? (
+              <input
+                aria-label="Model"
+                className={field}
+                placeholder="Introdu modelul"
+                value={form.model}
+                onChange={set('model')}
+                required
+              />
+            ) : (
+              <select
+                aria-label="Model"
+                className={`${field} ${!form.make ? 'cursor-not-allowed bg-canvas text-muted-2' : ''}`}
+                value={form.model}
+                onChange={set('model')}
+                disabled={!form.make}
+                required
+              >
+                <option value="">{form.make ? 'Alege modelul' : 'Selectează marca întâi'}</option>
+                {availableModels.map((model) => (
+                  <option key={model} value={model}>{model}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-2.5">
             <input className={field} type="number" placeholder="An fabricație" value={form.year} onChange={set('year')} required />
@@ -228,6 +270,75 @@ function NewVehicleModal({ onClose }: { onClose: () => void }) {
               </option>
             ))}
           </select>
+          <div className="rounded-xl border border-line bg-canvas p-3">
+            <label className="text-xs font-semibold text-ink-soft">Vânzător inițial</label>
+            <select
+              aria-label="Mod selectare vânzător inițial"
+              className={`${field} mt-1.5 bg-white`}
+              value={sellerMode}
+              onChange={(event) => setSellerMode(event.target.value as typeof sellerMode)}
+            >
+              <option value="none">Nespecificat</option>
+              <option value="existing">Alege din parteneri</option>
+              <option value="new">Adaugă automat după CUI/CNP</option>
+            </select>
+            {sellerMode === 'existing' && (
+              <select
+                aria-label="Vânzător inițial"
+                className={`${field} mt-2 bg-white`}
+                value={sellerId}
+                onChange={(event) => setSellerId(event.target.value)}
+                required
+              >
+                <option value="">Alege partenerul…</option>
+                {parties.map((party: any) => (
+                  <option key={party.id} value={party.id}>
+                    {party.name} · {party.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI'} {party.taxId || '—'}
+                  </option>
+                ))}
+              </select>
+            )}
+            {sellerMode === 'new' && (
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <select
+                  aria-label="Tip vânzător"
+                  className={`${field} bg-white`}
+                  value={seller.kind}
+                  onChange={(event) => setSeller({ ...seller, kind: event.target.value })}
+                >
+                  <option value="INDIVIDUAL">Persoană fizică</option>
+                  <option value="COMPANY">Companie</option>
+                </select>
+                <input
+                  aria-label="Nume vânzător"
+                  className={field}
+                  placeholder="Nume / denumire"
+                  value={seller.name}
+                  onChange={(event) => setSeller({ ...seller, name: event.target.value })}
+                  required
+                />
+                <input
+                  aria-label={seller.kind === 'INDIVIDUAL' ? 'CNP vânzător' : 'CUI vânzător'}
+                  className={field}
+                  placeholder={seller.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI / CIF'}
+                  value={seller.taxId}
+                  onChange={(event) => setSeller({ ...seller, taxId: event.target.value })}
+                  required
+                />
+                <input
+                  aria-label="Țară vânzător"
+                  className={field}
+                  placeholder="Țară"
+                  maxLength={2}
+                  value={seller.country}
+                  onChange={(event) => setSeller({ ...seller, country: event.target.value.toUpperCase() })}
+                />
+              </div>
+            )}
+            <p className="mt-2 text-xs text-muted">
+              Dacă identificatorul există deja, partenerul este reutilizat; altfel este creat automat.
+            </p>
+          </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex gap-2.5 pt-2">
             <button type="button" onClick={onClose} className="flex-1 rounded-control border border-line-strong py-2.5 text-sm font-semibold text-ink-soft">

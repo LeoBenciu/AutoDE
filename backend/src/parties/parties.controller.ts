@@ -1,7 +1,21 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser, JwtAuthGuard, Roles, RolesGuard } from '../auth/guards';
 import { AuthUser } from '../auth/jwt.strategy';
-import { PartiesService } from './parties.service';
+import { PartiesService, PartyRole, UploadedCsv } from './parties.service';
 import { CreatePartyDto, UpdatePartyDto } from './dto';
 
 @Controller('parties')
@@ -23,6 +37,20 @@ export class PartiesController {
   @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
   create(@CurrentUser() user: AuthUser, @Body() dto: CreatePartyDto) {
     return this.parties.create(user.tenantId, dto);
+  }
+
+  @Post('import')
+  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  import(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile() file: UploadedCsv,
+    @Body('role') role?: string,
+  ) {
+    if (role !== 'supplier' && role !== 'client') {
+      throw new BadRequestException("Parametrul 'role' trebuie să fie 'supplier' sau 'client'");
+    }
+    return this.parties.import(user.tenantId, role as PartyRole, file);
   }
 
   @Patch(':id')

@@ -24,8 +24,8 @@ document management, LLM document extraction, contract generation, and RO e-Tran
 3. The copied Finova engine runs strict Pydantic structured outputs, provider routing,
    PDF text + Textract Analyze/Expense + LLM vision, scoped repair, its 627-account
    embedding chart, deterministic validation and calibrated
-   per-field confidence. AutoImport adds strict CMR, customs, vehicle registration, ITP and
-   insurance schemas to the same registry.
+   per-field confidence. AutoImport adds vehicle-aware invoice, receipt and private-purchase
+   contract fields, plus strict CMR and vehicle registration schemas, to the same registry.
 4. Deterministic validators (VIN format, VAT arithmetic and date sanity)
    cap per-field confidence and flag `needsReview`; the review drawer orders flagged fields
    first, displays validation evidence, and can hide high-confidence auto-accepted fields.
@@ -36,17 +36,23 @@ document management, LLM document extraction, contract generation, and RO e-Tran
    document boundaries in combined PDFs and fans them out as independently processed children.
 
 ### Feature map
-- **Vehicles**: lifecycle SOURCED→…→DELIVERED, costs → landed cost → margin per car.
+- **Vehicles**: a purchase invoice/private purchase contract creates or enriches the stock
+  card by VIN; CMR and registration documents attach to the same car. Manual creation remains
+  an exception path. Lifecycle SOURCED→…→DELIVERED, costs → landed cost → margin per car.
 - **Documents**: dedupe by hash, side-by-side PDF/image review, line-level accounting
   corrections, proposed debit/credit notes, explicit approval and reversible reopening.
 - **Accounting**: approval-only balanced journal entries, idempotent posting, partner/article/
   management catalogues and a read-only journal. Existing documents remain legacy; only
-  documents uploaded after each tenant's accounting cutover enter this flow.
+  documents uploaded after each tenant's accounting cutover enter this flow. Approved incoming
+  invoices/independent receipts linked to a car also create document-backed landed-cost rows.
 - **Contracts**: generate *contract de vânzare-cumpărare* / *proces-verbal* PDFs
-  (price in words in Romanian, per-tenant number sequences), stored back as documents.
+  (price in words in Romanian, per-tenant number sequences), stored back as documents. An
+  uploaded private-person vehicle purchase contract creates the vehicle/seller catalogue
+  records from extracted identity data and, after review, posts `371 = 462`.
 - **SAGA export**: `/exporturi` previews and generates `SAGA_Export_<date>.zip` with
   Facturi, Încasări, Plăți, Furnizori, Clienți and Articole XML. Only approved post-cutover
-  documents are included. Încasări/Plăți come from approved receipts and cash/payment
+  documents are included; approved private vehicle purchase contracts enter Facturi with
+  a generated car line. Încasări/Plăți come from approved receipts and cash/payment
   dispositions in the journal—never from bank reconciliation. Empty selected files are
   omitted. The old invoice/partner endpoints remain temporary compatibility wrappers.
 - **e-Transport**: declaration pre-filled from extracted CMR/invoice, XML build,
@@ -55,6 +61,24 @@ document management, LLM document extraction, contract generation, and RO e-Tran
 - **Cross-cutting**: JWT access+refresh, roles, tenant scoping on every query,
   audit log (e-Transport/contracts/deletes), graceful degradation when
   ANAF/LLM credentials are missing.
+
+### User workflow
+
+1. Complete company/CUI and accounting settings, then upload the acquisition invoice or
+   private purchase contract in **Documents**.
+2. Wait for extraction, verify VIN, make/model/year, seller, price, dates, VAT and accounting
+   lines, and correct any flagged value.
+3. Approve the document. The system confirms/updates the vehicle by VIN, posts the accounting
+   entry, and makes the approved document eligible for SAGA.
+4. Upload CMR and registration papers; they attach to the same VIN and enrich the vehicle
+   file. Create and confirm e-Transport/UIT when that flow applies.
+5. Upload transport, registration, ITP, refurbishment and other supplier invoices/receipts,
+   assign a vehicle if the VIN is not printed, verify, then approve. Their economic amounts
+   become categorized vehicle costs; ITP/customs/etc. remain cost categories, not special
+   upload types.
+6. Mark the vehicle **IN_STOCK** when physically received and ready, then export the approved
+   period from **SAGA exports**. Use manual vehicle/cost entry only for missing source documents
+   or exceptional adjustments.
 
 ## Local development
 

@@ -2,6 +2,13 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import { API_BASE_URL } from './apiBase';
 import type { RootState } from './store';
 
+export interface ImportResult {
+  created: number;
+  updated: number;
+  total: number;
+  errors: string[];
+}
+
 export const api = createApi({
   reducerPath: 'api',
   baseQuery: fetchBaseQuery({
@@ -40,11 +47,11 @@ export const api = createApi({
     }),
     createVehicle: build.mutation<any, any>({
       query: (body) => ({ url: '/vehicles', method: 'POST', body }),
-      invalidatesTags: ['Vehicle'],
+      invalidatesTags: ['Vehicle', 'Party'],
     }),
     updateVehicle: build.mutation<any, { id: number; body: any }>({
       query: ({ id, body }) => ({ url: `/vehicles/${id}`, method: 'PATCH', body }),
-      invalidatesTags: (_r, _e, { id }) => ['Vehicle', { type: 'Vehicle', id }],
+      invalidatesTags: (_r, _e, { id }) => ['Vehicle', { type: 'Vehicle', id }, 'Party'],
     }),
     addCost: build.mutation<any, { id: number; body: any }>({
       query: ({ id, body }) => ({ url: `/vehicles/${id}/costs`, method: 'POST', body }),
@@ -65,6 +72,15 @@ export const api = createApi({
         method: 'PATCH',
         body,
       }),
+      invalidatesTags: ['Party', 'Saga'],
+    }),
+    importParties: build.mutation<ImportResult, { file: File; role: 'supplier' | 'client' }>({
+      query: ({ file, role }) => {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('role', role);
+        return { url: '/parties/import', method: 'POST', body: form };
+      },
       invalidatesTags: ['Party', 'Saga'],
     }),
 
@@ -207,6 +223,14 @@ export const api = createApi({
       }),
       invalidatesTags: ['Accounting', 'Saga'],
     }),
+    importArticles: build.mutation<ImportResult, File>({
+      query: (file) => {
+        const form = new FormData();
+        form.append('file', file);
+        return { url: '/accounting/articles/import', method: 'POST', body: form };
+      },
+      invalidatesTags: ['Accounting', 'Saga'],
+    }),
     managements: build.query<any[], void>({
       query: () => '/accounting/managements',
       providesTags: ['Accounting'],
@@ -225,6 +249,14 @@ export const api = createApi({
         method: 'PATCH',
         body,
       }),
+      invalidatesTags: ['Accounting', 'Saga'],
+    }),
+    importManagements: build.mutation<ImportResult, File>({
+      query: (file) => {
+        const form = new FormData();
+        form.append('file', file);
+        return { url: '/accounting/managements/import', method: 'POST', body: form };
+      },
       invalidatesTags: ['Accounting', 'Saga'],
     }),
     sagaPreview: build.mutation<any, any>({
@@ -252,6 +284,7 @@ export const {
   usePartiesQuery,
   useCreatePartyMutation,
   useUpdatePartyMutation,
+  useImportPartiesMutation,
   useDocumentsQuery,
   useDocumentQuery,
   useUploadDocumentsMutation,
@@ -282,9 +315,11 @@ export const {
   useArticlesQuery,
   useCreateArticleMutation,
   useUpdateArticleMutation,
+  useImportArticlesMutation,
   useManagementsQuery,
   useCreateManagementMutation,
   useUpdateManagementMutation,
+  useImportManagementsMutation,
   useSagaPreviewMutation,
   useSagaPreferencesQuery,
   useSaveSagaPreferencesMutation,

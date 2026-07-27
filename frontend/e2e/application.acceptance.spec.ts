@@ -23,6 +23,10 @@ test('@desktop core flows and side-by-side extraction review', async ({
   await expect(page.getByText(/CV-UI-00001 · vanzare-cumparare/)).toBeVisible();
 
   await page.goto('/documente');
+  await expect(page.locator('select option[value="Contract"]')).toHaveCount(1);
+  await expect(page.locator('select option[value="Customs Declaration"]')).toHaveCount(0);
+  await expect(page.locator('select option[value="Technical Inspection (ITP)"]')).toHaveCount(0);
+  await expect(page.locator('select option[value="Insurance"]')).toHaveCount(0);
   await page.getByPlaceholder('Caută după nume, tip, VIN, client…').fill('UI Acceptance');
   await expect(page.getByText('UI Acceptance Invoice.pdf')).toBeVisible();
   await page.getByText('UI Acceptance Invoice.pdf').first().click();
@@ -143,9 +147,23 @@ test('@desktop vehicle selectors constrain model and retain brand logo', async (
   await expect(page.getByLabel('Sigla Volkswagen')).toBeVisible();
   await page.getByRole('button', { name: 'Adaugă' }).click();
 
+  const sellerMode = page.getByRole('combobox', {
+    name: 'Mod selectare vânzător inițial',
+  });
+  await sellerMode.selectOption('new');
+  await expect(page.getByRole('combobox', { name: 'Tip vânzător' })).toHaveValue(
+    'INDIVIDUAL',
+  );
+  await expect(page.getByRole('textbox', { name: 'CNP vânzător' })).toBeVisible();
+  await sellerMode.selectOption('none');
+
   const brand = page.getByRole('combobox', { name: 'Marcă' });
   const model = page.getByRole('combobox', { name: 'Model' });
   await expect(model).toBeDisabled();
+  await brand.click();
+  await expect(page.getByRole('option', { name: /Abarth/ })).toBeVisible();
+  await page.getByRole('option', { name: /Zeekr/ }).click();
+  await expect(page.getByRole('textbox', { name: 'Model', exact: true })).toBeEnabled();
   await brand.click();
   await page.getByRole('option', { name: /Volvo/ }).click();
   await expect(model).toBeEnabled();

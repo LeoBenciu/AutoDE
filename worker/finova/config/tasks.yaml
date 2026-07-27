@@ -2,8 +2,7 @@ categorize_document_task:
   description: >
     Classify the document into exactly one type:
     Invoice, Receipt, Contract, Bank Statement, Z Report, Payment Disposition,
-    Collection Disposition, CMR, Customs Declaration, Vehicle Registration
-    Certificate, Technical Inspection (ITP), Insurance, or Other.
+    Collection Disposition, CMR, Vehicle Registration Certificate, or Other.
 
     Use these document-text cues to disambiguate:
     - Receipt: contains "CHITANȚĂ", "CHITANTA", or "BON FISCAL".
@@ -17,15 +16,9 @@ categorize_document_task:
       "încasare" = collect in. The single word încasare vs plată decides the type.
     - CMR: international consignment note / "Scrisoare de transport CMR", with
       sender, consignee, carrier, loading and delivery places.
-    - Customs Declaration: customs/MRN declaration with customs value, duties,
-      tariff code, declarant, or customs office.
     - Vehicle Registration Certificate: vehicle title/registration paper such as
       "Zulassungsbescheinigung", Fahrzeugbrief, certificat de înmatriculare, or
       talon; prominently contains a VIN/chassis and vehicle technical data.
-    - Technical Inspection (ITP): inspection/TÜV/ITP report with inspection date,
-      result, mileage and validity date.
-    - Insurance: insurance policy/RCA/CASCO/green card with policy number and
-      coverage start/end dates.
     - Other: only when none of the supported types fits.
 
     AVIZ (delivery note): if the document is an "Aviz de însoțire" / delivery note
@@ -55,9 +48,22 @@ categorize_document_task:
 extract_invoice_data_task:
   description: >
     For an Invoice with direction '{direction}', where CURRENT DATE is {current_date}, extract:
-    - vendor, vendor_ein (number only, remove 'RO'), buyer, buyer_ein (number only, remove 'RO'), document_number, document_date (DD-MM-YYYY, must not be after {current_date}), due_date (DD-MM-YYYY, null if absent — the payment DEADLINE; it MAY be after {current_date}, so do NOT null or change a future due date), total_amount (numeric - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), vat_amount (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - default to RON), referenced_numbers: array of any document numbers which the current document references(invoices, contracts, receipts, etc.) mentioned anywhere in the invoice text.
+    - vendor, vendor_ein (number only, remove 'RO'), vendor_country (ISO country code or null), buyer, buyer_ein (number only, remove 'RO'), buyer_country (ISO country code or null), document_number, document_date (DD-MM-YYYY, must not be after {current_date}), due_date (DD-MM-YYYY, null if absent — the payment DEADLINE; it MAY be after {current_date}, so do NOT null or change a future due date), total_amount (numeric - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), vat_amount (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - default to RON), tariff_code (NC/tariff code exactly as printed, or null; never infer 8703), referenced_numbers: array of any document numbers which the current document references(invoices, contracts, receipts, etc.) mentioned anywhere in the invoice text.
 
-    CRITICAL: Extract line_items array - THIS IS MANDATORY. EVERY invoice MUST have line_items. Look carefully at the document for itemized lists, tables, product/service descriptions with quantities and prices. Extract ALL items from ALL pages of the document. If the document text contains "=== PAGE X ===" markers, this indicates a multi-page document - you MUST extract line items from EVERY page, not just the first page. Count the total number of line items as you extract them - if you see line items continuing on subsequent pages, you MUST include ALL of them. Do NOT stop after the first page or after a certain number of items.     Each line item must have: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (e.g., '624' for transport - THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING invoices - see rules below). The line_items array CANNOT be empty - if you cannot find explicit line items, you must look harder or extract from the invoice structure. For multi-page invoices, continue reading through all pages until you have extracted every single line item. Verify completeness by checking that you've processed all pages and all line items visible in the document.
+    VEHICLE WORKFLOW:
+    - Extract vin (17-character chassis number), vehicle_make, vehicle_model,
+      vehicle_variant, vehicle_year, first_registration_date (DD-MM-YYYY), and
+      mileage_km whenever printed. Use null for fields that are absent; never guess.
+    - Set vehicle_transaction="purchase" when the invoice sells a vehicle to
+      {client_company_ein}; set "cost" when it charges transport, customs,
+      registration, inspection, repair/refurbishment, parts, or another service
+      for a vehicle; otherwise set "other".
+    - For a cost invoice, set vehicle_cost_category to TRANSPORT, CUSTOMS, VAT,
+      ITP, REGISTRATION, REFURB, or OTHER. Use null for purchase/other invoices.
+      Also classify every line item in vehicle_cost_category when it is a
+      vehicle-related cost; otherwise use null.
+
+    CRITICAL: Extract line_items array - THIS IS MANDATORY. EVERY invoice MUST have line_items. Look carefully at the document for itemized lists, tables, product/service descriptions with quantities and prices. Extract ALL items from ALL pages of the document. If the document text contains "=== PAGE X ===" markers, this indicates a multi-page document - you MUST extract line items from EVERY page, not just the first page. Count the total number of line items as you extract them - if you see line items continuing on subsequent pages, you MUST include ALL of them. Do NOT stop after the first page or after a certain number of items.     Each line item must have: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (e.g., '624' for transport - THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING invoices - see rules below), vehicle_cost_category (vehicle cost category or null). The line_items array CANNOT be empty - if you cannot find explicit line items, you must look harder or extract from the invoice structure. For multi-page invoices, continue reading through all pages until you have extracted every single line item. Verify completeness by checking that you've processed all pages and all line items visible in the document.
 
     VAT RATE DETECTION: Look for VAT percentage in document (e.g., "TVA 21%", "Cota TVA: 11%", "19% VAT") or calculate from vat_amount/net_amount. {VAT_RATE_MAPPING}
 
@@ -150,7 +156,7 @@ extract_receipt_data_task:
     - When in doubt and items are listed → 'independent_receipt'
     - Examples of independent receipts: supermarket receipts, gas station receipts, retail store receipts, restaurant bills with items
 
-    Common fields for all receipts: receipt_number, receipt_type ('payment_receipt' OR 'independent_receipt'), vendor, vendor_ein (number only, remove 'RO'), buyer, buyer_ein (number only, remove 'RO'), total_amount (paid/received - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), document_date (DD-MM-YYYY, must not be after {current_date}), payment_method (MANDATORY - must be either 'cash' or 'bank' - analyze the document carefully: if payment was made by cash/numerar use 'cash', if payment was made by bank transfer/transfer bancar OR card/card bancar use 'bank' - card payments are treated as bank payments - this is critical for bank reconciliation), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - detect from document or default to RON), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
+    Common fields for all receipts: receipt_number, receipt_type ('payment_receipt' OR 'independent_receipt'), vendor, vendor_ein (number only, remove 'RO'), buyer, buyer_ein (number only, remove 'RO'), total_amount (paid/received - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), document_date (DD-MM-YYYY, must not be after {current_date}), payment_method (MANDATORY - must be either 'cash' or 'bank' - analyze the document carefully: if payment was made by cash/numerar use 'cash', if payment was made by bank transfer/transfer bancar OR card/card bancar use 'bank' - card payments are treated as bank payments - this is critical for bank reconciliation), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - detect from document or default to RON), vin (17-character chassis number or null), vehicle_cost_category (TRANSPORT, CUSTOMS, VAT, ITP, REGISTRATION, REFURB, OTHER, or null), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
 
     For PAYMENT RECEIPTS only: invoice_reference (MANDATORY - extract invoice number from phrases like "Pentru factura", "Factura nr.", "Invoice No.", "Payment for invoice", "Referinta: factura" - look in headers, footers, and reference sections. Also add to referenced_numbers array.)
 
@@ -160,7 +166,7 @@ extract_receipt_data_task:
     CRITICAL - LINE ITEMS EXTRACTION RULES:
     1. Extract EVERY item listed on the receipt: products, services, fuel, discounts (use NEGATIVE total), fees, and any other itemized charges.
 
-    2. For each line item extract: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING receipts - see rules below).
+    2. For each line item extract: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING receipts - see rules below), vehicle_cost_category (vehicle cost category or null).
        {VAT_RATE_MAPPING}
 
        NET vs VAT-INCLUSIVE PRICES (CRITICAL): unit_price and total MUST be NET (WITHOUT VAT); vat_amount is the line's VAT; the gross line equals total + vat_amount. Romanian fiscal receipts (BON FISCAL) and most till receipts print VAT-INCLUSIVE prices — when the listed unit price / line amount already contains VAT, you MUST convert to net before output: net_total = printed_amount / (1 + rate/100) and vat_amount = printed_amount − net_total (e.g. a 100.06 line at 19% → total 84.08, vat_amount 15.98). NEVER copy a VAT-inclusive printed amount into total, otherwise the VAT gets added twice. (The document-level total_amount still stays the GROSS, VAT-inclusive figure.)
@@ -208,7 +214,29 @@ extract_contract_data_task:
     For contract documents at {document_path} of type Contract, extract relevant data:
     CURRENT DATE: {current_date}
 
-    Extract: contract_number, contract_type, parties array with: name, ein (number only, remove 'RO'), role (client/vendor/contractor), contract_date (DD-MM-YYYY, must not be after {current_date}), start_date (DD-MM-YYYY, must not be after {current_date}), end_date (DD-MM-YYYY), total_value (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - default to RON), payment_terms, deliverables array with: description, due_date (DD-MM-YYYY), amount (numeric), status (pending/completed), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
+    Extract: contract_number, contract_type, direction, parties array with: name,
+    ein (CUI/CNP when printed, number only and remove 'RO'), role
+    (vendor=the seller, client=the buyer, contractor only for another service
+    party), kind (INDIVIDUAL or COMPANY), country (ISO code or null),
+    contract_date (DD-MM-YYYY, must not be after {current_date}), start_date
+    (DD-MM-YYYY; use contract_date when no separate start exists), end_date
+    (DD-MM-YYYY; use contract_date when the sale has no term), total_value
+    (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN
+    - default to RON), tariff_code (NC/tariff code exactly as printed, or null;
+    never infer 8703), payment_terms, deliverables array with: description,
+    due_date (DD-MM-YYYY), amount (numeric), status (pending/completed), and
+    referenced_numbers.
+
+    VEHICLE PURCHASE CONTRACT:
+    - Set vehicle_transaction="purchase" only for a vehicle sale/purchase contract
+      where {client_company_ein} is the buyer. In that case direction="incoming".
+      For any other contract set vehicle_transaction="other"; direction may be null
+      if it cannot be derived.
+    - Extract vin, vehicle_make, vehicle_model, vehicle_variant, vehicle_year,
+      first_registration_date (DD-MM-YYYY), and mileage_km exactly as printed.
+      Use null for absent fields and never guess.
+    - The individual selling the car is the vendor with kind=INDIVIDUAL. The
+      dealership is the client with kind=COMPANY. Do not invent a CNP/CUI.
     Use DD-MM-YYYY format. Output as JSON.
   expected_output: >
     JSON with contract details and currency.
@@ -314,7 +342,8 @@ extract_cmr_data_task:
     printed: cmr_number, sender_name, sender_tax_id, consignee_name,
     consignee_tax_id, carrier_name, carrier_tax_id, carrier_country,
     place_of_loading, place_of_delivery, loading_date (DD-MM-YYYY or null),
-    vehicle_plate, trailer_plate, goods_description, gross_weight_kg, vin
+    vehicle_plate, trailer_plate, goods_description, tariff_code (only when
+    explicitly printed; otherwise null), gross_weight_kg, vin
     (17-character chassis number if present), and referenced_numbers.
     Use empty strings only for required text that is genuinely absent and null
     for absent optional fields. Never guess. Include a confidence object with
@@ -325,25 +354,12 @@ extract_cmr_data_task:
     Strict JSON matching the CMR schema.
   agent: document_extractor
 
-extract_customs_declaration_data_task:
-  description: >
-    For this customs declaration, extract mrn, document_date (DD-MM-YYYY or
-    null), customs_office, declarant_name, declarant_tax_id, customs_value,
-    currency, duties_paid, vat_paid, tariff_code, gross_weight_kg, vin, and
-    referenced_numbers. Read every page. Use null for absent optional values
-    (including currency when no currency is printed) and never infer a number
-    that is not printed. Include a confidence object
-    with honest 0.0-1.0 values for mrn, document_date, customs_value, and vin.
-    Source file: {document_path}
-  expected_output: >
-    Strict JSON matching the customs declaration schema.
-  agent: document_extractor
-
 extract_vehicle_registration_data_task:
   description: >
     For this vehicle registration certificate/title (including German
     Zulassungsbescheinigung/Fahrzeugbrief), extract vin, make, model, variant,
-    first_registration_date (DD-MM-YYYY or null), registration_number,
+    vehicle_year (manufacturing/model year or null), first_registration_date
+    (DD-MM-YYYY or null), registration_number, registration_country (ISO code),
     owner_name, owner_address, fuel_type, engine_capacity_cm3, power_kw,
     emissions_class, mass_kg, and color. Pay special attention to official
     coded fields and distinguish VIN from registration number. Never guess.
@@ -352,33 +368,6 @@ extract_vehicle_registration_data_task:
     Source file: {document_path}
   expected_output: >
     Strict JSON matching the vehicle registration schema.
-  agent: document_extractor
-
-extract_technical_inspection_data_task:
-  description: >
-    For this technical inspection / ITP / TÜV report, extract vin,
-    registration_number, inspection_date (DD-MM-YYYY or null), valid_until
-    (DD-MM-YYYY or null), result, station_name, and mileage_km. Never turn the
-    inspection date into the expiry date. Include a confidence object with
-    honest 0.0-1.0 values for vin, inspection_date, valid_until, and result.
-    Source file: {document_path}
-  expected_output: >
-    Strict JSON matching the technical inspection schema.
-  agent: document_extractor
-
-extract_insurance_data_task:
-  description: >
-    For this insurance policy / RCA / CASCO / green card, extract policy_number,
-    insurer_name, insured_name, vin, registration_number, start_date and
-    end_date (DD-MM-YYYY or null), premium_amount, and currency. Never confuse
-    the issue date with the coverage dates. Use an empty string for an absent
-    required name/number and null for absent optional values, including currency.
-    Include a confidence object with
-    honest 0.0-1.0 values for policy_number, vin, start_date, end_date, and
-    premium_amount.
-    Source file: {document_path}
-  expected_output: >
-    Strict JSON matching the insurance schema.
   agent: document_extractor
 
 extract_other_document_data_task:
@@ -397,8 +386,7 @@ segment_batch_task:
     You are looking at ONE scanned PDF of {total_pages} pages that may contain
     SEVERAL separate accounting documents scanned in a stack (invoices, receipts,
     fiscal receipts, bank statements, contracts, Z reports, cash dispositions,
-    CMRs, customs declarations, vehicle registration certificates, technical
-    inspections, and insurance policies).
+    CMRs and vehicle registration certificates).
     Group consecutive pages into logical documents. Pages are provided in order,
     each labeled "=== PAGE i of N ===" with its thumbnail image and, when the PDF
     has a text layer, a snippet of its text (scans usually have no text — read
@@ -418,8 +406,8 @@ segment_batch_task:
     - a new vendor letterhead/logo/company header appears;
     - a new document title appears: FACTURĂ / FACTURA, CHITANȚĂ / CHITANTA,
       BON FISCAL, EXTRAS DE CONT, CONTRACT, RAPORT Z, DISPOZIȚIE DE PLATĂ,
-      DISPOZIȚIE DE ÎNCASARE, CMR, MRN/declarație vamală,
-      Zulassungsbescheinigung/Fahrzeugbrief/talon, ITP/TÜV, or insurance policy;
+      DISPOZIȚIE DE ÎNCASARE, CMR, or
+      Zulassungsbescheinigung/Fahrzeugbrief/talon;
     - a fresh document number and date appear at the top of the page;
     - the document type visibly changes (e.g. a receipt after an invoice).
 
@@ -432,8 +420,7 @@ segment_batch_task:
 
     For each segment report doc_type_hint (Invoice, Receipt, Bank Statement,
     Contract, Z Report, Payment Disposition, Collection Disposition, or Unknown)
-    plus CMR, Customs Declaration, Vehicle Registration Certificate, Technical
-    Inspection (ITP), and Insurance
+    plus CMR and Vehicle Registration Certificate
     and confidence (0.0-1.0) that the segment is a SEPARATE document with these
     exact boundaries.
 

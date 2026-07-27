@@ -8,11 +8,16 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser, JwtAuthGuard, Roles, RolesGuard } from '../auth/guards';
 import { AuthUser } from '../auth/jwt.strategy';
-import { AccountingService } from './accounting.service';
+import { AccountingService, UploadedCsv } from './accounting.service';
+
+const CSV_UPLOAD = { limits: { fileSize: 10 * 1024 * 1024 } };
 
 @Controller('accounting')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -74,6 +79,16 @@ export class AccountingController {
     return this.accounting.articles(user.tenantId, search);
   }
 
+  @Post('articles/import')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @UseInterceptors(FileInterceptor('file', CSV_UPLOAD))
+  importArticles(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile() file: UploadedCsv,
+  ) {
+    return this.accounting.importArticles(user.tenantId, file);
+  }
+
   @Post('articles')
   @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
   createArticle(
@@ -96,6 +111,16 @@ export class AccountingController {
   @Get('managements')
   managements(@CurrentUser() user: AuthUser) {
     return this.accounting.managements(user.tenantId);
+  }
+
+  @Post('managements/import')
+  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @UseInterceptors(FileInterceptor('file', CSV_UPLOAD))
+  importManagements(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile() file: UploadedCsv,
+  ) {
+    return this.accounting.importManagements(user.tenantId, file);
   }
 
   @Post('managements')

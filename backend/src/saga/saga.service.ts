@@ -1,7 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { GeneralLedgerEntry, Party } from '@prisma/client';
 import JSZip from 'jszip';
-import { normalizeAccountingDocument } from '../accounting/accounting-normalizer';
+import {
+  isVehiclePurchaseContract,
+  normalizeAccountingDocument,
+} from '../accounting/accounting-normalizer';
 import { AuditService } from '../common/audit.service';
 import { PrismaService } from '../common/prisma.service';
 import {
@@ -313,6 +316,7 @@ export class SagaService {
             type: {
               in: [
                 'Invoice',
+                'Contract',
                 'Receipt',
                 'Payment Disposition',
                 'Collection Disposition',
@@ -412,7 +416,8 @@ export class SagaService {
         document.type === 'Receipt' &&
         data.receiptType !== 'payment_receipt' &&
         data.referencedNumbers.length === 0;
-      if (document.type === 'Invoice' || independentReceipt) {
+      const purchaseContract = isVehiclePurchaseContract(data);
+      if (document.type === 'Invoice' || independentReceipt || purchaseContract) {
         invoices.push({ id: document.id, type: document.type, data });
       }
     }

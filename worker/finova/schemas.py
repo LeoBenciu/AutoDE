@@ -36,10 +36,7 @@ DocumentType = Literal[
     "Payment Disposition",
     "Collection Disposition",
     "CMR",
-    "Customs Declaration",
     "Vehicle Registration Certificate",
-    "Technical Inspection (ITP)",
-    "Insurance",
     "Other",
 ]
 
@@ -67,6 +64,10 @@ UnitOfMeasure = Literal[
 
 ReceiptType = Literal["payment_receipt", "independent_receipt"]
 PaymentMethod = Literal["cash", "bank"]
+VehicleTransaction = Literal["purchase", "cost", "other"]
+VehicleCostCategory = Literal[
+    "TRANSPORT", "CUSTOMS", "VAT", "ITP", "REGISTRATION", "REFURB", "OTHER",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -95,10 +96,7 @@ SegmentDocTypeHint = Literal[
     "Payment Disposition",
     "Collection Disposition",
     "CMR",
-    "Customs Declaration",
     "Vehicle Registration Certificate",
-    "Technical Inspection (ITP)",
-    "Insurance",
     "Unknown",
 ]
 
@@ -132,6 +130,7 @@ class LineItem(StrictBase):
     management: Optional[str]  # null when type is 'Nedefinit'
     isNew: bool
     vat_deductibility: Optional[VatDeductibility]  # only set for incoming docs
+    vehicle_cost_category: Optional[VehicleCostCategory]
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +181,18 @@ class InvoiceData(StrictBase):
     total_amount: float
     vat_amount: float
     currency: Currency
+    tariff_code: Optional[str]
+    vendor_country: Optional[str]
+    buyer_country: Optional[str]
+    vin: Optional[str]
+    vehicle_make: Optional[str]
+    vehicle_model: Optional[str]
+    vehicle_variant: Optional[str]
+    vehicle_year: Optional[int]
+    first_registration_date: Optional[str]
+    mileage_km: Optional[int]
+    vehicle_transaction: VehicleTransaction
+    vehicle_cost_category: Optional[VehicleCostCategory]
     referenced_numbers: List[str]
     line_items: List[LineItem]
     aviz: bool
@@ -204,6 +215,8 @@ class ReceiptData(StrictBase):
     document_date: str
     payment_method: PaymentMethod
     currency: Currency
+    vin: Optional[str]
+    vehicle_cost_category: Optional[VehicleCostCategory]
     referenced_numbers: List[str]
     invoice_reference: Optional[str]  # only for payment_receipt
     vat_amount: Optional[float]  # only for independent_receipt
@@ -259,6 +272,7 @@ class BankTransactionsChunk(StrictBase):
 # ---------------------------------------------------------------------------
 
 ContractPartyRole = Literal["client", "vendor", "contractor"]
+ContractPartyKind = Literal["INDIVIDUAL", "COMPANY"]
 DeliverableStatus = Literal["pending", "completed"]
 
 
@@ -266,6 +280,8 @@ class ContractParty(StrictBase):
     name: str
     ein: str
     role: ContractPartyRole
+    kind: ContractPartyKind
+    country: Optional[str]
 
 
 class ContractDeliverable(StrictBase):
@@ -277,6 +293,7 @@ class ContractDeliverable(StrictBase):
 
 class ContractData(StrictBase):
     document_type: Literal["Contract"]
+    direction: Optional[Direction]
     contract_number: str
     contract_type: str
     parties: List[ContractParty]
@@ -285,8 +302,17 @@ class ContractData(StrictBase):
     end_date: str
     total_value: float
     currency: Currency
+    tariff_code: Optional[str]
     payment_terms: str
     deliverables: List[ContractDeliverable]
+    vin: Optional[str]
+    vehicle_make: Optional[str]
+    vehicle_model: Optional[str]
+    vehicle_variant: Optional[str]
+    vehicle_year: Optional[int]
+    first_registration_date: Optional[str]
+    mileage_km: Optional[int]
+    vehicle_transaction: Literal["purchase", "other"]
     referenced_numbers: List[str]
 
 
@@ -395,35 +421,11 @@ class CmrData(StrictBase):
     vehicle_plate: Optional[str]
     trailer_plate: Optional[str]
     goods_description: str
-    gross_weight_kg: Optional[float]
-    vin: Optional[str]
-    referenced_numbers: List[str]
-    confidence: CmrConfidence
-
-
-class CustomsConfidence(StrictBase):
-    mrn: float
-    document_date: float
-    customs_value: float
-    vin: float
-
-
-class CustomsDeclarationData(StrictBase):
-    document_type: Literal["Customs Declaration"]
-    mrn: str
-    document_date: Optional[str]
-    customs_office: Optional[str]
-    declarant_name: Optional[str]
-    declarant_tax_id: Optional[str]
-    customs_value: Optional[float]
-    currency: Optional[Currency]
-    duties_paid: Optional[float]
-    vat_paid: Optional[float]
     tariff_code: Optional[str]
     gross_weight_kg: Optional[float]
     vin: Optional[str]
     referenced_numbers: List[str]
-    confidence: CustomsConfidence
+    confidence: CmrConfidence
 
 
 class RegistrationConfidence(StrictBase):
@@ -440,8 +442,10 @@ class VehicleRegistrationData(StrictBase):
     make: str
     model: str
     variant: Optional[str]
+    vehicle_year: Optional[int]
     first_registration_date: Optional[str]
     registration_number: Optional[str]
+    registration_country: Optional[str]
     owner_name: Optional[str]
     owner_address: Optional[str]
     fuel_type: Optional[str]
@@ -451,47 +455,6 @@ class VehicleRegistrationData(StrictBase):
     mass_kg: Optional[int]
     color: Optional[str]
     confidence: RegistrationConfidence
-
-
-class InspectionConfidence(StrictBase):
-    vin: float
-    inspection_date: float
-    valid_until: float
-    result: float
-
-
-class TechnicalInspectionData(StrictBase):
-    document_type: Literal["Technical Inspection (ITP)"]
-    vin: str
-    registration_number: Optional[str]
-    inspection_date: Optional[str]
-    valid_until: Optional[str]
-    result: str
-    station_name: Optional[str]
-    mileage_km: Optional[int]
-    confidence: InspectionConfidence
-
-
-class InsuranceConfidence(StrictBase):
-    policy_number: float
-    vin: float
-    start_date: float
-    end_date: float
-    premium_amount: float
-
-
-class InsuranceData(StrictBase):
-    document_type: Literal["Insurance"]
-    policy_number: str
-    insurer_name: str
-    insured_name: str
-    vin: Optional[str]
-    registration_number: Optional[str]
-    start_date: Optional[str]
-    end_date: Optional[str]
-    premium_amount: Optional[float]
-    currency: Optional[Currency]
-    confidence: InsuranceConfidence
 
 
 class OtherConfidence(StrictBase):
@@ -521,10 +484,7 @@ EXTRACTION_SCHEMAS = {
     "Payment Disposition": PaymentDispositionData,
     "Collection Disposition": CollectionDispositionData,
     "CMR": CmrData,
-    "Customs Declaration": CustomsDeclarationData,
     "Vehicle Registration Certificate": VehicleRegistrationData,
-    "Technical Inspection (ITP)": TechnicalInspectionData,
-    "Insurance": InsuranceData,
     "Other": OtherDocumentData,
 }
 
