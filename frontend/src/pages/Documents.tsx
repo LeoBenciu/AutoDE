@@ -27,10 +27,7 @@ const DOC_TYPES = [
   'Bank Statement',
   'Contract',
   'CMR',
-  'Customs Declaration',
   'Vehicle Registration Certificate',
-  'Technical Inspection (ITP)',
-  'Insurance',
   'Sale Contract',
   'Handover Protocol',
   'UIT',
@@ -147,7 +144,7 @@ export default function Documents() {
         <p className="text-[14.5px] font-semibold text-ink-soft">
           {uploading ? 'Se încarcă…' : 'Trage fișierele aici sau apasă pentru a fotografia/alege'}
         </p>
-        <p className="mt-1.5 text-[12.5px] text-muted">Facturi, chitanțe, dispoziții, CMR, declarații vamale, talon și ITP — PDF sau poze</p>
+        <p className="mt-1.5 text-[12.5px] text-muted">Facturi, contracte, chitanțe, dispoziții, CMR și taloane — PDF sau poze</p>
       </div>
 
       {/* Processing queue */}
@@ -310,12 +307,17 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
 
   if (!doc) return null;
   const fields = (doc.processedData?.extractedFields ?? {}) as Record<string, any>;
+  const isPurchaseContract =
+    doc.type === 'Contract' &&
+    (fields.vehicle_transaction === 'purchase' ||
+      (Boolean(fields.vin) &&
+        /(vanzare|vânzare|sale|achiz)/i.test(String(fields.contract_type ?? ''))));
   const isAccountingDocument = [
     'Invoice',
     'Receipt',
     'Payment Disposition',
     'Collection Disposition',
-  ].includes(doc.type);
+  ].includes(doc.type) || isPurchaseContract;
   const confidence = (doc.processedData?.fieldConfidence ?? {}) as Record<string, number>;
   const issues: any[] = (doc.processedData?.validationIssues ?? []) as any[];
   const issueFields = new Set(issues.map((i) => i.field));
@@ -510,7 +512,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
           </select>
         </div>
 
-        {['Invoice', 'Receipt', 'Payment Disposition', 'Collection Disposition'].includes(doc.type) && (
+        {['Invoice', 'Receipt', 'Payment Disposition', 'Collection Disposition', 'Contract'].includes(doc.type) && (
           <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl border border-line bg-slate-50 p-3 lg:grid-cols-4">
             <LineField
               label="Direcție"
@@ -522,6 +524,46 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
               disabled={doc.reviewStatus === 'APPROVED'}
               onSave={(value) => correct({ id, field: 'direction', newValue: value }).unwrap()}
             />
+            {doc.type === 'Contract' && (
+              <>
+                <LineField
+                  label="Rolul contractului"
+                  value={fields.vehicle_transaction ?? 'other'}
+                  options={[
+                    ['purchase', 'Achiziție vehicul'],
+                    ['other', 'Alt contract'],
+                  ]}
+                  disabled={doc.reviewStatus === 'APPROVED'}
+                  onSave={(value) =>
+                    correct({
+                      id,
+                      field: 'vehicle_transaction',
+                      newValue: value,
+                    }).unwrap()
+                  }
+                />
+                <LineField
+                  label="Vânzător"
+                  value={fields.vendor ?? ''}
+                  disabled={doc.reviewStatus === 'APPROVED'}
+                  onSave={(value) =>
+                    correct({ id, field: 'vendor', newValue: value }).unwrap()
+                  }
+                />
+                <LineField
+                  label="CNP / CUI vânzător"
+                  value={fields.vendor_ein ?? ''}
+                  disabled={doc.reviewStatus === 'APPROVED'}
+                  onSave={(value) =>
+                    correct({
+                      id,
+                      field: 'vendor_ein',
+                      newValue: value,
+                    }).unwrap()
+                  }
+                />
+              </>
+            )}
             {doc.type === 'Receipt' && (
               <>
                 <LineField

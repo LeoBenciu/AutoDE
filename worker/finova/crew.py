@@ -719,10 +719,7 @@ class FirstCrewFinova:
             'Payment Disposition': 'document_extractor',
             'Collection Disposition': 'document_extractor',
             'CMR': 'document_extractor',
-            'Customs Declaration': 'document_extractor',
             'Vehicle Registration Certificate': 'document_extractor',
-            'Technical Inspection (ITP)': 'document_extractor',
-            'Insurance': 'document_extractor',
             'Other': 'document_extractor',
             'Payment Order': 'document_extractor',  # Backward compatibility
             'Collection Order': 'document_extractor'  # Backward compatibility
@@ -738,10 +735,7 @@ class FirstCrewFinova:
             'Payment Disposition': 'extract_payment_disposition_data_task',
             'Collection Disposition': 'extract_collection_disposition_data_task',
             'CMR': 'extract_cmr_data_task',
-            'Customs Declaration': 'extract_customs_declaration_data_task',
             'Vehicle Registration Certificate': 'extract_vehicle_registration_data_task',
-            'Technical Inspection (ITP)': 'extract_technical_inspection_data_task',
-            'Insurance': 'extract_insurance_data_task',
             'Other': 'extract_other_document_data_task',
             'Payment Order': 'extract_payment_disposition_data_task',  # Backward compatibility
             'Collection Order': 'extract_collection_disposition_data_task'  # Backward compatibility
@@ -1165,9 +1159,9 @@ class FirstCrewFinova:
         """Turn recent review-UI edits into concise extraction examples.
 
         AutoImport stores corrections in Finova's correction envelope. Keeping
-        this block generic lets vehicle documents (VIN, registration, CMR,
-        customs, ITP, insurance) participate in the same learning flywheel that
-        Finova already uses for invoice account mappings.
+        this block generic lets vehicle documents (VIN, registration and CMR)
+        participate in the same learning flywheel that Finova already uses for
+        invoice account mappings.
         """
         if not self.user_corrections:
             return ""

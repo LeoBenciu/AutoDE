@@ -15,9 +15,37 @@ export interface DeclarationData {
   trailerPlate?: string;
   loadingPlace: { country: string; county?: string; city?: string; address?: string };
   unloadingPlace: { country: string; county?: string; city?: string; address?: string };
-  goods: Array<{ description: string; tariffCode?: string; weightKg?: number; valueRon?: number }>;
+  goods: Array<ETransportGood>;
   transportDate?: string; // ISO date
 }
+
+export interface ETransportGood {
+  description: string;
+  tariffCode?: string;
+  weightKg?: number;
+  /** Net invoice/document value in its original currency. */
+  valueWithoutVat?: number;
+  currency?: string;
+  /** BNR-derived value used in the ANAF declaration. */
+  valueRon?: number;
+  exchangeRate?: number;
+  exchangeRateDate?: string;
+}
+
+/** Codes defined by the ANAF e-Transport v2 nomenclature. */
+export const OPERATION_CODES: Record<string, string> = {
+  AIC: '10',
+  LHI: '12',
+  SCI: '14',
+  LIC: '20',
+  LHE: '22',
+  SCE: '24',
+  TTN: '30',
+  IMP: '40',
+  EXP: '50',
+  DIN: '60',
+  DIE: '70',
+};
 
 const esc = (s: unknown): string =>
   String(s ?? '')
@@ -33,11 +61,11 @@ export function buildETransportXml(d: DeclarationData): string {
     <bunuriTransportate>
       <nrCrt>${i + 1}</nrCrt>
       <denumireMarfa>${esc(g.description)}</denumireMarfa>
-      <codTarifar>${esc(g.tariffCode ?? '8703')}</codTarifar>
+      <codTarifar>${esc(g.tariffCode)}</codTarifar>
       <cantitate>1</cantitate>
       <codUnitateMasura>H87</codUnitateMasura>
-      <greutateBruta>${g.weightKg ?? 1500}</greutateBruta>
-      <valoareLeiFaraTva>${g.valueRon ?? 0}</valoareLeiFaraTva>
+      <greutateBruta>${esc(g.weightKg)}</greutateBruta>
+      <valoareLeiFaraTva>${esc(g.valueRon)}</valoareLeiFaraTva>
     </bunuriTransportate>`,
     )
     .join('');
@@ -45,7 +73,7 @@ export function buildETransportXml(d: DeclarationData): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <eTransport xmlns="mfp:anaf:dgti:eTransport:declaratie:v2" codDeclarant="${esc(d.tenantCui)}">
   <notificare>
-    <codTipOperatiune>${esc(d.operationType)}</codTipOperatiune>
+    <codTipOperatiune>${esc(OPERATION_CODES[d.operationType])}</codTipOperatiune>
     ${goods}
     <partenerComercial>
       <codTara>${esc(d.transporter.country)}</codTara>
@@ -57,7 +85,7 @@ export function buildETransportXml(d: DeclarationData): string {
       <codTaraOrgTransport>${esc(d.transporter.country)}</codTaraOrgTransport>
       <codOrgTransport>${esc(d.transporter.taxId)}</codOrgTransport>
       <denumireOrgTransport>${esc(d.transporter.name)}</denumireOrgTransport>
-      <dataTransport>${esc(d.transportDate ?? new Date().toISOString().slice(0, 10))}</dataTransport>
+      <dataTransport>${esc(d.transportDate)}</dataTransport>
     </dateTransport>
     <locStartTraseuRutier>
       <codTara>${esc(d.loadingPlace.country)}</codTara>

@@ -5,6 +5,7 @@ import { PrismaService } from '../common/prisma.service';
 import { S3Service } from '../common/s3.service';
 import { AuditService } from '../common/audit.service';
 import { PostingService } from '../accounting/posting.service';
+import { DocumentDomainSyncService } from './document-domain-sync.service';
 
 export interface UploadedDoc {
   originalname: string;
@@ -20,6 +21,7 @@ export class DocumentsService {
     private readonly s3: S3Service,
     private readonly audit: AuditService,
     private readonly posting: PostingService,
+    private readonly domainSync: DocumentDomainSyncService,
   ) {}
 
   /**
@@ -160,7 +162,16 @@ export class DocumentsService {
 
   /** Attach the document to a vehicle and/or a client (party). */
   async assign(tenantId: number, id: number, vehicleId?: number | null, partyId?: number | null) {
-    await this.get(tenantId, id);
+    const document = await this.get(tenantId, id);
+    if (
+      document.reviewStatus === 'APPROVED' &&
+      ((vehicleId !== undefined && vehicleId !== document.vehicleId) ||
+        (partyId !== undefined && partyId !== document.partyId))
+    ) {
+      throw new BadRequestException(
+        'Redeschide documentul înainte de a schimba vehiculul sau partenerul asociat',
+      );
+    }
     if (vehicleId) {
       const v = await this.prisma.vehicle.findFirst({ where: { id: vehicleId, tenantId }, select: { id: true } });
       if (!v) throw new NotFoundException('Vehiculul nu a fost găsit');
@@ -294,6 +305,7 @@ export class DocumentsService {
         },
       }),
     ]);
+    await this.domainSync.sync(documentId);
     return { ok: true, fields };
   }
 

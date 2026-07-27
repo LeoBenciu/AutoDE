@@ -24,10 +24,12 @@ export interface CanonicalAccountingDocument {
   vendor: string;
   vendorEin: string;
   vendorCountry: string;
+  vendorKind: 'INDIVIDUAL' | 'COMPANY';
   vendorIban?: string;
   buyer: string;
   buyerEin: string;
   buyerCountry: string;
+  buyerKind: 'INDIVIDUAL' | 'COMPANY';
   documentNumber: string;
   documentDate?: string;
   dueDate?: string;
@@ -62,6 +64,7 @@ const VAT_RATE_MAP: Record<string, number> = {
 const TYPE_ALIASES: Record<string, string> = {
   invoice: 'Invoice',
   receipt: 'Receipt',
+  contract: 'Contract',
   'payment disposition': 'Payment Disposition',
   paymentdisposition: 'Payment Disposition',
   'collection disposition': 'Collection Disposition',
@@ -87,15 +90,45 @@ export function normalizeAccountingDocument(
     TYPE_ALIASES[String(raw.document_type ?? documentType ?? '').trim().toLowerCase()] ??
     String(raw.document_type ?? documentType ?? 'Other').trim();
 
-  const vendorEin = normalizeEin(raw.vendor_ein ?? raw.supplier_tax_id);
-  const buyerEin = normalizeEin(raw.buyer_ein ?? raw.customer_tax_id);
+  const contractParties = Array.isArray(raw.parties)
+    ? raw.parties.filter(
+        (party: unknown): party is Record<string, any> =>
+          Boolean(party && typeof party === 'object' && !Array.isArray(party)),
+      )
+    : [];
+  const contractVendor = contractParties.find((party) =>
+    ['vendor', 'seller', 'vanzator', 'vânzător'].includes(
+      stringValue(party.role).toLowerCase(),
+    ),
+  );
+  const contractBuyer = contractParties.find((party) =>
+    ['client', 'buyer', 'cumparator', 'cumpărător'].includes(
+      stringValue(party.role).toLowerCase(),
+    ),
+  );
+  const vendorEin = normalizeEin(
+    raw.vendor_ein ??
+      raw.supplier_tax_id ??
+      contractVendor?.ein ??
+      contractVendor?.tax_id,
+  );
+  const buyerEin = normalizeEin(
+    raw.buyer_ein ??
+      raw.customer_tax_id ??
+      contractBuyer?.ein ??
+      contractBuyer?.tax_id,
+  );
   const companyEin = normalizeEin(tenantCui);
   let direction = normalizeDirection(raw.direction);
   if (companyEin && buyerEin === companyEin) direction = 'incoming';
   if (companyEin && vendorEin === companyEin) direction = 'outgoing';
 
   const totalAmount = positiveNumber(
-    raw.total_amount ?? raw.grand_total ?? raw.total ?? raw.amount,
+    raw.total_amount ??
+      raw.total_value ??
+      raw.grand_total ??
+      raw.total ??
+      raw.amount,
   );
   const vatAmount = Math.min(
     totalAmount,
@@ -103,7 +136,28 @@ export function normalizeAccountingDocument(
   );
   const explicitNet = positiveNumber(raw.net_amount ?? raw.net_total ?? raw.subtotal);
   const netAmount = explicitNet || Math.max(0, round2(totalAmount - vatAmount));
-  const lines = Array.isArray(raw.line_items) ? raw.line_items : [];
+  const purchaseContract =
+    normalizedType === 'Contract' &&
+    isRawVehiclePurchaseContract(raw, direction);
+  const extractedLines = Array.isArray(raw.line_items) ? raw.line_items : [];
+  const lines =
+    extractedLines.length > 0 || !purchaseContract || totalAmount <= 0
+      ? extractedLines
+      : [
+          {
+            name: vehicleDescription(raw),
+            quantity: 1,
+            unit_price: totalAmount,
+            total: totalAmount,
+            vat_amount: 0,
+            vat: 'ZERO',
+            um: 'BUCATA',
+            account_code: '371',
+            articleCode: vehicleArticleCode(raw.vin),
+            article_type: 'MARFURI',
+            vat_deductibility: 'NONE',
+          },
+        ];
   const hasStructuredReferences = Array.isArray(raw.referenced_invoices);
   const extractedReferences = hasStructuredReferences
     ? raw.referenced_invoices
@@ -159,18 +213,40 @@ export function normalizeAccountingDocument(
   return {
     documentType: normalizedType,
     direction,
-    vendor: stringValue(raw.vendor ?? raw.supplier_name ?? raw.merchant_name),
+    vendor: stringValue(
+      raw.vendor ??
+        raw.supplier_name ??
+        raw.merchant_name ??
+        contractVendor?.name,
+    ),
     vendorEin,
-    vendorCountry: normalizeCountry(raw.vendor_country ?? raw.supplier_country),
+    vendorCountry: normalizeCountry(
+      raw.vendor_country ?? raw.supplier_country ?? contractVendor?.country,
+    ),
+    vendorKind: normalizePartyKind(
+      raw.vendor_kind ?? raw.supplier_kind ?? contractVendor?.kind,
+    ),
     vendorIban: optionalString(raw.vendor_iban ?? raw.supplier_iban),
-    buyer: stringValue(raw.buyer ?? raw.customer_name),
+    buyer: stringValue(raw.buyer ?? raw.customer_name ?? contractBuyer?.name),
     buyerEin,
-    buyerCountry: normalizeCountry(raw.buyer_country ?? raw.customer_country),
+    buyerCountry: normalizeCountry(
+      raw.buyer_country ?? raw.customer_country ?? contractBuyer?.country,
+    ),
+    buyerKind: normalizePartyKind(
+      raw.buyer_kind ?? raw.customer_kind ?? contractBuyer?.kind,
+    ),
     documentNumber: stringValue(
-      raw.document_number ?? raw.invoice_number ?? raw.receipt_number,
+      raw.document_number ??
+        raw.invoice_number ??
+        raw.receipt_number ??
+        raw.contract_number,
     ),
     documentDate: normalizeDate(
-      raw.document_date ?? raw.invoice_date ?? raw.issue_date ?? raw.date,
+      raw.document_date ??
+        raw.invoice_date ??
+        raw.issue_date ??
+        raw.contract_date ??
+        raw.date,
     ),
     dueDate: normalizeDate(raw.due_date),
     totalAmount,
@@ -198,6 +274,15 @@ export function normalizeAccountingDocument(
     lineItems: lines.map((line, index) => normalizeLineItem(line, index)),
     raw,
   };
+}
+
+export function isVehiclePurchaseContract(
+  canonical: CanonicalAccountingDocument,
+): boolean {
+  return (
+    canonical.documentType === 'Contract' &&
+    isRawVehiclePurchaseContract(canonical.raw, canonical.direction)
+  );
 }
 
 export function normalizeDate(value: unknown): string | undefined {
@@ -277,6 +362,51 @@ function normalizeLineItem(value: unknown, index: number): CanonicalLineItem {
     ),
     raw: line,
   };
+}
+
+function isRawVehiclePurchaseContract(
+  raw: Record<string, any>,
+  direction?: AccountingDirection,
+): boolean {
+  const transaction = stringValue(raw.vehicle_transaction).toLowerCase();
+  if (transaction === 'purchase') return direction !== 'outgoing';
+  if (direction === 'outgoing' || !optionalString(raw.vin)) return false;
+  const type = stringValue(raw.contract_type).toLowerCase();
+  return (
+    type.includes('vanzare') ||
+    type.includes('vânzare') ||
+    type.includes('sale') ||
+    type.includes('achiz')
+  );
+}
+
+function normalizePartyKind(value: unknown): 'INDIVIDUAL' | 'COMPANY' {
+  const normalized = stringValue(value).toUpperCase();
+  return ['INDIVIDUAL', 'PERSOANA_FIZICA', 'PERSOANĂ_FIZICĂ', 'PERSON'].includes(
+    normalized,
+  )
+    ? 'INDIVIDUAL'
+    : 'COMPANY';
+}
+
+function vehicleDescription(raw: Record<string, any>): string {
+  const identity = [
+    raw.vehicle_make ?? raw.make,
+    raw.vehicle_model ?? raw.model,
+    raw.vehicle_variant ?? raw.variant,
+  ]
+    .map(stringValue)
+    .filter(Boolean)
+    .join(' ');
+  const vin = stringValue(raw.vin).toUpperCase();
+  return ['Autoturism', identity, vin ? `VIN ${vin}` : '']
+    .filter(Boolean)
+    .join(' ');
+}
+
+function vehicleArticleCode(value: unknown): string {
+  const vin = stringValue(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return vin ? `AUTO-${vin.slice(-8)}` : '';
 }
 
 function normalizeDirection(value: unknown): AccountingDirection | undefined {

@@ -1,4 +1,16 @@
-import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Length, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Length,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
 export const VEHICLE_STATUSES = [
   'SOURCED',
@@ -10,6 +22,27 @@ export const VEHICLE_STATUSES = [
   'SOLD',
   'DELIVERED',
 ] as const;
+
+export class VehicleSellerDto {
+  @IsEnum(['INDIVIDUAL', 'COMPANY'])
+  kind: 'INDIVIDUAL' | 'COMPANY';
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsString()
+  @IsNotEmpty()
+  taxId: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  address?: string;
+}
 
 export class CreateVehicleDto {
   @IsString()
@@ -68,6 +101,11 @@ export class CreateVehicleDto {
   @IsOptional()
   @IsInt()
   sellerId?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => VehicleSellerDto)
+  seller?: VehicleSellerDto;
 }
 
 export class UpdateVehicleDto {
@@ -86,6 +124,15 @@ export class UpdateVehicleDto {
   @IsOptional()
   @IsInt()
   buyerId?: number;
+
+  @IsOptional()
+  @IsInt()
+  sellerId?: number | null;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => VehicleSellerDto)
+  seller?: VehicleSellerDto;
 
   @IsOptional()
   @IsInt()

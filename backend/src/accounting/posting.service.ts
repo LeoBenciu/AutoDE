@@ -8,11 +8,16 @@ import { PrismaService } from '../common/prisma.service';
 import {
   CanonicalAccountingDocument,
   CanonicalLineItem,
+  isVehiclePurchaseContract,
   normalizeAccountingDocument,
   normalizeEin,
   round2,
 } from './accounting-normalizer';
 import { resolveExchangeRateToRon } from './fx';
+import {
+  removeDocumentVehicleCosts,
+  syncApprovedDocumentVehicleEffects,
+} from '../vehicles/vehicle-document-sync';
 
 export interface JournalDraftLine {
   accountCode: string;
@@ -47,6 +52,8 @@ interface ReferenceDocument {
 interface ResolvedAccounts {
   payable: string;
   receivable: string;
+  supplierId?: number;
+  clientId?: number;
 }
 
 @Injectable()
@@ -160,6 +167,15 @@ export class PostingService {
           });
         }
 
+        await syncApprovedDocumentVehicleEffects(
+          tx,
+          tenantId,
+          context.document,
+          context.canonical,
+          context.tenant.isVatPayer,
+          accounts.supplierId,
+          finalPreview.exchangeRate,
+        );
         await tx.generalLedgerEntry.deleteMany({ where: { documentId, tenantId } });
         for (let index = 0; index < finalPreview.entries.length; index += 1) {
           const line = finalPreview.entries[index];
@@ -297,6 +313,7 @@ export class PostingService {
       await tx.documentRelationship.deleteMany({
         where: { childId: documentId, relation: 'payment' },
       });
+      await removeDocumentVehicleCosts(tx, documentId);
       const reopened = await tx.document.update({
         where: { id: documentId },
         data: {
@@ -421,12 +438,13 @@ export class PostingService {
   ): Promise<PostingPreview> {
     const errors: string[] = [];
     const warnings: string[] = [];
+    const purchaseContract = isVehiclePurchaseContract(canonical);
     const accountingType = [
       'Invoice',
       'Receipt',
       'Payment Disposition',
       'Collection Disposition',
-    ].includes(canonical.documentType);
+    ].includes(canonical.documentType) || purchaseContract;
 
     if (!accountingType) {
       return {
@@ -470,6 +488,33 @@ export class PostingService {
       ) {
         errors.push(
           `Liniile însumează ${lineNet.toFixed(2)}, dar baza facturii este ${canonical.netAmount.toFixed(2)}`,
+        );
+      }
+    }
+    if (purchaseContract) {
+      if (!canonical.documentNumber) {
+        errors.push('Numărul contractului de achiziție este obligatoriu');
+      }
+      if (canonical.direction !== 'incoming') {
+        errors.push(
+          'Contractul de achiziție trebuie să identifice compania drept cumpărător',
+        );
+      }
+      if (!canonical.vendor) {
+        errors.push('Numele persoanei care vinde vehiculul este obligatoriu');
+      }
+      const raw = canonical.raw;
+      const missingVehicleFields = [
+        !raw.vin ? 'VIN' : '',
+        !(raw.vehicle_make ?? raw.make) ? 'marca' : '',
+        !(raw.vehicle_model ?? raw.model) ? 'modelul' : '',
+        !(raw.vehicle_year ?? raw.year ?? raw.first_registration_date)
+          ? 'anul'
+          : '',
+      ].filter(Boolean);
+      if (missingVehicleFields.length > 0) {
+        errors.push(
+          `Completează datele vehiculului din contract: ${missingVehicleFields.join(', ')}`,
         );
       }
     }
@@ -601,6 +646,28 @@ export class PostingService {
         accounts,
         exchangeRate,
       );
+    }
+    if (isVehiclePurchaseContract(canonical)) {
+      const amount = money(canonical.totalAmount, exchangeRate);
+      return {
+        sourceType: 'CONTRACT_PURCHASE',
+        entries: balanceConvertedEntries([
+          draft(
+            '371',
+            amount,
+            0,
+            `Autoturism achiziționat de la ${canonical.vendor}`,
+            canonical.totalAmount,
+          ),
+          draft(
+            '462',
+            0,
+            amount,
+            `Datorie către vânzătorul persoană fizică ${canonical.vendor}`,
+            canonical.totalAmount,
+          ),
+        ]),
+      };
     }
     if (canonical.documentType === 'Receipt') {
       return this.buildReceiptEntries(
@@ -1042,6 +1109,8 @@ export class PostingService {
       receivable: client?.clientAnalytic
         ? `411.${client.clientAnalytic}`
         : '411',
+      supplierId: supplier?.id,
+      clientId: client?.id,
     };
   }
 
@@ -1064,6 +1133,7 @@ export class PostingService {
       supplierCanonical.vendor,
       supplierCanonical.vendorCountry,
       supplierCanonical.vendorIban,
+      supplierCanonical.vendorKind,
     );
     const client = await this.upsertParty(
       tx,
@@ -1072,6 +1142,8 @@ export class PostingService {
       clientCanonical.buyerEin,
       clientCanonical.buyer,
       clientCanonical.buyerCountry,
+      undefined,
+      clientCanonical.buyerKind,
     );
 
     for (const line of canonical.lineItems) {
@@ -1097,6 +1169,8 @@ export class PostingService {
       receivable: client?.clientAnalytic
         ? `411.${client.clientAnalytic}`
         : '411',
+      supplierId: supplier?.id,
+      clientId: client?.id,
     };
   }
 
@@ -1108,6 +1182,7 @@ export class PostingService {
     name: string,
     country: string,
     iban?: string,
+    kind: 'INDIVIDUAL' | 'COMPANY' = 'COMPANY',
   ): Promise<any | null> {
     const taxId = normalizeEin(rawEin);
     if (!taxId && !name) return null;
@@ -1122,6 +1197,7 @@ export class PostingService {
           tenantId,
           name: name || taxId,
           taxId: taxId || null,
+          kind,
           country: country || 'RO',
           iban,
         },
@@ -1137,6 +1213,7 @@ export class PostingService {
         data: {
           name: name || existing.name,
           taxId: taxId || existing.taxId,
+          kind,
           country: country || existing.country,
           iban: iban || existing.iban,
           isSupplier: true,
@@ -1154,6 +1231,7 @@ export class PostingService {
       data: {
         name: name || existing.name,
         taxId: taxId || existing.taxId,
+        kind,
         country: country || existing.country,
         isClient: true,
         clientAnalytic: analytic,

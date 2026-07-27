@@ -1034,10 +1034,7 @@ _EXTRACTION_TASK_NAMES = {
     "Payment Disposition": "extract_payment_disposition_data_task",
     "Collection Disposition": "extract_collection_disposition_data_task",
     "CMR": "extract_cmr_data_task",
-    "Customs Declaration": "extract_customs_declaration_data_task",
     "Vehicle Registration Certificate": "extract_vehicle_registration_data_task",
-    "Technical Inspection (ITP)": "extract_technical_inspection_data_task",
-    "Insurance": "extract_insurance_data_task",
     "Other": "extract_other_document_data_task",
 }
 

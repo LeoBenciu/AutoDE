@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
 import { PrismaService } from '../src/common/prisma.service';
 import { S3Service } from '../src/common/s3.service';
+import { DocumentDomainSyncService } from '../src/documents/document-domain-sync.service';
 import {
   accountingFields,
   cleanupTenant,
@@ -24,6 +25,7 @@ async function main() {
   const baseUrl = `http://127.0.0.1:${address.port}/api`;
   const prisma = app.get(PrismaService);
   const s3 = app.get(S3Service);
+  const domainSync = app.get(DocumentDomainSyncService);
   const marker = `http-acceptance-${Date.now()}`;
   const tenant = await prisma.tenant.create({
     data: {
@@ -159,6 +161,153 @@ async function main() {
       expected: 201,
       body: { category: 'TRANSPORT', amount: 500, currency: 'EUR' },
     });
+
+    const registrationVin = 'WVWZZZ1JZXW000001';
+    const registrationDocument = await prisma.document.create({
+      data: {
+        tenantId: tenant.id,
+        name: 'registration-domain-sync.pdf',
+        type: 'Vehicle Registration Certificate',
+        s3Key: `tenants/${tenant.id}/acceptance/registration-domain-sync.pdf`,
+        contentType: 'application/pdf',
+        fileSize: 1,
+        documentHash: `${marker}-registration-domain-sync`,
+        processingStatus: 'COMPLETED',
+        reviewStatus: 'PENDING_APPROVAL',
+        needsReview: true,
+        processedData: {
+          create: {
+            documentType: 'Vehicle Registration Certificate',
+            extractedFields: {
+              document_type: 'Vehicle Registration Certificate',
+              vin: registrationVin,
+              make: 'Volkswagen',
+              model: 'Golf Certificate',
+              variant: 'Variant certificat',
+              vehicle_year: 2021,
+              first_registration_date: '10-05-2021',
+              fuel_type: 'Diesel',
+              color: 'Albastru',
+              mass_kg: 1375,
+            },
+          },
+        },
+      },
+    });
+    const registrationSync = await domainSync.sync(registrationDocument.id);
+    const extractedVehicle = await prisma.vehicle.findUnique({
+      where: { tenantId_vin: { tenantId: tenant.id, vin: registrationVin } },
+    });
+    assert.equal(registrationSync.vehicleId, extractedVehicle?.id);
+    assert.equal(extractedVehicle?.make, 'Volkswagen');
+    assert.equal(extractedVehicle?.model, 'Golf Certificate');
+    assert.equal(extractedVehicle?.year, 2021);
+    assert.equal(extractedVehicle?.fuelType, 'Diesel');
+    assert.equal(
+      (await prisma.document.findUnique({ where: { id: registrationDocument.id } }))?.vehicleId,
+      extractedVehicle?.id,
+    );
+
+    const sellerCnp = '1800101223344';
+    const purchaseContract = await prisma.document.create({
+      data: {
+        tenantId: tenant.id,
+        name: 'private-purchase-contract.pdf',
+        type: 'Contract',
+        s3Key: `tenants/${tenant.id}/acceptance/private-purchase-contract.pdf`,
+        contentType: 'application/pdf',
+        fileSize: 1,
+        documentHash: `${marker}-private-purchase-contract`,
+        processingStatus: 'COMPLETED',
+        reviewStatus: 'PENDING_APPROVAL',
+        needsReview: true,
+        processedData: {
+          create: {
+            documentType: 'Contract',
+            extractedFields: {
+              document_type: 'Contract',
+              direction: 'incoming',
+              contract_number: 'ACH-ACC-1',
+              contract_type: 'vanzare-cumparare autoturism',
+              contract_date: '20-07-2026',
+              total_value: 50_000,
+              currency: 'RON',
+              vehicle_transaction: 'purchase',
+              vin: registrationVin,
+              vehicle_make: 'Volkswagen',
+              vehicle_model: 'Golf Certificate',
+              vehicle_year: 2021,
+              parties: [
+                {
+                  name: 'Ion Vânzător Acceptance',
+                  ein: sellerCnp,
+                  role: 'vendor',
+                  kind: 'INDIVIDUAL',
+                  country: 'RO',
+                },
+                {
+                  name: tenant.name,
+                  ein: tenant.cui,
+                  role: 'client',
+                  kind: 'COMPANY',
+                  country: 'RO',
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    await domainSync.sync(purchaseContract.id);
+    const vehicleAfterContract = await prisma.vehicle.findUnique({
+      where: { id: extractedVehicle!.id },
+      include: { seller: true },
+    });
+    assert.equal(Number(vehicleAfterContract?.purchasePrice), 50_000);
+    assert.equal(vehicleAfterContract?.seller?.kind, 'INDIVIDUAL');
+    assert.equal(vehicleAfterContract?.seller?.taxId, sellerCnp);
+    assert.equal(
+      await prisma.party.count({ where: { tenantId: tenant.id, taxId: sellerCnp } }),
+      1,
+    );
+
+    const vehicleWithReusedSeller = await request(baseUrl, '/vehicles', {
+      method: 'POST',
+      token: tokens.get('SALES'),
+      expected: 201,
+      body: {
+        vin: 'WBAZZZ1JZXW000002',
+        make: 'BMW',
+        model: 'Seller reuse',
+        year: 2022,
+        purchasePrice: 12_000,
+        purchaseCurrency: 'EUR',
+        seller: {
+          kind: 'INDIVIDUAL',
+          name: 'Ion Vânzător Acceptance',
+          taxId: sellerCnp,
+          country: 'RO',
+        },
+      },
+    });
+    assert.equal(vehicleWithReusedSeller.seller.id, vehicleAfterContract?.sellerId);
+    assert.equal(
+      await prisma.party.count({ where: { tenantId: tenant.id, taxId: sellerCnp } }),
+      1,
+    );
+
+    const privateContractPrefill = await request(
+      baseUrl,
+      `/etransport/prefill/${extractedVehicle!.id}`,
+      { token: tokens.get('ACCOUNTANT'), expected: 200 },
+    );
+    assert.equal(privateContractPrefill.sourceDocumentId, purchaseContract.id);
+    assert.equal(privateContractPrefill.goods[0].valueWithoutVat, 50_000);
+    assert.equal(privateContractPrefill.goods[0].currency, 'RON');
+    assert.equal(
+      privateContractPrefill.fieldSources.value,
+      'contract privat de achiziție',
+    );
 
     const sourceKey = `tenants/${tenant.id}/acceptance/source.pdf`;
     await s3.putObject(
@@ -320,6 +469,8 @@ async function main() {
       body: {
         vehicleId: vehicle.id,
         operationType: 'AIC',
+        transportDate: new Date().toISOString().slice(0, 10),
+        dataVerified: true,
         transporter: {
           name: 'Transport Acceptance SRL',
           taxId: 'DE12345',
@@ -331,9 +482,10 @@ async function main() {
         goods: [
           {
             description: 'Autoturism test',
-            tariffCode: '8703',
-            weightKg: 1500,
-            valueRon: 60000,
+            tariffCode: '87032390',
+            weightKg: 1327,
+            valueWithoutVat: 60000,
+            currency: 'RON',
           },
         ],
       },

@@ -1,0 +1,101 @@
+/**
+ * Minimal dependency-free CSV parser tailored for the catalogue imports
+ * (parteneri / articole / gestiuni). Handles UTF-8 BOM, `,` / `;` / tab
+ * delimiter auto-detection, quoted fields with escaped quotes and CRLF/LF.
+ *
+ * Returns one object per data row keyed by the lower-cased, trimmed header,
+ * so downstream mappers can match column names case-insensitively.
+ */
+export function parseCsv(input: string | Buffer): Record<string, string>[] {
+  const text = (typeof input === 'string' ? input : input.toString('utf8')).replace(/^﻿/, '');
+  if (!text.trim()) return [];
+
+  const delimiter = detectDelimiter(text);
+  const rows = tokenize(text, delimiter).filter(
+    (row) => row.length > 0 && !(row.length === 1 && row[0].trim() === ''),
+  );
+  if (rows.length === 0) return [];
+
+  const headers = rows[0].map((header) => header.trim().toLowerCase());
+  return rows.slice(1).map((row) => {
+    const record: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      if (!header) return;
+      record[header] = (row[index] ?? '').trim();
+    });
+    return record;
+  });
+}
+
+function detectDelimiter(text: string): string {
+  const firstLine = text.split(/\r?\n/, 1)[0] ?? '';
+  const candidates: Array<[string, number]> = [
+    [';', (firstLine.match(/;/g) ?? []).length],
+    [',', (firstLine.match(/,/g) ?? []).length],
+    ['\t', (firstLine.match(/\t/g) ?? []).length],
+  ];
+  candidates.sort((a, b) => b[1] - a[1]);
+  return candidates[0][1] > 0 ? candidates[0][0] : ',';
+}
+
+function tokenize(text: string, delimiter: string): string[][] {
+  const rows: string[][] = [];
+  let field = '';
+  let row: string[] = [];
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += char;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = true;
+    } else if (char === delimiter) {
+      row.push(field);
+      field = '';
+    } else if (char === '\n') {
+      row.push(field);
+      rows.push(row);
+      field = '';
+      row = [];
+    } else if (char === '\r') {
+      // handled together with the following \n (or as a standalone CR)
+      if (text[i + 1] !== '\n') {
+        row.push(field);
+        rows.push(row);
+        field = '';
+        row = [];
+      }
+    } else {
+      field += char;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Reads the first non-empty value among the given candidate header names
+ * (already lower-cased in the parsed record).
+ */
+export function pick(row: Record<string, string>, ...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = row[name.toLowerCase()];
+    if (value != null && value.trim() !== '') return value.trim();
+  }
+  return undefined;
+}

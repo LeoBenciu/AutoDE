@@ -108,10 +108,7 @@ CRITICAL_FIELDS = {
     "Payment Disposition": ["total_amount", "document_number"],
     "Collection Disposition": ["total_amount", "document_number"],
     "CMR": ["carrier_name", "place_of_loading", "place_of_delivery"],
-    "Customs Declaration": ["mrn"],
     "Vehicle Registration Certificate": ["vin", "make", "model"],
-    "Technical Inspection (ITP)": ["vin", "valid_until"],
-    "Insurance": ["policy_number", "insurer_name"],
     "Other": ["summary"],
 }
 

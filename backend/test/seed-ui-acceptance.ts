@@ -163,6 +163,8 @@ async function main() {
         vehicleId: vehicle.id,
         operationType: 'AIC',
         status: 'DRAFT',
+        transportDate: new Date('2026-07-28T00:00:00.000Z'),
+        dataVerifiedAt: new Date(),
         xmlPayload: '<eTransport />',
         transporter: {
           name: 'Transport UI SRL',
@@ -175,8 +177,10 @@ async function main() {
         goods: [
           {
             description: 'Volkswagen Golf Acceptance',
-            tariffCode: '8703',
-            weightKg: 1500,
+            tariffCode: '87032390',
+            weightKg: 1327,
+            valueWithoutVat: 60000,
+            currency: 'RON',
             valueRon: 60000,
           },
         ],

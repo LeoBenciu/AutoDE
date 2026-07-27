@@ -56,10 +56,7 @@ _DEFAULT_EXTRACTION_MAX_TOKENS = {
     "Payment Disposition": 1000,
     "Collection Disposition": 1000,
     "CMR": 2500,
-    "Customs Declaration": 2500,
     "Vehicle Registration Certificate": 2500,
-    "Technical Inspection (ITP)": 1500,
-    "Insurance": 1500,
     "Other": 1200,
 }
 

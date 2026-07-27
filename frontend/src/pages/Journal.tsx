@@ -145,6 +145,7 @@ function sourceLabel(value: string): string {
   const labels: Record<string, string> = {
     INVOICE_IN: 'Factură intrare',
     INVOICE_OUT: 'Factură ieșire',
+    CONTRACT_PURCHASE: 'Contract achiziție auto',
     RECEIPT: 'Chitanță',
     RECEIPT_IN: 'Plată chitanță',
     RECEIPT_OUT: 'Încasare chitanță',
