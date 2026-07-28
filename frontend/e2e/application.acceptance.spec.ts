@@ -113,6 +113,19 @@ test('@desktop core flows and side-by-side extraction review', async ({
   await expect(page.getByText(/re-generat folosind ultima configurație/)).toBeVisible();
 });
 
+test('@desktop document review hides internal extraction metadata', async ({
+  page,
+}) => {
+  await page.goto('/documente');
+  await page.getByText('UI Acceptance Invoice.pdf').first().click();
+
+  const dialog = page.getByRole('dialog', {
+    name: /Date extrase pentru UI Acceptance Invoice/,
+  });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).not.toContainText('internal-document-hash-must-not-render');
+});
+
 test('@mobile 360 layout keeps document and extracted data usable', async ({
   page,
 }, testInfo) => {

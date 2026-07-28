@@ -45,6 +45,12 @@ const COST_CATEGORY_OPTIONS: Array<[string, string]> = [
   ['OTHER', 'Alt cost'],
 ];
 
+const INTERNAL_EXTRACTED_FIELDS = new Set([
+  'document_hash',
+  'documentHash',
+  'vehicle_transaction',
+]);
+
 function ReviewChip() {
   return (
     <span
@@ -396,6 +402,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   const entries = Object.entries(fields).filter(
     ([key, value]) =>
       !key.startsWith('_') &&
+      !INTERNAL_EXTRACTED_FIELDS.has(key) &&
       key !== 'vehicle_cost_categories_reviewed' &&
       value != null &&
       typeof value !== 'object',

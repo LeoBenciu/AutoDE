@@ -1,5 +1,11 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
+import type {
+  BaseQueryFn,
+  FetchArgs,
+  FetchBaseQueryError,
+} from '@reduxjs/toolkit/query/react';
 import { API_BASE_URL } from './apiBase';
+import { logout, setCredentials } from './authSlice';
 import type { RootState } from './store';
 
 export interface ImportResult {
@@ -9,16 +15,62 @@ export interface ImportResult {
   errors: string[];
 }
 
+const rawBaseQuery = fetchBaseQuery({
+  baseUrl: API_BASE_URL,
+  prepareHeaders: (headers, { getState }) => {
+    const token = (getState() as RootState).auth.accessToken;
+    if (token) headers.set('authorization', `Bearer ${token}`);
+    return headers;
+  },
+});
+
+// The access token expires after 15 minutes (JWT_ACCESS_TTL=900s), which makes
+// every request 401 and used to silently disconnect the user. On a 401 we
+// refresh the token once (single-flight so concurrent requests share it) and
+// retry. If the refresh token is missing or rejected, we log out — which drops
+// `accessToken` to null and the router falls back to the login page.
+let refreshPromise: Promise<Awaited<ReturnType<typeof rawBaseQuery>>> | null =
+  null;
+
+const baseQueryWithReauth: BaseQueryFn<
+  string | FetchArgs,
+  unknown,
+  FetchBaseQueryError
+> = async (args, apiCtx, extraOptions) => {
+  let result = await rawBaseQuery(args, apiCtx, extraOptions);
+  if (result.error?.status === 401) {
+    const refreshToken = (apiCtx.getState() as RootState).auth.refreshToken;
+    if (!refreshToken) {
+      apiCtx.dispatch(logout());
+      return result;
+    }
+    let pending = refreshPromise;
+    if (!pending) {
+      pending = Promise.resolve(
+        rawBaseQuery(
+          { url: '/auth/refresh', method: 'POST', body: { refreshToken } },
+          apiCtx,
+          extraOptions,
+        ),
+      ).finally(() => {
+        refreshPromise = null;
+      });
+      refreshPromise = pending;
+    }
+    const refreshResult = await pending;
+    if (refreshResult.data) {
+      apiCtx.dispatch(setCredentials(refreshResult.data as any));
+      result = await rawBaseQuery(args, apiCtx, extraOptions);
+    } else {
+      apiCtx.dispatch(logout());
+    }
+  }
+  return result;
+};
+
 export const api = createApi({
   reducerPath: 'api',
-  baseQuery: fetchBaseQuery({
-    baseUrl: API_BASE_URL,
-    prepareHeaders: (headers, { getState }) => {
-      const token = (getState() as RootState).auth.accessToken;
-      if (token) headers.set('authorization', `Bearer ${token}`);
-      return headers;
-    },
-  }),
+  baseQuery: baseQueryWithReauth,
   tagTypes: [
     'Vehicle',
     'Party',

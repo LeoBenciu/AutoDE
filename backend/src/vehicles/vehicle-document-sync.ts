@@ -3,6 +3,7 @@ import {
   CanonicalAccountingDocument,
   CanonicalLineItem,
   isVehiclePurchaseContract,
+  normalizeAccountingDocument,
   normalizeDate,
   round2,
   unwrapExtractedFields,
@@ -46,6 +47,142 @@ export function isVehiclePurchaseDocument(
           /\b(auto|autoturism|vehicle|vehicul|fahrzeug)\b/i.test(line.name),
       ),
   );
+}
+
+/**
+ * Pre-fills the vehicle line of a purchase invoice before it reaches review:
+ * the description becomes the make/model identity, and – when the tenant keeps
+ * a separate management (gestiune) per brand – the line is routed to the
+ * management that matches the purchased vehicle's brand. Freight-in on the same
+ * invoice (transport that brings the purchased vehicle to us) is capitalized
+ * into the vehicle's stock account: the line is re-posted from 624 to 371 on
+ * the same gestiune, matching how OMFP 1802/2014 folds directly attributable
+ * transport into the acquisition cost. Applied once at extraction time so the
+ * user can still override any value in the review UI. Returns whether any line
+ * was changed.
+ */
+export function applyVehiclePurchaseInvoiceDefaults(
+  extractedFields: unknown,
+  managements: Array<{ code: string; name: string }>,
+  tenantCui?: string | null,
+): boolean {
+  const fields = unwrapExtractedFields(extractedFields);
+  const lines = Array.isArray(fields.line_items) ? fields.line_items : [];
+  if (lines.length === 0) return false;
+
+  const canonical = normalizeAccountingDocument('Invoice', fields, tenantCui);
+  if (canonical.documentType !== 'Invoice' || !isVehiclePurchaseDocument(canonical)) {
+    return false;
+  }
+
+  const vehicleLines = selectVehiclePurchaseLines(lines);
+  if (vehicleLines.length === 0) return false;
+
+  const description = vehicleModelDescription(fields);
+  const managementCode = brandManagementCode(fields, managements);
+
+  let changed = false;
+  for (const line of vehicleLines) {
+    if (!line || typeof line !== 'object') continue;
+    if (description && text(line.name ?? line.description) !== description) {
+      line.name = description;
+      if ('description' in line) line.description = description;
+      changed = true;
+    }
+    if (managementCode && text(line.management) !== managementCode) {
+      line.management = managementCode;
+      changed = true;
+    }
+  }
+
+  // Freight-in that accompanies the purchase is directly attributable to
+  // acquiring this vehicle, so capitalize it into the stock account (371) on the
+  // same brand gestiune rather than expensing it to 624. Left as its own line so
+  // the transport stays auditable; the user can still override it in review.
+  for (const line of lines) {
+    if (!line || typeof line !== 'object' || !isFreightInLine(line)) continue;
+    const account = text(line.account_code ?? line.accountCode);
+    if (!/^371/.test(account)) {
+      line.account_code = '371';
+      if ('accountCode' in line) line.accountCode = '371';
+      changed = true;
+    }
+    if (managementCode && text(line.management) !== managementCode) {
+      line.management = managementCode;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+function selectVehiclePurchaseLines(lines: any[]): any[] {
+  const matched = lines.filter(
+    (line) => !isFreightInLine(line) && isVehicleStockLine(line),
+  );
+  if (matched.length > 0) return matched;
+  const [single] = lines;
+  return lines.length === 1 && !isFreightInLine(single) ? [single] : [];
+}
+
+function isVehicleStockLine(line: any): boolean {
+  const account = text(line?.account_code ?? line?.accountCode);
+  const name = text(line?.name ?? line?.description);
+  return (
+    /^371/.test(account) ||
+    /\b(auto|autoturism|vehicle|vehicul|fahrzeug)\b/i.test(name)
+  );
+}
+
+function isFreightInLine(line: any): boolean {
+  if (!line || typeof line !== 'object') return false;
+  const account = text(line.account_code ?? line.accountCode);
+  if (/^624/.test(account)) return true;
+  const name = text(line.name ?? line.description)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '');
+  return /transport|freight|fracht|platform|tractare|remorcare|\btow\b/.test(
+    name,
+  );
+}
+
+function vehicleModelDescription(fields: Record<string, any>): string {
+  return [
+    fields.vehicle_make ?? fields.make,
+    fields.vehicle_model ?? fields.model,
+    fields.vehicle_variant ?? fields.variant,
+  ]
+    .map(text)
+    .filter(Boolean)
+    .join(' ');
+}
+
+function brandManagementCode(
+  fields: Record<string, any>,
+  managements: Array<{ code: string; name: string }>,
+): string | undefined {
+  const brand = normalizeBrand(fields.vehicle_make ?? fields.make);
+  if (!brand || managements.length === 0) return undefined;
+  const exact = managements.find(
+    (management) =>
+      normalizeBrand(management.name) === brand ||
+      normalizeBrand(management.code) === brand,
+  );
+  if (exact) return exact.code;
+  const prefixed = managements.find((management) => {
+    const name = normalizeBrand(management.name);
+    return name.length >= 3 && (brand.startsWith(name) || name.startsWith(brand));
+  });
+  return prefixed?.code;
+}
+
+function normalizeBrand(value: unknown): string {
+  return text(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9]/g, '');
 }
 
 export function isVehicleCostDocument(

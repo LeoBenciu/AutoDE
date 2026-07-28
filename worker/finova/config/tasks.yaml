@@ -48,7 +48,7 @@ categorize_document_task:
 extract_invoice_data_task:
   description: >
     For an Invoice with direction '{direction}', where CURRENT DATE is {current_date}, extract:
-    - vendor, vendor_ein (number only, remove 'RO'), vendor_country (ISO country code or null), buyer, buyer_ein (number only, remove 'RO'), buyer_country (ISO country code or null), document_number, document_date (DD-MM-YYYY, must not be after {current_date}), due_date (DD-MM-YYYY, null if absent — the payment DEADLINE; it MAY be after {current_date}, so do NOT null or change a future due date), total_amount (numeric - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), vat_amount (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - default to RON), tariff_code (NC/tariff code exactly as printed, or null; never infer 8703), referenced_numbers: array of any document numbers which the current document references(invoices, contracts, receipts, etc.) mentioned anywhere in the invoice text.
+    - vendor, vendor_ein (number only, remove 'RO'), vendor_country (ISO country code or null), buyer, buyer_ein (number only, remove 'RO'), buyer_country (ISO country code or null), document_number (the invoice number copied EXACTLY from the 'Rechnungsnr.'/'Invoice No'/'Factură nr.'/'Nr. factură'/'Nr.' field and NOTHING else — copy only those characters. Do NOT append, merge, or concatenate any digits from a payment or booking reference ('Zahlungsreferenz'/'Verwendungszweck'/'Referință plată'), a customer/order/stock number ('Bestandsnr'/'Kundennr'), a barcode, or any other number printed elsewhere on the page. Those belong in referenced_numbers, never in document_number), document_date (DD-MM-YYYY, must not be after {current_date}), due_date (DD-MM-YYYY, null if absent — the payment DEADLINE; it MAY be after {current_date}, so do NOT null or change a future due date), total_amount (numeric - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), vat_amount (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - default to RON), tariff_code (NC/tariff code exactly as printed, or null; never infer 8703), referenced_numbers: array of any document numbers which the current document references(invoices, contracts, receipts, etc.) mentioned anywhere in the invoice text, reverse_charge (boolean: true when the invoice explicitly says "taxare inversă"/"reverse charge"; on an AUTO1 "MwSt. Kennz. / VAT Key" table the printed key is authoritative: I means true and M means false).
 
     VEHICLE WORKFLOW:
     - Extract vin (17-character chassis number), vehicle_make, vehicle_model,
@@ -58,6 +58,11 @@ extract_invoice_data_task:
       {client_company_ein}; set "cost" when it charges transport, customs,
       registration, inspection, repair/refurbishment, parts, or another service
       for a vehicle; otherwise set "other".
+    - On a purchase invoice, transport/freight-in that brings the purchased
+      vehicle to us (e.g. "Fahrzeugtransport", "Frachtkosten", "Transport") is
+      part of its acquisition cost: set that line's account_code to 371 (same
+      VIN/stock), not 624. Keep 624 only when the transport is billed on its own
+      as a vehicle cost invoice (vehicle_transaction="cost").
     - For a cost invoice, set vehicle_cost_category to TRANSPORT, CUSTOMS, VAT,
       ITP, REGISTRATION, REFURB, or OTHER. Use null for purchase/other invoices.
       Also classify EVERY line item in vehicle_cost_category for a cost invoice;
