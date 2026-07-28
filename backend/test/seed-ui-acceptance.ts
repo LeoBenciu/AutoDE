@@ -131,6 +131,7 @@ async function main() {
               ...accountingFields(tenant.name, tenant.cui!, 'UI-INV-001'),
               vendor_address: 'Str. Furnizorului 1',
               payment_method: 'bank',
+              document_hash: 'internal-document-hash-must-not-render',
             },
             fieldConfidence: {
               vendor: 0.98,

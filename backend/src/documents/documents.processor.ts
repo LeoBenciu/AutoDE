@@ -13,7 +13,10 @@ import {
   Phase0Result,
 } from '../extraction/extraction.service';
 import { DocumentDomainSyncService } from './document-domain-sync.service';
-import { resolveVehicleFromDocument } from '../vehicles/vehicle-document-sync';
+import {
+  applyVehiclePurchaseInvoiceDefaults,
+  resolveVehicleFromDocument,
+} from '../vehicles/vehicle-document-sync';
 
 const STUCK_PROCESSING_MINUTES = 10;
 const CLAIM_BATCH_SIZE = 5;
@@ -199,6 +202,19 @@ export class DocumentsProcessor {
       if (phase1Saved.count === 0) return;
 
       const fields = result.fields ?? {};
+      if (result.document_type === 'Invoice') {
+        const managements = await this.prisma.management.findMany({
+          where: { tenantId: row.tenantId },
+          select: { code: true, name: true },
+        });
+        if (
+          applyVehiclePurchaseInvoiceDefaults(fields, managements, context.tenantCui)
+        ) {
+          this.logger.log(
+            `upload ${row.id}: pre-filled vehicle purchase line description/management`,
+          );
+        }
+      }
       const inferredVehicleId = await resolveVehicleFromDocument(
         this.prisma,
         row.tenantId,

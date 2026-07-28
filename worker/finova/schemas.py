@@ -194,6 +194,7 @@ class InvoiceData(StrictBase):
     vehicle_transaction: VehicleTransaction
     vehicle_cost_category: Optional[VehicleCostCategory]
     referenced_numbers: List[str]
+    reverse_charge: bool
     line_items: List[LineItem]
     aviz: bool
     confidence: InvoiceConfidence

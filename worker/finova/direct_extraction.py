@@ -1533,11 +1533,62 @@ _REVERSE_CHARGE_MARKERS = (
     "reverse-charge",
 )
 
+_VAT_KEY_HEADER_RE = re.compile(
+    r"(?:\bvat\s*key\b|\bmwst\.?\s*kennz(?:eichnung)?\.?)",
+    re.IGNORECASE,
+)
+_VAT_KEY_BEFORE_PRICE_RE = re.compile(
+    r"(?:^|[\s|;])([IM])(?=\s*(?:[|;]\s*)?(?:EUR|€)?\s*[-+]?\d[\d.,]*)",
+    re.IGNORECASE,
+)
+_VAT_KEY_ONLY_RE = re.compile(r"^\s*[|;]?\s*([IM])\s*[|;]?\s*$", re.IGNORECASE)
+_VAT_TABLE_END_RE = re.compile(
+    r"^\s*(?:total(?:\s+netto)?|summe\s+netto|subtotal|gesamt)",
+    re.IGNORECASE,
+)
+
+
+def _reverse_charge_from_vat_key(text: Optional[str]) -> Optional[bool]:
+    """Map an explicitly printed VAT-key table column to reverse charge.
+
+    AUTO1 invoice tables label the column ``MwSt. Kennz. / VAT Key``. Their key
+    ``I`` means reverse charge while ``M`` means reverse charge is not applied.
+    OCR may preserve a whole table row on one line or emit each cell on its own
+    line, so support both shapes. Return ``None`` when there is no trustworthy
+    VAT-key table signal.
+    """
+    lines = (text or "").splitlines()
+    header_index = next(
+        (index for index, line in enumerate(lines) if _VAT_KEY_HEADER_RE.search(line)),
+        None,
+    )
+    if header_index is None:
+        return None
+
+    keys: list[str] = []
+    # VAT tables are short, but keep a generous bound for multi-line OCR output.
+    for line in lines[header_index + 1:header_index + 121]:
+        if keys and _VAT_TABLE_END_RE.search(line):
+            break
+        match = _VAT_KEY_BEFORE_PRICE_RE.search(line) or _VAT_KEY_ONLY_RE.fullmatch(line)
+        if match:
+            keys.append(match.group(1).upper())
+
+    if "I" in keys:
+        return True
+    if "M" in keys:
+        return False
+    return None
+
 
 def _detect_reverse_charge(text: Optional[str], data: dict) -> bool:
-    """True when an invoice applies domestic reverse charge. A "taxare inversă" text
-    marker wins (high precision); otherwise keep whatever the model may have set."""
+    """True when an invoice applies domestic reverse charge. An explicit AUTO1
+    VAT key is authoritative; otherwise use a "taxare inversă" text marker and
+    finally keep whatever the model may have set."""
     import unicodedata
+    vat_key_value = _reverse_charge_from_vat_key(text)
+    if vat_key_value is not None:
+        return vat_key_value
     hay = "".join(
         c for c in unicodedata.normalize("NFKD", (text or "").lower())
         if not unicodedata.combining(c)
@@ -2063,7 +2114,7 @@ def extract_document(
             print(f"⚠️  net-normalization skipped ({type(e).__name__}: {e})", file=sys.stderr)
 
     #  • Reverse charge (taxare inversă): set the boolean the downstream 4426=4427
-    #    self-assessment posting reads. High-precision text marker; overrides only to True.
+    #    self-assessment posting reads. Explicit text/VAT-key evidence overrides the model.
     if document_type == "Invoice" and isinstance(data, dict):
         try:
             data["reverse_charge"] = _detect_reverse_charge(text, data)
