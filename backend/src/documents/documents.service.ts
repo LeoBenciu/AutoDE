@@ -328,7 +328,6 @@ export class DocumentsService {
         },
       }),
     ]);
-    await this.domainSync.sync(documentId);
     return { ok: true, fields };
   }
 
@@ -336,8 +335,12 @@ export class DocumentsService {
     return this.posting.preview(tenantId, id);
   }
 
-  approve(tenantId: number, userId: number, id: number) {
-    return this.posting.approve(tenantId, userId, id);
+  async approve(tenantId: number, userId: number, id: number) {
+    const result = await this.posting.approve(tenantId, userId, id);
+    // Vehicle, seller, and contract catalogues are business effects of the
+    // user's approval—not of OCR/extraction or a draft field correction.
+    await this.domainSync.sync(id);
+    return result;
   }
 
   reopen(tenantId: number, userId: number, id: number) {
@@ -458,7 +461,6 @@ function normalizeCorrectionValue(field: string, value: unknown): unknown {
 function invalidatesVehicleCostCategoryReview(field: string): boolean {
   return (
     field === 'vehicle_transaction' ||
-    field === 'vehicle_cost_category' ||
     field === 'line_items' ||
     field.startsWith('line_items[')
   );

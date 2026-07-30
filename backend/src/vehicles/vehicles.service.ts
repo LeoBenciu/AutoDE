@@ -13,6 +13,7 @@ import {
   normalizePartyCountry,
   privateSellerIdentityErrors,
 } from '../parties/party-identity';
+import { ensureVehicleArticle } from '../accounting/vehicle-article';
 
 @Injectable()
 export class VehiclesService {
@@ -71,7 +72,7 @@ export class VehiclesService {
         dto.sellerId,
         dto.seller,
       );
-      return tx.vehicle.create({
+      const vehicle = await tx.vehicle.create({
         data: {
           tenantId,
           vin,
@@ -92,6 +93,8 @@ export class VehiclesService {
         },
         include: { seller: true },
       });
+      await ensureVehicleArticle(tx, tenantId, vehicle);
+      return vehicle;
     });
   }
 

@@ -134,7 +134,7 @@ export default function Vehicles() {
             <p className="mx-auto mt-1.5 mb-4 max-w-xs text-[13.5px] text-muted">
               {filtered
                 ? 'Încearcă alt filtru sau termen de căutare.'
-                : 'Încarcă factura sau contractul de achiziție; vehiculul va fi creat automat din datele extrase.'}
+                : 'Încarcă factura sau contractul de achiziție; vehiculul va fi creat după ce verifici și aprobi datele extrase.'}
             </p>
             {!filtered && (
               <Link

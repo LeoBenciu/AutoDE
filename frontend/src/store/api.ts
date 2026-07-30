@@ -163,7 +163,7 @@ export const api = createApi({
     }),
     approveDocument: build.mutation<any, number>({
       query: (id) => ({ url: `/documents/${id}/approve`, method: 'POST' }),
-      invalidatesTags: ['Document', 'Accounting', 'Party', 'Saga'],
+      invalidatesTags: ['Document', 'Accounting', 'Vehicle', 'Party', 'Saga'],
     }),
     reopenDocument: build.mutation<any, number>({
       query: (id) => ({ url: `/documents/${id}/reopen`, method: 'POST' }),

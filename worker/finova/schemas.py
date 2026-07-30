@@ -191,8 +191,8 @@ class InvoiceData(StrictBase):
     vehicle_year: Optional[int]
     first_registration_date: Optional[str]
     mileage_km: Optional[int]
+    vehicle_origin_country: Optional[str]
     vehicle_transaction: VehicleTransaction
-    vehicle_cost_category: Optional[VehicleCostCategory]
     referenced_numbers: List[str]
     reverse_charge: bool
     line_items: List[LineItem]
@@ -217,7 +217,6 @@ class ReceiptData(StrictBase):
     payment_method: PaymentMethod
     currency: Currency
     vin: Optional[str]
-    vehicle_cost_category: Optional[VehicleCostCategory]
     referenced_numbers: List[str]
     invoice_reference: Optional[str]  # only for payment_receipt
     vat_amount: Optional[float]  # only for independent_receipt

@@ -8,6 +8,10 @@ import {
   round2,
   unwrapExtractedFields,
 } from '../accounting/accounting-normalizer';
+import {
+  ensureVehicleArticle,
+  vehicleArticleCode,
+} from '../accounting/vehicle-article';
 import { resolveExchangeRateToRon } from '../accounting/fx';
 import { PrismaService } from '../common/prisma.service';
 
@@ -51,15 +55,15 @@ export function isVehiclePurchaseDocument(
 
 /**
  * Pre-fills the vehicle line of a purchase invoice before it reaches review:
- * the description becomes the make/model identity, and – when the tenant keeps
- * a separate management (gestiune) per brand – the line is routed to the
- * management that matches the purchased vehicle's brand. Freight-in on the same
- * invoice (transport that brings the purchased vehicle to us) is capitalized
- * into the vehicle's stock account: the line is re-posted from 624 to 371 on
- * the same gestiune, matching how OMFP 1802/2014 folds directly attributable
- * transport into the acquisition cost. Applied once at extraction time so the
- * user can still override any value in the review UI. Returns whether any line
- * was changed.
+ * the description becomes the make/model identity, its article code is bound to
+ * the complete VIN, and – when the tenant keeps a separate management
+ * (gestiune) per brand – the line is routed to the matching management.
+ * Freight-in on the same invoice (transport that brings the purchased vehicle
+ * to us) is capitalized into the vehicle's stock account: the line is re-posted
+ * from 624 to 371 on the same gestiune, matching how OMFP 1802/2014 folds
+ * directly attributable transport into the acquisition cost. Applied once at
+ * extraction time so the result is visible in the review UI. Returns whether
+ * any line was changed.
  */
 export function applyVehiclePurchaseInvoiceDefaults(
   extractedFields: unknown,
@@ -80,6 +84,9 @@ export function applyVehiclePurchaseInvoiceDefaults(
 
   const description = vehicleModelDescription(fields);
   const managementCode = brandManagementCode(fields, managements);
+  const articleCode = vehicleArticleCode(
+    fields.vin ?? fields.vehicle_vin ?? fields.chassis_number,
+  );
 
   let changed = false;
   for (const line of vehicleLines) {
@@ -91,6 +98,14 @@ export function applyVehiclePurchaseInvoiceDefaults(
     }
     if (managementCode && text(line.management) !== managementCode) {
       line.management = managementCode;
+      changed = true;
+    }
+    if (
+      articleCode &&
+      text(line.articleCode ?? line.article_code) !== articleCode
+    ) {
+      line.articleCode = articleCode;
+      if ('article_code' in line) line.article_code = articleCode;
       changed = true;
     }
   }
@@ -197,13 +212,9 @@ export function isVehicleCostDocument(
   ) {
     return false;
   }
-  const hasExplicitCostCategory =
-    isCostCategory(
-      text(canonical.raw.vehicle_cost_category).toUpperCase(),
-    ) ||
-    canonical.lineItems.some((line) =>
-      isCostCategory(text(line.raw.vehicle_cost_category).toUpperCase()),
-    );
+  const hasExplicitCostCategory = canonical.lineItems.some((line) =>
+    isCostCategory(text(line.raw.vehicle_cost_category).toUpperCase()),
+  );
   return (
     text(canonical.raw.vehicle_transaction).toLowerCase() === 'cost' ||
     hasExplicitCostCategory ||
@@ -222,26 +233,31 @@ export function vehicleCostReviewErrors(
     errors.push('Asociază documentul de cost cu vehiculul înainte de aprobare');
   }
 
-  const documentCategory = text(
-    canonical.raw.vehicle_cost_category,
-  ).toUpperCase();
   const missingLines = canonical.lineItems
     .map((line, index) => {
       const lineCategory = text(line.raw.vehicle_cost_category).toUpperCase();
-      return isCostCategory(lineCategory) || isCostCategory(documentCategory)
+      const automaticCategory =
+        lineCategory === ''
+          ? defaultVehicleCostCategoryForAccount(line.accountCode)
+          : undefined;
+      return isCostCategory(lineCategory) || automaticCategory
         ? undefined
         : index + 1;
     })
     .filter((index): index is number => index != null);
-  if (canonical.lineItems.length === 0 && !isCostCategory(documentCategory)) {
-    errors.push('Selectează categoria costului pentru document');
-  } else if (missingLines.length > 0) {
+  if (missingLines.length > 0) {
     errors.push(
       `Selectează categoria de cost pentru ${missingLines.length === 1 ? 'linia' : 'liniile'} ${missingLines.join(', ')}`,
     );
   }
 
-  if (canonical.raw.vehicle_cost_categories_reviewed !== true) {
+  const hasAmbiguousAccounts = canonical.lineItems.some(
+    (line) => !defaultVehicleCostCategoryForAccount(line.accountCode),
+  );
+  if (
+    hasAmbiguousAccounts &&
+    canonical.raw.vehicle_cost_categories_reviewed !== true
+  ) {
     errors.push('Confirmă categoriile de cost înainte de aprobare');
   }
   return errors;
@@ -302,6 +318,12 @@ export async function resolveVehicleFromDocument(
       ),
     };
     await db.vehicle.update({ where: { id: vehicle.id }, data: update });
+    await ensureVehicleArticle(db, tenantId, {
+      vin: vehicle.vin,
+      make: update.make,
+      model: update.model,
+      variant: update.variant,
+    });
     return vehicle.id;
   }
 
@@ -352,6 +374,7 @@ export async function resolveVehicleFromDocument(
     },
     include: { costs: true },
   });
+  await ensureVehicleArticle(db, tenantId, created);
   return created.id;
 }
 
@@ -554,11 +577,12 @@ function vehicleCandidate(
     mileageKm: integerValue(raw.mileage_km ?? raw.mileage),
     fuelType: optionalText(raw.fuel_type),
     color: optionalText(raw.color),
-    originCountry: optionalText(
-      raw.vendor_country ??
-        raw.supplier_country ??
-        raw.origin_country ??
-        contractVendorCountry(raw),
+    originCountry: (
+      optionalText(raw.vehicle_origin_country) ??
+      optionalText(raw.origin_country) ??
+      optionalText(raw.vendor_country) ??
+      optionalText(raw.supplier_country) ??
+      optionalText(contractVendorCountry(raw))
     )?.toUpperCase(),
     purchasePrice: purchase && total > 0 ? total : undefined,
     purchaseCurrency: optionalText(raw.currency)?.toUpperCase(),
@@ -616,7 +640,7 @@ function groupVehicleCosts(
       canonical,
       isVatPayer,
     );
-    const category = vehicleCostCategory(line, canonical.raw);
+    const category = vehicleCostCategory(line);
     grouped.set(category, round2((grouped.get(category) ?? 0) + amount));
   }
   return grouped;
@@ -657,15 +681,11 @@ function economicLineAmount(
   return round2(line.netAmount + nonDeductibleVat);
 }
 
-function vehicleCostCategory(
-  line: CanonicalLineItem,
-  documentRaw: Record<string, any>,
-): CostCategory {
-  const explicit = text(
-    line.raw.vehicle_cost_category ?? documentRaw.vehicle_cost_category,
-  ).toUpperCase();
+function vehicleCostCategory(line: CanonicalLineItem): CostCategory {
+  const explicit = text(line.raw.vehicle_cost_category).toUpperCase();
   if (isCostCategory(explicit)) return explicit;
-  if (/^624/.test(line.accountCode)) return CostCategory.TRANSPORT;
+  const automatic = defaultVehicleCostCategoryForAccount(line.accountCode);
+  if (automatic) return automatic;
   if (/^4426/.test(line.accountCode)) return CostCategory.VAT;
   const value = `${line.name} ${line.accountCode}`
     .toLowerCase()
@@ -683,12 +703,20 @@ function vehicleCostCategory(
   if (
     /\b(reparatie|repair|service|refurb|recondition|piese|parts|anvelope|vopsitorie)\b/.test(
       value,
-    ) ||
-    /^(611|6024)/.test(line.accountCode)
+    )
   ) {
     return CostCategory.REFURB;
   }
   return CostCategory.OTHER;
+}
+
+export function defaultVehicleCostCategoryForAccount(
+  accountCode: unknown,
+): CostCategory | undefined {
+  const account = text(accountCode);
+  if (/^624/.test(account)) return CostCategory.TRANSPORT;
+  if (/^(611|6024)/.test(account)) return CostCategory.REFURB;
+  return undefined;
 }
 
 function isCostCategory(value: string): value is CostCategory {

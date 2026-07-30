@@ -155,6 +155,17 @@ async function main() {
       },
     );
     assert.equal(vehicles.length, 1);
+    assert.ok(
+      await prisma.article.findUnique({
+        where: {
+          tenantId_code: {
+            tenantId: tenant.id,
+            code: `AUTO-${vehicle.vin}`,
+          },
+        },
+      }),
+      'creating a vehicle must create its full-VIN article',
+    );
     await request(baseUrl, `/vehicles/${vehicle.id}/costs`, {
       method: 'POST',
       token: tokens.get('ACCOUNTANT'),
@@ -194,21 +205,72 @@ async function main() {
         },
       },
     });
-    const registrationSync = await domainSync.sync(registrationDocument.id);
+    assert.deepEqual(await domainSync.sync(registrationDocument.id), {});
+    assert.equal(
+      await prisma.vehicle.findUnique({
+        where: { tenantId_vin: { tenantId: tenant.id, vin: registrationVin } },
+      }),
+      null,
+      'a pending extracted document must not create a vehicle',
+    );
+    await request(
+      baseUrl,
+      `/documents/${registrationDocument.id}/corrections`,
+      {
+        method: 'POST',
+        token: tokens.get('ACCOUNTANT'),
+        expected: 201,
+        body: { field: 'model', newValue: 'Golf Certificate revizuit' },
+      },
+    );
+    assert.equal(
+      await prisma.vehicle.findUnique({
+        where: { tenantId_vin: { tenantId: tenant.id, vin: registrationVin } },
+      }),
+      null,
+      'saving a draft correction must not create a vehicle',
+    );
+    assert.equal(
+      (
+        await prisma.document.findUnique({
+          where: { id: registrationDocument.id },
+        })
+      )?.vehicleId,
+      null,
+    );
+    await request(
+      baseUrl,
+      `/documents/${registrationDocument.id}/approve`,
+      {
+        method: 'POST',
+        token: tokens.get('ACCOUNTANT'),
+        expected: 201,
+      },
+    );
     const extractedVehicle = await prisma.vehicle.findUnique({
       where: { tenantId_vin: { tenantId: tenant.id, vin: registrationVin } },
     });
-    assert.equal(registrationSync.vehicleId, extractedVehicle?.id);
     assert.equal(extractedVehicle?.make, 'Volkswagen');
-    assert.equal(extractedVehicle?.model, 'Golf Certificate');
+    assert.equal(extractedVehicle?.model, 'Golf Certificate revizuit');
     assert.equal(extractedVehicle?.year, 2021);
     assert.equal(extractedVehicle?.fuelType, 'Diesel');
     assert.equal(
       (await prisma.document.findUnique({ where: { id: registrationDocument.id } }))?.vehicleId,
       extractedVehicle?.id,
     );
+    assert.ok(
+      await prisma.article.findUnique({
+        where: {
+          tenantId_code: {
+            tenantId: tenant.id,
+            code: `AUTO-${registrationVin}`,
+          },
+        },
+      }),
+      'approving a new registration VIN must create its own article',
+    );
 
-    const sellerCnp = '1800101223344';
+    const sellerCnp = '1800101223340';
     const purchaseContract = await prisma.document.create({
       data: {
         tenantId: tenant.id,
@@ -258,7 +320,22 @@ async function main() {
         },
       },
     });
-    await domainSync.sync(purchaseContract.id);
+    assert.equal(Number(extractedVehicle?.purchasePrice), 0);
+    assert.equal(
+      await prisma.party.count({ where: { tenantId: tenant.id, taxId: sellerCnp } }),
+      0,
+      'a pending contract must not create its seller',
+    );
+    assert.equal(
+      await prisma.contract.count({ where: { documentId: purchaseContract.id } }),
+      0,
+      'a pending contract must not create operational contract data',
+    );
+    await request(baseUrl, `/documents/${purchaseContract.id}/approve`, {
+      method: 'POST',
+      token: tokens.get('ACCOUNTANT'),
+      expected: 201,
+    });
     const vehicleAfterContract = await prisma.vehicle.findUnique({
       where: { id: extractedVehicle!.id },
       include: { seller: true },
