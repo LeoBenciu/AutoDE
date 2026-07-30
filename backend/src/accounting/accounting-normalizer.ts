@@ -3,6 +3,7 @@ import {
   normalizePartyCountry,
   PartyIdentifierTypeValue,
 } from '../parties/party-identity';
+import { vehicleArticleCode } from './vehicle-article';
 
 export type AccountingDirection = 'incoming' | 'outgoing';
 export type VatDeductibility = 'FULL' | 'PARTIAL_50' | 'NONE';
@@ -229,6 +230,8 @@ export function normalizeAccountingDocument(
   }));
   const receiptType = normalizeReceiptType(raw.receipt_type, referencedNumbers.length > 0);
   const paymentMethod = normalizePaymentMethod(raw.payment_method ?? raw.payment_info);
+  const lineItems = lines.map((line, index) => normalizeLineItem(line, index));
+  enforceVehicleArticleIdentity(normalizedType, direction, raw, lineItems);
 
   return {
     documentType: normalizedType,
@@ -297,7 +300,7 @@ export function normalizeAccountingDocument(
     referencedNumbers,
     referencedInvoices,
     accountCode: optionalString(raw.account_code ?? raw.accountCode),
-    lineItems: lines.map((line, index) => normalizeLineItem(line, index)),
+    lineItems,
     raw,
   };
 }
@@ -430,16 +433,63 @@ function vehicleDescription(raw: Record<string, any>): string {
     .join(' ');
 }
 
-function vehicleArticleCode(value: unknown): string {
-  const vin = stringValue(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return vin ? `AUTO-${vin.slice(-8)}` : '';
-}
-
 function normalizeDirection(value: unknown): AccountingDirection | undefined {
   const text = stringValue(value).toLowerCase();
   if (['incoming', 'intrare', 'achizitie', 'purchase'].includes(text)) return 'incoming';
   if (['outgoing', 'iesire', 'vanzare', 'sale'].includes(text)) return 'outgoing';
   return undefined;
+}
+
+function enforceVehicleArticleIdentity(
+  documentType: string,
+  direction: AccountingDirection | undefined,
+  raw: Record<string, any>,
+  lines: CanonicalLineItem[],
+): void {
+  const articleCode = vehicleArticleCode(
+    raw.vin ?? raw.vehicle_vin ?? raw.chassis_number,
+  );
+  if (!articleCode || direction === 'outgoing' || lines.length === 0) return;
+
+  const transaction = stringValue(raw.vehicle_transaction).toLowerCase();
+  const purchaseInvoice =
+    documentType === 'Invoice' &&
+    (transaction === 'purchase' ||
+      (!['cost', 'other'].includes(transaction) &&
+        lines.some(isVehicleStockArticleLine)));
+  const purchaseContract =
+    documentType === 'Contract' &&
+    isRawVehiclePurchaseContract(raw, direction);
+  if (!purchaseInvoice && !purchaseContract) return;
+
+  const stockLines = lines.filter(
+    (line) => !isFreightArticleLine(line) && isVehicleStockArticleLine(line),
+  );
+  const targets =
+    stockLines.length > 0
+      ? stockLines
+      : lines.length === 1 && !isFreightArticleLine(lines[0])
+        ? lines
+        : [];
+  for (const line of targets) {
+    line.articleCode = articleCode;
+  }
+}
+
+function isVehicleStockArticleLine(line: CanonicalLineItem): boolean {
+  return (
+    /^371/.test(line.accountCode) ||
+    /\b(auto|autoturism|vehicle|vehicul|fahrzeug)\b/i.test(line.name)
+  );
+}
+
+function isFreightArticleLine(line: CanonicalLineItem): boolean {
+  return (
+    /^624/.test(line.accountCode) ||
+    /transport|freight|fracht|platform|tractare|remorcare|\btow\b/i.test(
+      line.name,
+    )
+  );
 }
 
 function normalizeReceiptType(

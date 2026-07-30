@@ -566,6 +566,18 @@ async function main() {
     assert.equal(roundingApproved.posting.totalDebit, 118.99);
     assert.equal(roundingApproved.posting.totalCredit, 118.99);
 
+    const semanticCarArticle = await prisma.article.create({
+      data: {
+        tenantId: tenant.id,
+        code: 'GENERIC-CAR',
+        name: 'Autoturism generic existent',
+        analyticCode: '90000',
+        vatRate: 'NINETEEN',
+        unit: 'BUCATA',
+        type: 'MARFURI',
+        accountCode: '371',
+      },
+    });
     const vehiclePurchaseInvoice = await createDocument(
       'Invoice',
       'AUTO-IN-1',
@@ -593,7 +605,7 @@ async function main() {
             vat_amount: 1_900,
             vat: 'NINETEEN',
             account_code: '371',
-            articleCode: 'AUTO-EJ000002',
+            articleCode: semanticCarArticle.code,
             um: 'BUCATA',
             vat_deductibility: 'FULL',
           },
@@ -613,6 +625,26 @@ async function main() {
     assert.equal(Number(invoicedVehicle?.purchasePrice), 10_000);
     assert.equal(invoicedVehicle?.make, 'BMW');
     assert.equal(invoicedVehicle?.model, 'X3');
+    assert.equal(
+      (
+        await prisma.article.findUnique({
+          where: { id: semanticCarArticle.id },
+        })
+      )?.name,
+      'Autoturism generic existent',
+      'a new VIN must not mutate a semantically matched existing article',
+    );
+    assert.ok(
+      await prisma.article.findUnique({
+        where: {
+          tenantId_code: {
+            tenantId: tenant.id,
+            code: 'AUTO-WBAZZZ3CZEJ000002',
+          },
+        },
+      }),
+      'the purchase must create a full-VIN article',
+    );
 
     const incompletePrivateSeller = await createDocument(
       'Contract',
@@ -774,7 +806,6 @@ async function main() {
       buyer: marker,
       buyer_ein: '50675950',
       vehicle_transaction: 'cost',
-      vehicle_cost_category: 'REFURB',
       vehicle_cost_categories_reviewed: false,
       vin: 'WVWZZZ1JZXW000001',
       currency: 'EUR',
@@ -794,7 +825,6 @@ async function main() {
           articleCode: 'REFURB-TEST',
           um: 'UNITATE_DE_SERVICE',
           vat_deductibility: 'FULL',
-          vehicle_cost_category: 'REFURB',
         },
       ],
     });
@@ -808,28 +838,13 @@ async function main() {
       ),
     );
     assert.ok(
-      unassignedCostPreview.errors.includes(
+      !unassignedCostPreview.errors.includes(
         'Confirmă categoriile de cost înainte de aprobare',
       ),
     );
     await prisma.document.update({
       where: { id: refurbishment.id },
       data: { vehicleId: purchasedVehicle!.id },
-    });
-    await assert.rejects(() =>
-      posting.approve(tenant.id, user.id, refurbishment.id),
-    );
-    const refurbishmentData = await prisma.processedData.findUniqueOrThrow({
-      where: { documentId: refurbishment.id },
-    });
-    await prisma.processedData.update({
-      where: { documentId: refurbishment.id },
-      data: {
-        extractedFields: {
-          ...(refurbishmentData.extractedFields as Record<string, unknown>),
-          vehicle_cost_categories_reviewed: true,
-        },
-      },
     });
     await posting.approve(tenant.id, user.id, refurbishment.id);
     const documentCosts = await prisma.vehicleCost.findMany({
@@ -854,6 +869,8 @@ async function main() {
         buyer: marker,
         buyer_ein: '50675950',
         vehicle_transaction: 'cost',
+        // A legacy document-level category must not replace the missing line category.
+        vehicle_cost_category: 'OTHER',
         vehicle_cost_categories_reviewed: true,
         total_amount: 100,
         net_amount: 100,

@@ -10,11 +10,12 @@ import {
 } from '../accounting/accounting-normalizer';
 import { PrismaService } from '../common/prisma.service';
 import { privateSellerIdentityErrors } from '../parties/party-identity';
+import { ensureVehicleArticle } from '../accounting/vehicle-article';
 
 /**
- * Applies extracted vehicle documents to the operational catalogue. Extraction
- * stays reviewable on the Document; this service only synchronizes facts that
- * have a stable identity (VIN and CUI/CNP), and is safe to run repeatedly.
+ * Applies approved vehicle documents to the operational catalogue. Extracted
+ * data stays draft-only until approval; this service only synchronizes facts
+ * that have a stable identity (VIN and CUI/CNP), and is safe to run repeatedly.
  */
 @Injectable()
 export class DocumentDomainSyncService {
@@ -30,7 +31,9 @@ export class DocumentDomainSyncService {
         tenant: { select: { cui: true, country: true, defaultCurrency: true } },
       },
     });
-    if (!document?.processedData) return {};
+    if (!document?.processedData || document.reviewStatus !== 'APPROVED') {
+      return {};
+    }
 
     const fields = unwrapExtractedFields(document.processedData.extractedFields);
     let result: { vehicleId?: number; sellerId?: number } = {};
@@ -117,6 +120,7 @@ export class DocumentDomainSyncService {
           },
         });
       }
+      await ensureVehicleArticle(tx, document.tenantId, vehicle);
       await tx.document.update({
         where: { id: document.id },
         data: { vehicleId: vehicle.id },
@@ -182,6 +186,7 @@ export class DocumentDomainSyncService {
           },
         });
       }
+      await ensureVehicleArticle(tx, document.tenantId, vehicle);
 
       await tx.document.update({
         where: { id: document.id },

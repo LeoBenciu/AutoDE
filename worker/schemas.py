@@ -69,7 +69,6 @@ class Invoice(BaseModel):
     vehicle_transaction: Optional[str] = Field(
         None, description="purchase, cost, or other"
     )
-    vehicle_cost_category: Optional[str] = None
 
 
 class Receipt(BaseModel):
@@ -82,7 +81,6 @@ class Receipt(BaseModel):
     vat_amount: Optional[float] = None
     payment_method: Optional[str] = None
     vin: Optional[str] = None
-    vehicle_cost_category: Optional[str] = None
 
 
 class BankStatementTransaction(BaseModel):

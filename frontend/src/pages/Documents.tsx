@@ -45,10 +45,19 @@ const COST_CATEGORY_OPTIONS: Array<[string, string]> = [
   ['OTHER', 'Alt cost'],
 ];
 
+function defaultVehicleCostCategoryForAccount(accountCode: unknown): string {
+  const account = String(accountCode ?? '').trim();
+  if (/^624/.test(account)) return 'TRANSPORT';
+  if (/^(611|6024)/.test(account)) return 'REFURB';
+  return '';
+}
+
 const INTERNAL_EXTRACTED_FIELDS = new Set([
   'document_hash',
   'documentHash',
   'vehicle_transaction',
+  // Legacy document-level fallback; vehicle cost categories now live on lines.
+  'vehicle_cost_category',
 ]);
 
 function ReviewChip() {
@@ -430,15 +439,11 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
       ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
       : doc.processedData?.typeConfidence ?? 0;
   const lineItems = Array.isArray(fields.line_items) ? fields.line_items : [];
-  const hasExtractedVehicleCostCategory =
+  const hasExtractedVehicleCostCategory = lineItems.some((line: any) =>
     COST_CATEGORY_OPTIONS.some(
-      ([category]) => category === fields.vehicle_cost_category,
-    ) ||
-    lineItems.some((line: any) =>
-      COST_CATEGORY_OPTIONS.some(
-        ([category]) => category === line?.vehicle_cost_category,
-      ),
-    );
+      ([category]) => category === line?.vehicle_cost_category,
+    ),
+  );
   const isVehicleCostDocument =
     ['Invoice', 'Receipt'].includes(doc.type) &&
     fields.receipt_type !== 'payment_receipt' &&
@@ -446,6 +451,10 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
     (fields.vehicle_transaction === 'cost' ||
       hasExtractedVehicleCostCategory ||
       doc.vehicleId != null);
+  const hasAmbiguousVehicleCostAccounts = lineItems.some(
+    (line: any) =>
+      defaultVehicleCostCategoryForAccount(line?.account_code) === '',
+  );
   const runAccountingAction = async (action: 'approve' | 'reopen') => {
     setActionMessage('');
     try {
@@ -622,63 +631,47 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
               disabled={doc.reviewStatus === 'APPROVED'}
               onSave={(value) => correct({ id, field: 'direction', newValue: value }).unwrap()}
             />
-            {['Invoice', 'Receipt'].includes(doc.type) &&
-              fields.receipt_type !== 'payment_receipt' && (
-                <LineField
-                  label="Rol în fluxul vehiculului"
-                  value={fields.vehicle_transaction ?? 'other'}
-                  options={[
-                    ['purchase', 'Achiziție vehicul'],
-                    ['cost', 'Cost asociat vehiculului'],
-                    ['other', 'Fără legătură cu vehiculul'],
-                  ]}
+            {doc.type === 'Invoice' && (
+              <LineField
+                label="Rol în fluxul vehiculului"
+                value={fields.vehicle_transaction ?? 'other'}
+                options={[
+                  ['purchase', 'Achiziție vehicul'],
+                  ['cost', 'Cost asociat vehiculului'],
+                  ['other', 'Fără legătură cu vehiculul'],
+                ]}
+                disabled={doc.reviewStatus === 'APPROVED'}
+                onSave={(value) =>
+                  correct({
+                    id,
+                    field: 'vehicle_transaction',
+                    newValue: value,
+                  }).unwrap()
+                }
+              />
+            )}
+            {isVehicleCostDocument && hasAmbiguousVehicleCostAccounts && (
+              <label
+                className={`col-span-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold lg:col-span-4 ${
+                  fields.vehicle_cost_categories_reviewed === true
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : 'border-amber-300 bg-amber-50 text-amber-800'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={fields.vehicle_cost_categories_reviewed === true}
                   disabled={doc.reviewStatus === 'APPROVED'}
-                  onSave={(value) =>
+                  onChange={(event) =>
                     correct({
                       id,
-                      field: 'vehicle_transaction',
-                      newValue: value,
+                      field: 'vehicle_cost_categories_reviewed',
+                      newValue: event.target.checked,
                     }).unwrap()
                   }
                 />
-              )}
-            {isVehicleCostDocument && (
-              <>
-                <LineField
-                  label="Categorie implicită"
-                  value={fields.vehicle_cost_category ?? ''}
-                  options={COST_CATEGORY_OPTIONS}
-                  disabled={doc.reviewStatus === 'APPROVED'}
-                  onSave={(value) =>
-                    correct({
-                      id,
-                      field: 'vehicle_cost_category',
-                      newValue: value,
-                    }).unwrap()
-                  }
-                />
-                <label
-                  className={`col-span-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold lg:col-span-4 ${
-                    fields.vehicle_cost_categories_reviewed === true
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                      : 'border-amber-300 bg-amber-50 text-amber-800'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={fields.vehicle_cost_categories_reviewed === true}
-                    disabled={doc.reviewStatus === 'APPROVED'}
-                    onChange={(event) =>
-                      correct({
-                        id,
-                        field: 'vehicle_cost_categories_reviewed',
-                        newValue: event.target.checked,
-                      }).unwrap()
-                    }
-                  />
-                  Am verificat categoria implicită și categoriile fiecărei linii
-                </label>
-              </>
+                Am verificat categoriile pentru conturile ambigue
+              </label>
             )}
             {doc.type === 'Contract' && (
               <>
@@ -946,9 +939,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                         articleCode: '',
                         management: '',
                         account_code: doc.type === 'Invoice' ? '628' : '628',
-                        vehicle_cost_category: isVehicleCostDocument
-                          ? fields.vehicle_cost_category ?? ''
-                          : null,
+                        vehicle_cost_category: isVehicleCostDocument ? '' : null,
                       },
                     ],
                   })
@@ -961,6 +952,11 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
             <div className="mt-2 space-y-2">
               {lineItems.map((item: any, index: number) => {
                 const low = Number(item?._confidence) < 0.7;
+                const explicitCostCategory = item.vehicle_cost_category ?? '';
+                const automaticCostCategory =
+                  explicitCostCategory === ''
+                    ? defaultVehicleCostCategoryForAccount(item.account_code)
+                    : '';
                 return (
                   <div
                     key={index}
@@ -1072,8 +1068,8 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                       />
                       {isVehicleCostDocument && (
                         <LineField
-                          label="Categorie cost vehicul"
-                          value={item.vehicle_cost_category ?? ''}
+                          label={`Categorie cost vehicul${automaticCostCategory ? ' · automată' : ''}`}
+                          value={explicitCostCategory || automaticCostCategory}
                           options={COST_CATEGORY_OPTIONS}
                           disabled={doc.reviewStatus === 'APPROVED'}
                           onSave={(value) =>

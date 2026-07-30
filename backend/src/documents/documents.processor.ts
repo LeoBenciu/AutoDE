@@ -12,11 +12,7 @@ import {
   ExtractionService,
   Phase0Result,
 } from '../extraction/extraction.service';
-import { DocumentDomainSyncService } from './document-domain-sync.service';
-import {
-  applyVehiclePurchaseInvoiceDefaults,
-  resolveVehicleFromDocument,
-} from '../vehicles/vehicle-document-sync';
+import { applyVehiclePurchaseInvoiceDefaults } from '../vehicles/vehicle-document-sync';
 
 const STUCK_PROCESSING_MINUTES = 10;
 const CLAIM_BATCH_SIZE = 5;
@@ -42,7 +38,6 @@ export class DocumentsProcessor {
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
     private readonly extraction: ExtractionService,
-    private readonly domainSync: DocumentDomainSyncService,
     config: ConfigService,
   ) {
     this.splitEnabled = config.get('PENDING_UPLOAD_SPLIT_ENABLED', 'false') === 'true';
@@ -211,17 +206,10 @@ export class DocumentsProcessor {
           applyVehiclePurchaseInvoiceDefaults(fields, managements, context.tenantCui)
         ) {
           this.logger.log(
-            `upload ${row.id}: pre-filled vehicle purchase line description/management`,
+            `upload ${row.id}: pre-filled vehicle purchase line article/description/management`,
           );
         }
       }
-      const inferredVehicleId = await resolveVehicleFromDocument(
-        this.prisma,
-        row.tenantId,
-        result.document_type,
-        fields,
-        row.vehicleId,
-      );
       let document = await this.prisma.document.findFirst({
         where: { tenantId: row.tenantId, s3Key: row.s3Key, deletedAt: null },
         select: { id: true, vehicleId: true },
@@ -236,7 +224,9 @@ export class DocumentsProcessor {
             fileSize: row.fileSize,
             documentHash: row.documentHash,
             tenantId: row.tenantId,
-            vehicleId: inferredVehicleId ?? row.vehicleId,
+            // An explicitly supplied vehicle may be linked immediately, but
+            // extracted data must not create or mutate a vehicle until approval.
+            vehicleId: row.vehicleId,
             partyId: row.partyId,
             processingStatus: 'COMPLETED',
             // Contract workflow: every new accounting/document extraction must
@@ -265,17 +255,7 @@ export class DocumentsProcessor {
           },
           select: { id: true, vehicleId: true },
         });
-      } else if (!document.vehicleId && inferredVehicleId) {
-        document = await this.prisma.document.update({
-          where: { id: document.id },
-          data: { vehicleId: inferredVehicleId },
-          select: { id: true, vehicleId: true },
-        });
       }
-
-      // Extraction is not complete from the business perspective until stable
-      // VIN/CUI/CNP facts have been applied to the vehicle and seller catalogues.
-      await this.domainSync.sync(document.id);
 
       await this.prisma.pendingUpload.updateMany({
         where: { id: row.id, status: 'PHASE1_COMPLETE' },
