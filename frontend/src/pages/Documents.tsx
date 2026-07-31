@@ -408,7 +408,7 @@ function pendingStageLabel(pending: any): string {
 
 function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void }) {
   const user = useSelector((state: RootState) => state.auth.user);
-  const canApprove = ['OWNER', 'MANAGER', 'ACCOUNTANT'].includes(user?.role ?? '');
+  const canApprove = user?.role === 'ACCOUNTANT';
   const { data: doc } = useDocumentQuery(id);
   const { data: posting, isFetching: postingLoading } = usePostingPreviewQuery(id, {
     skip: !canApprove,

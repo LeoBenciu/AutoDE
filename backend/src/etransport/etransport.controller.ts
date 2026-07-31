@@ -25,19 +25,19 @@ export class EtransportController {
   }
 
   @Post()
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateDeclarationInput) {
     return this.etransport.create(user.tenantId, dto);
   }
 
   @Patch(':id')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   update(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: CreateDeclarationInput) {
     return this.etransport.update(user.tenantId, user.userId, id, dto);
   }
 
   @Post(':id/submit')
-  @Roles('OWNER', 'MANAGER')
+  @Roles('ACCOUNTANT')
   submit(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.etransport.submit(user.tenantId, user.userId, id);
   }

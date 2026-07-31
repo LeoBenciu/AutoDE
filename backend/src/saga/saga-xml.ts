@@ -1,11 +1,23 @@
 import {
   CanonicalAccountingDocument,
+  CanonicalLineItem,
+  normalizeEin,
   normalizeVatRate,
   round2,
 } from '../accounting/accounting-normalizer';
 
 export interface SagaCompany {
   cui?: string | null;
+  name?: string | null;
+  registrationNumber?: string | null;
+  address?: string | null;
+  country?: string | null;
+  county?: string | null;
+  city?: string | null;
+  iban?: string | null;
+  bankName?: string | null;
+  email?: string | null;
+  phone?: string | null;
   isVatPayer: boolean;
   hasTvaLaIncasare: boolean;
 }
@@ -231,39 +243,103 @@ function buildFactura(
   const data = invoice.data;
   const isIndependentReceipt =
     invoice.type === 'Receipt' || data.receiptType === 'independent_receipt';
+  const companyIsVendor = sameTaxId(data.vendorEin, company.cui);
+  const companyIsBuyer = sameTaxId(data.buyerEin, company.cui);
   const header = [
-    xmlTag('FurnizorNume', data.vendor),
+    xmlTag('FurnizorNume', data.vendor || (companyIsVendor ? company.name : '')),
     xmlTag('FurnizorCIF', data.vendorEin),
-    xmlTag('FurnizorNrRegCom', data.raw.vendor_reg_com),
+    xmlTag(
+      'FurnizorNrRegCom',
+      data.vendorRegistration ||
+        (companyIsVendor ? company.registrationNumber : ''),
+    ),
     xmlTag('FurnizorCapital', data.raw.vendor_capital),
-    xmlTag('FurnizorTara', data.vendorCountry || 'RO'),
-    xmlTag('FurnizorLocalitate', data.raw.vendor_city),
-    xmlTag('FurnizorJudet', data.raw.vendor_county),
-    xmlTag('FurnizorAdresa', data.raw.vendor_address),
-    xmlTag('FurnizorTelefon', data.raw.vendor_phone),
-    xmlTag('FurnizorMail', data.raw.vendor_email),
-    xmlTag('FurnizorBanca', data.raw.vendor_bank),
-    xmlTag('FurnizorIBAN', data.vendorIban),
+    xmlTag(
+      'FurnizorTara',
+      data.vendorCountry || (companyIsVendor ? company.country : '') || 'RO',
+    ),
+    xmlTag(
+      'FurnizorLocalitate',
+      data.vendorCity || (companyIsVendor ? company.city : ''),
+    ),
+    xmlTag(
+      'FurnizorJudet',
+      data.vendorCounty || (companyIsVendor ? company.county : ''),
+    ),
+    xmlTag(
+      'FurnizorAdresa',
+      data.vendorAddress || (companyIsVendor ? company.address : ''),
+    ),
+    xmlTag(
+      'FurnizorTelefon',
+      data.vendorPhone || (companyIsVendor ? company.phone : ''),
+    ),
+    xmlTag(
+      'FurnizorMail',
+      data.vendorEmail || (companyIsVendor ? company.email : ''),
+    ),
+    xmlTag(
+      'FurnizorBanca',
+      data.vendorBankName || (companyIsVendor ? company.bankName : ''),
+    ),
+    xmlTag(
+      'FurnizorIBAN',
+      data.vendorIban || (companyIsVendor ? company.iban : ''),
+    ),
     xmlTag('FurnizorInformatiiSuplimentare', data.raw.vendor_additional_info),
     xmlTag('GUID_cod_client', data.raw.guid_client_code),
-    xmlTag('ClientNume', data.buyer),
+    xmlTag('ClientNume', data.buyer || (companyIsBuyer ? company.name : '')),
     xmlTag('ClientInformatiiSuplimentare', data.raw.buyer_additional_info),
     xmlTag('ClientCIF', data.buyerEin),
-    xmlTag('ClientNrRegCom', data.raw.buyer_reg_com),
-    xmlTag('ClientJudet', data.raw.buyer_county),
-    xmlTag('ClientTara', data.buyerCountry || 'RO'),
-    xmlTag('ClientLocalitate', data.raw.buyer_city),
-    xmlTag('ClientAdresa', data.raw.buyer_address),
-    xmlTag('ClientBanca', data.raw.buyer_bank),
-    xmlTag('ClientIBAN', data.raw.buyer_iban),
-    xmlTag('ClientTelefon', data.raw.buyer_phone),
-    xmlTag('ClientMail', data.raw.buyer_email),
+    xmlTag(
+      'ClientNrRegCom',
+      data.buyerRegistration ||
+        (companyIsBuyer ? company.registrationNumber : ''),
+    ),
+    xmlTag(
+      'ClientJudet',
+      data.buyerCounty || (companyIsBuyer ? company.county : ''),
+    ),
+    xmlTag(
+      'ClientTara',
+      data.buyerCountry || (companyIsBuyer ? company.country : '') || 'RO',
+    ),
+    xmlTag(
+      'ClientLocalitate',
+      data.buyerCity || (companyIsBuyer ? company.city : ''),
+    ),
+    xmlTag(
+      'ClientAdresa',
+      data.buyerAddress || (companyIsBuyer ? company.address : ''),
+    ),
+    xmlTag(
+      'ClientBanca',
+      data.buyerBankName || (companyIsBuyer ? company.bankName : ''),
+    ),
+    xmlTag(
+      'ClientIBAN',
+      data.buyerIban || (companyIsBuyer ? company.iban : ''),
+    ),
+    xmlTag(
+      'ClientTelefon',
+      data.buyerPhone || (companyIsBuyer ? company.phone : ''),
+    ),
+    xmlTag(
+      'ClientMail',
+      data.buyerEmail || (companyIsBuyer ? company.email : ''),
+    ),
     xmlTag('FacturaNumar', data.documentNumber),
     xmlTag('FacturaData', sagaDate(data.documentDate)),
     xmlTag('FacturaScadenta', sagaDate(data.dueDate)),
     xmlTag('FacturaTaxareInversa', data.reverseCharge ? 'Da' : 'Nu'),
-    xmlTag('FacturaTVAIncasare', company.hasTvaLaIncasare ? 'Da' : 'Nu'),
-    xmlTag('FacturaTip', isIndependentReceipt ? 'C' : ''),
+    xmlTag(
+      'FacturaTVAIncasare',
+      hasVatOnCollection(data, company) ? 'Da' : 'Nu',
+    ),
+    xmlTag(
+      'FacturaTip',
+      data.reverseCharge ? 'T' : isIndependentReceipt ? 'C' : '',
+    ),
     xmlTag('FacturaInformatiiSuplimentare', data.raw.additional_info),
     xmlTag('FacturaMoneda', data.currency || 'RON'),
     xmlTag('FacturaGreutate', data.raw.weight),
@@ -276,11 +352,12 @@ function buildFactura(
   const lineXml = data.lineItems
     .map((line, index) => {
       const article = findFinovaArticle(articles, line.articleCode);
-      const analytic =
-        article?.analyticCode ??
-        line.raw.selectedArticleAnalitic ??
-        line.raw.analitic ??
-        '';
+      const analytic = line.articleCode
+        ? article?.analyticCode ??
+          line.raw.selectedArticleAnalitic ??
+          line.raw.analitic ??
+          ''
+        : '';
       const value = company.isVatPayer
         ? line.netAmount
         : round2(line.netAmount + line.vatAmount);
@@ -314,6 +391,14 @@ function buildFactura(
           : line.vatDeductibility === 'NONE'
             ? 'I'
             : '';
+      const vatRate = data.reverseCharge
+        ? reverseChargeVatRate(data, line)
+        : sagaInvoiceVat(
+            line.raw.vat_rate ??
+              line.raw.vat ??
+              line.raw.proc_tva ??
+              line.vatCode,
+          );
       return `        <Linie>
           <LinieNrCrt>${index + 1}</LinieNrCrt>
           <Gestiune>${esc(line.management)}</Gestiune>
@@ -328,7 +413,7 @@ function buildFactura(
           <Cantitate>${esc(quantity)}</Cantitate>
           <Pret>${esc(unitPrice)}</Pret>
           <Valoare>${esc(lineValue)}</Valoare>
-          <ProcTVA>${company.isVatPayer ? esc(sagaInvoiceVat(line.raw.vat_rate ?? line.raw.vat ?? line.raw.proc_tva ?? line.vatCode)) : ''}</ProcTVA>
+          <ProcTVA>${company.isVatPayer ? esc(vatRate) : ''}</ProcTVA>
           <TVA>${esc(vatValue)}</TVA>
           <Cont>${esc(line.accountCode)}</Cont>
           <TipDeducere>${deductibility}</TipDeducere>
@@ -387,6 +472,38 @@ function sagaInvoiceVat(value: unknown): string {
   const text = finovaScalar(value).trim().toUpperCase();
   if (VAT_RATE_MAP[text] != null) return VAT_RATE_MAP[text];
   return /^\d+$/.test(text) ? text : '19';
+}
+
+function reverseChargeVatRate(
+  data: CanonicalAccountingDocument,
+  line: CanonicalLineItem,
+): string {
+  const explicit = normalizeVatRate(
+    line.raw.reverse_charge_vat_rate ??
+      data.raw.reverse_charge_vat_rate ??
+      data.raw.applicable_vat_rate,
+  );
+  if (explicit > 0) return String(explicit);
+  return data.documentDate && data.documentDate < '2025-08-01' ? '19' : '21';
+}
+
+function hasVatOnCollection(
+  data: CanonicalAccountingDocument,
+  company: SagaCompany,
+): boolean {
+  if (!company.isVatPayer || data.vatAmount <= 0 || data.reverseCharge) {
+    return false;
+  }
+  if (data.direction === 'outgoing') return company.hasTvaLaIncasare;
+  return data.direction === 'incoming' && data.vendorCountry === 'RO'
+    ? data.vatOnCollection
+    : false;
+}
+
+function sameTaxId(left?: string | null, right?: string | null): boolean {
+  const normalizedLeft = normalizeEin(left);
+  const normalizedRight = normalizeEin(right);
+  return Boolean(normalizedLeft && normalizedLeft === normalizedRight);
 }
 
 function sagaUnit(value: unknown): string {

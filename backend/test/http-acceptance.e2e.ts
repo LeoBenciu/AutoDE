@@ -42,7 +42,7 @@ async function main() {
   const users = new Map<string, { email: string; id: number }>();
 
   try {
-    for (const role of ['OWNER', 'MANAGER', 'ACCOUNTANT', 'SALES', 'VIEWER'] as const) {
+    for (const role of ['ACCOUNTANT', 'SALES', 'VIEWER'] as const) {
       const user = await prisma.user.create({
         data: {
           tenantId: tenant.id,
@@ -57,10 +57,10 @@ async function main() {
     const otherUser = await prisma.user.create({
       data: {
         tenantId: otherTenant.id,
-        name: 'Other Owner',
+        name: 'Other Accountant',
         email: `${marker}-other@example.test`,
         passwordHash,
-        role: 'OWNER',
+        role: 'ACCOUNTANT',
       },
     });
 
@@ -93,7 +93,7 @@ async function main() {
         expected: 403,
       });
     }
-    for (const role of ['OWNER', 'MANAGER', 'ACCOUNTANT']) {
+    for (const role of ['ACCOUNTANT']) {
       await request(baseUrl, '/saga/preview', {
         method: 'POST',
         token: tokens.get(role),
@@ -115,14 +115,14 @@ async function main() {
       expected: 201,
     });
     const preference = await request(baseUrl, '/saga/preferences', {
-      token: tokens.get('OWNER'),
+      token: tokens.get('ACCOUNTANT'),
       expected: 200,
     });
     assert.deepEqual(preference, savedPreference);
 
     const party = await request(baseUrl, '/parties', {
       method: 'POST',
-      token: tokens.get('OWNER'),
+      token: tokens.get('ACCOUNTANT'),
       expected: 201,
       body: {
         kind: 'COMPANY',
@@ -447,7 +447,7 @@ async function main() {
     );
     await request(baseUrl, `/documents/${searchableDocument.id}/unarchive`, {
       method: 'POST',
-      token: tokens.get('OWNER'),
+      token: tokens.get('ACCOUNTANT'),
       expected: 201,
     });
 
@@ -506,12 +506,12 @@ async function main() {
     });
     await request(baseUrl, `/documents/${forbiddenDocument.id}/reopen`, {
       method: 'POST',
-      token: tokens.get('MANAGER'),
+      token: tokens.get('ACCOUNTANT'),
       expected: 201,
     });
     await request(baseUrl, `/documents/${forbiddenDocument.id}/approve`, {
       method: 'POST',
-      token: tokens.get('OWNER'),
+      token: tokens.get('ACCOUNTANT'),
       expected: 201,
     });
     await request(baseUrl, `/documents/${forbiddenDocument.id}`, {
@@ -570,7 +570,7 @@ async function main() {
     assert.match(declaration.xmlPayload, /<eTransport/);
     await request(baseUrl, `/etransport/${declaration.id}/submit`, {
       method: 'POST',
-      token: tokens.get('OWNER'),
+      token: tokens.get('ACCOUNTANT'),
       expected: 400,
     });
 

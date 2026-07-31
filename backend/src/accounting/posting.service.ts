@@ -61,6 +61,17 @@ interface ResolvedAccounts {
   clientId?: number;
 }
 
+interface PartyContactDetails {
+  registration?: string;
+  county?: string;
+  city?: string;
+  address?: string;
+  iban?: string;
+  bankName?: string;
+  phone?: string;
+  email?: string;
+}
+
 @Injectable()
 export class PostingService {
   constructor(private readonly prisma: PrismaService) {}
@@ -1150,9 +1161,18 @@ export class PostingService {
       supplierCanonical.vendorEin,
       supplierCanonical.vendor,
       supplierCanonical.vendorCountry,
-      supplierCanonical.vendorIban,
       supplierCanonical.vendorKind,
       supplierCanonical.vendorIdentifierType,
+      {
+        registration: supplierCanonical.vendorRegistration,
+        county: supplierCanonical.vendorCounty,
+        city: supplierCanonical.vendorCity,
+        address: supplierCanonical.vendorAddress,
+        iban: supplierCanonical.vendorIban,
+        bankName: supplierCanonical.vendorBankName,
+        phone: supplierCanonical.vendorPhone,
+        email: supplierCanonical.vendorEmail,
+      },
     );
     const client = await this.upsertParty(
       tx,
@@ -1161,9 +1181,18 @@ export class PostingService {
       clientCanonical.buyerEin,
       clientCanonical.buyer,
       clientCanonical.buyerCountry,
-      undefined,
       clientCanonical.buyerKind,
       clientCanonical.buyerIdentifierType,
+      {
+        registration: clientCanonical.buyerRegistration,
+        county: clientCanonical.buyerCounty,
+        city: clientCanonical.buyerCity,
+        address: clientCanonical.buyerAddress,
+        iban: clientCanonical.buyerIban,
+        bankName: clientCanonical.buyerBankName,
+        phone: clientCanonical.buyerPhone,
+        email: clientCanonical.buyerEmail,
+      },
     );
 
     for (const line of canonical.lineItems) {
@@ -1201,9 +1230,9 @@ export class PostingService {
     rawEin: string,
     name: string,
     country: string,
-    iban?: string,
     kind: 'INDIVIDUAL' | 'COMPANY' = 'COMPANY',
     identifierType: PartyIdentifierTypeValue = 'CUI',
+    details: PartyContactDetails = {},
   ): Promise<any | null> {
     const taxId = normalizeEin(rawEin);
     if (!taxId && !name) return null;
@@ -1221,7 +1250,7 @@ export class PostingService {
           kind,
           identifierType,
           country: country || 'RO',
-          iban,
+          ...nonEmptyPartyDetails(details),
         },
       });
     }
@@ -1238,7 +1267,7 @@ export class PostingService {
           kind,
           identifierType,
           country: country || existing.country,
-          iban: iban || existing.iban,
+          ...nonEmptyPartyDetails(details),
           isSupplier: true,
           supplierAnalytic: analytic,
           supplierCode:
@@ -1257,6 +1286,7 @@ export class PostingService {
         kind,
         identifierType,
         country: country || existing.country,
+        ...nonEmptyPartyDetails(details),
         isClient: true,
         clientAnalytic: analytic,
         clientCode: existing.clientCode ?? `CLI${analytic}`,
@@ -1295,16 +1325,13 @@ export class PostingService {
     tenantId: number,
     line: CanonicalLineItem,
   ) {
-    let article = line.articleCode
-      ? await tx.article.findUnique({
-          where: { tenantId_code: { tenantId, code: line.articleCode } },
-        })
-      : await tx.article.findFirst({
-          where: { tenantId, name: { equals: line.name, mode: 'insensitive' } },
-        });
+    if (!line.articleCode || line.articleType === 'Nedefinit') return null;
+    let article = await tx.article.findUnique({
+      where: { tenantId_code: { tenantId, code: line.articleCode } },
+    });
     if (!article) {
       const count = await tx.article.count({ where: { tenantId } });
-      const code = line.articleCode || `ART${String(count + 1).padStart(5, '0')}`;
+      const code = line.articleCode;
       article = await tx.article.create({
         data: {
           tenantId,
@@ -1335,6 +1362,14 @@ export class PostingService {
   }
 }
 
+function nonEmptyPartyDetails(
+  details: PartyContactDetails,
+): PartyContactDetails {
+  return Object.fromEntries(
+    Object.entries(details).filter(([, value]) => Boolean(value)),
+  ) as PartyContactDetails;
+}
+
 function draft(
   accountCode: string,
   debit: number,
@@ -1356,6 +1391,9 @@ function money(amount: number, exchangeRate: number): number {
   return round2(amount * exchangeRate);
 }
 
+const ROUNDING_PROTECTED_ACCOUNT_RE =
+  /^(?:401|404|408|411|4426|4427|462|5121|5124|5311)(?:\.|$)/;
+
 function balanceConvertedEntries(entries: JournalDraftLine[]): JournalDraftLine[] {
   const filtered = entries.filter(
     (entry) => Math.abs(entry.debit) > 0.004 || Math.abs(entry.credit) > 0.004,
@@ -1364,12 +1402,38 @@ function balanceConvertedEntries(entries: JournalDraftLine[]): JournalDraftLine[
   const credit = round2(filtered.reduce((sum, entry) => sum + entry.credit, 0));
   const difference = round2(debit - credit);
   if (Math.abs(difference) <= 0.05 && Math.abs(difference) > 0) {
+    // Supplier/client, liquidity and VAT amounts must remain tied to the
+    // document totals. Line-level FX rounding belongs on an economic line.
+    const adjustable = [...filtered]
+      .reverse()
+      .filter(
+        (entry) => !ROUNDING_PROTECTED_ACCOUNT_RE.test(entry.accountCode),
+      );
     if (difference > 0) {
-      const target = [...filtered].reverse().find((entry) => entry.credit > 0);
-      if (target) target.credit = round2(target.credit + difference);
+      const debitTarget = adjustable.find(
+        (entry) => entry.debit >= difference,
+      );
+      if (debitTarget) {
+        debitTarget.debit = round2(debitTarget.debit - difference);
+      } else {
+        const creditTarget = adjustable.find((entry) => entry.credit > 0);
+        if (creditTarget) {
+          creditTarget.credit = round2(creditTarget.credit + difference);
+        }
+      }
     } else {
-      const target = [...filtered].reverse().find((entry) => entry.debit > 0);
-      if (target) target.debit = round2(target.debit + Math.abs(difference));
+      const absoluteDifference = Math.abs(difference);
+      const creditTarget = adjustable.find(
+        (entry) => entry.credit >= absoluteDifference,
+      );
+      if (creditTarget) {
+        creditTarget.credit = round2(creditTarget.credit - absoluteDifference);
+      } else {
+        const debitTarget = adjustable.find((entry) => entry.debit > 0);
+        if (debitTarget) {
+          debitTarget.debit = round2(debitTarget.debit + absoluteDifference);
+        }
+      }
     }
   }
   return filtered;

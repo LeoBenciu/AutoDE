@@ -49,6 +49,7 @@ export const rawInvoices = [
       document_date: '2026-07-15',
       due_date: '2026-07-30',
       reverse_charge: false,
+      vat_on_collection: true,
       receipt_type: 'independent_receipt',
       additional_info: 'Bon fiscal "test"',
       currency: 'RON',

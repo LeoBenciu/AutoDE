@@ -90,7 +90,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const nav = NAV.filter(
     (item) =>
       !item.accounting ||
-      ['OWNER', 'MANAGER', 'ACCOUNTANT'].includes(user?.role ?? ''),
+      user?.role === 'ACCOUNTANT',
   );
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>

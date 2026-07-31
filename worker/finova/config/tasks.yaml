@@ -50,6 +50,16 @@ extract_invoice_data_task:
     For an Invoice with direction '{direction}', where CURRENT DATE is {current_date}, extract:
     - vendor, vendor_ein (number only, remove 'RO'), vendor_country (ISO country code or null), buyer, buyer_ein (number only, remove 'RO'), buyer_country (ISO country code or null), document_number (the invoice number copied EXACTLY from the 'Rechnungsnr.'/'Invoice No'/'Factură nr.'/'Nr. factură'/'Nr.' field and NOTHING else — copy only those characters. Do NOT append, merge, or concatenate any digits from a payment or booking reference ('Zahlungsreferenz'/'Verwendungszweck'/'Referință plată'), a customer/order/stock number ('Bestandsnr'/'Kundennr'), a barcode, or any other number printed elsewhere on the page. Those belong in referenced_numbers, never in document_number), document_date (DD-MM-YYYY, must not be after {current_date}), due_date (DD-MM-YYYY, null if absent — the payment DEADLINE; it MAY be after {current_date}, so do NOT null or change a future due date), total_amount (numeric - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), vat_amount (numeric), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - default to RON), tariff_code (NC/tariff code exactly as printed, or null; never infer 8703), referenced_numbers: array of any document numbers which the current document references(invoices, contracts, receipts, etc.) mentioned anywhere in the invoice text, reverse_charge (boolean: true when the invoice explicitly says "taxare inversă"/"reverse charge"; on an AUTO1 "MwSt. Kennz. / VAT Key" table the printed key is authoritative: I means true and M means false).
 
+    PARTNER DETAILS AND VAT REGIME:
+    - For both vendor and buyer extract registration, full postal address, city,
+      county/region, phone, email, bank name, and IBAN exactly as printed. Return
+      null for every absent field. Use vendor_registration, vendor_address,
+      vendor_city, vendor_county, vendor_phone, vendor_email, vendor_bank_name,
+      vendor_iban and the corresponding buyer_* fields.
+    - Set vat_on_collection=true ONLY when the invoice explicitly states the
+      Romanian "TVA la încasare" regime. Never infer it from company settings
+      and always use false for foreign invoices.
+
     VEHICLE WORKFLOW:
     - Extract vin (17-character chassis number), vehicle_make, vehicle_model,
       vehicle_variant, vehicle_year, first_registration_date (DD-MM-YYYY), and
@@ -77,6 +87,9 @@ extract_invoice_data_task:
       when none of the specific categories applies; never leave a line null on
       a cost invoice. Use null for every line on purchase/other invoices. There
       is no document-level default category.
+    - Cost-invoice services are not stock articles: set articleCode="",
+      isNew=false, and management=null on every vehicle cost line. The vehicle
+      VIN/article code belongs only to the actual vehicle purchase line.
 
     CRITICAL: Extract line_items array - THIS IS MANDATORY. EVERY invoice MUST have line_items. Look carefully at the document for itemized lists, tables, product/service descriptions with quantities and prices. Extract ALL items from ALL pages of the document. If the document text contains "=== PAGE X ===" markers, this indicates a multi-page document - you MUST extract line items from EVERY page, not just the first page. Count the total number of line items as you extract them - if you see line items continuing on subsequent pages, you MUST include ALL of them. Do NOT stop after the first page or after a certain number of items.     Each line item must have: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (e.g., '624' for transport - THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING invoices - see rules below), vehicle_cost_category (vehicle cost category or null). The line_items array CANNOT be empty - if you cannot find explicit line items, you must look harder or extract from the invoice structure. For multi-page invoices, continue reading through all pages until you have extracted every single line item. Verify completeness by checking that you've processed all pages and all line items visible in the document.
 
@@ -241,7 +254,9 @@ extract_contract_data_task:
     (vendor=the seller, client=the buyer, contractor only for another service
     party), kind (INDIVIDUAL or COMPANY), identifier_type (CNP for a Romanian
     individual, FOREIGN_ID for an individual from another country, CUI for a
-    company), country (ISO code or null),
+    company), country (ISO code or null), registration, address, city,
+    county/region, phone, email, bank_name, and iban exactly as printed (null
+    for every absent contact field),
     contract_date (DD-MM-YYYY, must not be after {current_date}), start_date
     (DD-MM-YYYY; use contract_date when no separate start exists), end_date
     (DD-MM-YYYY; use contract_date when the sale has no term), total_value

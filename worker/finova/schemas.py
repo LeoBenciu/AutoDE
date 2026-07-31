@@ -183,7 +183,23 @@ class InvoiceData(StrictBase):
     currency: Currency
     tariff_code: Optional[str]
     vendor_country: Optional[str]
+    vendor_registration: Optional[str]
+    vendor_address: Optional[str]
+    vendor_city: Optional[str]
+    vendor_county: Optional[str]
+    vendor_phone: Optional[str]
+    vendor_email: Optional[str]
+    vendor_bank_name: Optional[str]
+    vendor_iban: Optional[str]
     buyer_country: Optional[str]
+    buyer_registration: Optional[str]
+    buyer_address: Optional[str]
+    buyer_city: Optional[str]
+    buyer_county: Optional[str]
+    buyer_phone: Optional[str]
+    buyer_email: Optional[str]
+    buyer_bank_name: Optional[str]
+    buyer_iban: Optional[str]
     vin: Optional[str]
     vehicle_make: Optional[str]
     vehicle_model: Optional[str]
@@ -195,6 +211,7 @@ class InvoiceData(StrictBase):
     vehicle_transaction: VehicleTransaction
     referenced_numbers: List[str]
     reverse_charge: bool
+    vat_on_collection: bool
     line_items: List[LineItem]
     aviz: bool
     confidence: InvoiceConfidence
@@ -284,6 +301,14 @@ class ContractParty(StrictBase):
     kind: ContractPartyKind
     identifier_type: ContractPartyIdentifierType
     country: Optional[str]
+    registration: Optional[str]
+    address: Optional[str]
+    city: Optional[str]
+    county: Optional[str]
+    phone: Optional[str]
+    email: Optional[str]
+    bank_name: Optional[str]
+    iban: Optional[str]
 
 
 class ContractDeliverable(StrictBase):

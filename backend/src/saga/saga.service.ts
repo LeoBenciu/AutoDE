@@ -2,8 +2,10 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { GeneralLedgerEntry, Party } from '@prisma/client';
 import JSZip from 'jszip';
 import {
+  CanonicalAccountingDocument,
   isVehiclePurchaseContract,
   normalizeAccountingDocument,
+  normalizeEin,
 } from '../accounting/accounting-normalizer';
 import { AuditService } from '../common/audit.service';
 import { PrismaService } from '../common/prisma.service';
@@ -14,6 +16,7 @@ import {
   buildPartnersXml,
   buildPlatiXml,
   SagaArticleRecord,
+  SagaCompany,
   SagaInvoiceRecord,
   SagaMovement,
   SagaPartnerRecord,
@@ -40,6 +43,16 @@ export interface SagaExportRequest {
 interface CollectedSagaData {
   tenant: {
     cui: string | null;
+    name: string;
+    registrationNumber: string | null;
+    address: string | null;
+    country: string;
+    county: string | null;
+    city: string | null;
+    iban: string | null;
+    bankName: string | null;
+    email: string | null;
+    phone: string | null;
     isVatPayer: boolean;
     hasTvaLaIncasare: boolean;
     accountingCutoverAt: Date;
@@ -126,8 +139,18 @@ export class SagaService {
 
     const zip = new JSZip();
     const stamp = new Date().toISOString().slice(0, 10);
-    const company = {
+    const company: SagaCompany = {
       cui: data.tenant.cui,
+      name: data.tenant.name,
+      registrationNumber: data.tenant.registrationNumber,
+      address: data.tenant.address,
+      country: data.tenant.country,
+      county: data.tenant.county,
+      city: data.tenant.city,
+      iban: data.tenant.iban,
+      bankName: data.tenant.bankName,
+      email: data.tenant.email,
+      phone: data.tenant.phone,
       isVatPayer: data.tenant.isVatPayer,
       hasTvaLaIncasare: data.tenant.hasTvaLaIncasare,
     };
@@ -139,10 +162,19 @@ export class SagaService {
     };
 
     if (data.types.includes('facturi')) {
-      const cui = cleanFilePart(data.tenant.cui || 'FARA_CUI');
-      add(`F_${cui}_${stamp}.xml`, data.invoices, () =>
-        buildFacturiXml(data.invoices, company, data.articles),
-      );
+      const invoiceNames = new Set<string>();
+      for (const invoice of data.invoices) {
+        const name = sagaInvoiceFileName(invoice, data.tenant.cui, stamp);
+        if (invoiceNames.has(name)) {
+          throw new BadRequestException(
+            `Două documente generează același nume SAGA: ${name}`,
+          );
+        }
+        invoiceNames.add(name);
+        add(name, [invoice], () =>
+          buildFacturiXml([invoice], company, data.articles),
+        );
+      }
     }
     if (data.types.includes('incasari')) {
       add(`I_${stamp}.xml`, data.receipts, () =>
@@ -233,6 +265,16 @@ export class SagaService {
             data.invoices,
             {
               cui: data.tenant.cui,
+              name: data.tenant.name,
+              registrationNumber: data.tenant.registrationNumber,
+              address: data.tenant.address,
+              country: data.tenant.country,
+              county: data.tenant.county,
+              city: data.tenant.city,
+              iban: data.tenant.iban,
+              bankName: data.tenant.bankName,
+              email: data.tenant.email,
+              phone: data.tenant.phone,
               isVatPayer: data.tenant.isVatPayer,
               hasTvaLaIncasare: data.tenant.hasTvaLaIncasare,
             },
@@ -298,6 +340,16 @@ export class SagaService {
       where: { id: tenantId },
       select: {
         cui: true,
+        name: true,
+        registrationNumber: true,
+        address: true,
+        country: true,
+        county: true,
+        city: true,
+        iban: true,
+        bankName: true,
+        email: true,
+        phone: true,
         isVatPayer: true,
         hasTvaLaIncasare: true,
         accountingCutoverAt: true,
@@ -425,18 +477,63 @@ export class SagaService {
     const movements = movementsFromLedger(ledgerEntries, tenant.cui);
     const suppliers = parties
       .filter((party) => party.isSupplier)
-      .map((party) => partnerRecord(party, 'supplier'));
+      .map((party) =>
+        partnerRecord(
+          party,
+          'supplier',
+          tenant,
+          findPartnerDocument(invoices, party, 'supplier'),
+        ),
+      );
     const clients = parties
       .filter((party) => party.isClient)
-      .map((party) => partnerRecord(party, 'client'));
-    const articleRecords: SagaArticleRecord[] = articles.map((article) => ({
-      code: article.code,
-      name: article.name,
-      analyticCode: article.analyticCode,
-      vatRate: article.vatRate,
-      unit: article.unit,
-      type: article.type,
-    }));
+      .map((party) =>
+        partnerRecord(
+          party,
+          'client',
+          tenant,
+          findPartnerDocument(invoices, party, 'client'),
+        ),
+      );
+    const referencedArticleCodes = new Set(
+      invoices.flatMap((invoice) =>
+        invoice.data.lineItems.map((line) => line.articleCode).filter(Boolean),
+      ),
+    );
+    const orphanedVehicleCostArticleCodes = new Set(
+      invoices
+        .filter(
+          (invoice) =>
+            invoice.data.documentType === 'Invoice' &&
+            String(invoice.data.raw.vehicle_transaction).toLowerCase() === 'cost',
+        )
+        .flatMap((invoice) =>
+          invoice.data.lineItems
+            .map((line) =>
+              String(
+                line.raw.articleCode ??
+                  line.raw.article_code ??
+                  line.raw.cod_articol_client ??
+                  '',
+              ).trim(),
+            )
+            .filter(Boolean),
+        ),
+    );
+    const articleRecords: SagaArticleRecord[] = articles
+      .filter(
+        (article) =>
+          !orphanedVehicleCostArticleCodes.has(article.code) ||
+          referencedArticleCodes.has(article.code),
+      )
+      .map((article) => ({
+        code: article.code,
+        name: article.name,
+        analyticCode: article.analyticCode,
+        vatRate: article.vatRate,
+        unit: article.unit,
+        type: article.type,
+      }));
     const relevantNonExportableDocuments = nonExportableDocuments.filter(
       (document) => {
         const data = document.processedData
@@ -635,24 +732,96 @@ function movementsFromLedger(
 function partnerRecord(
   party: Party,
   role: 'supplier' | 'client',
+  tenant: CollectedSagaData['tenant'],
+  document?: CanonicalAccountingDocument,
 ): SagaPartnerRecord {
   const supplier = role === 'supplier';
+  const partyTaxId = normalizeEin(party.taxId);
+  const ownCompany = Boolean(
+    partyTaxId && partyTaxId === normalizeEin(tenant.cui),
+  );
+  const extracted = documentPartnerRecord(document, role);
   return {
     name: party.name,
     taxId: party.taxId,
-    country: party.country,
-    county: party.county,
-    city: party.city,
-    address: party.address,
-    iban: party.iban,
-    bankName: party.bankName,
-    phone: party.phone,
-    email: party.email,
-    registration: party.registration,
+    country:
+      party.country || extracted.country || (ownCompany ? tenant.country : null),
+    county:
+      party.county || extracted.county || (ownCompany ? tenant.county : null),
+    city: party.city || extracted.city || (ownCompany ? tenant.city : null),
+    address:
+      party.address || extracted.address || (ownCompany ? tenant.address : null),
+    iban: party.iban || extracted.iban || (ownCompany ? tenant.iban : null),
+    bankName:
+      party.bankName ||
+      extracted.bankName ||
+      (ownCompany ? tenant.bankName : null),
+    phone: party.phone || extracted.phone || (ownCompany ? tenant.phone : null),
+    email: party.email || extracted.email || (ownCompany ? tenant.email : null),
+    registration:
+      party.registration ||
+      extracted.registration ||
+      (ownCompany ? tenant.registrationNumber : null),
     discount: party.discount,
     code: supplier ? party.supplierCode : party.clientCode,
     analytic: supplier ? party.supplierAnalytic : party.clientAnalytic,
   };
+}
+
+function findPartnerDocument(
+  invoices: SagaInvoiceRecord[],
+  party: Party,
+  role: 'supplier' | 'client',
+): CanonicalAccountingDocument | undefined {
+  const partyTaxId = normalizeEin(party.taxId);
+  const partyName = party.name.trim().toLowerCase();
+  return invoices
+    .map((invoice) => invoice.data)
+    .find((data) => {
+      const taxId = normalizeEin(
+        role === 'supplier' ? data.vendorEin : data.buyerEin,
+      );
+      const name = (role === 'supplier' ? data.vendor : data.buyer)
+        .trim()
+        .toLowerCase();
+      return partyTaxId
+        ? taxId === partyTaxId
+        : Boolean(partyName && name === partyName);
+    });
+}
+
+function documentPartnerRecord(
+  document: CanonicalAccountingDocument | undefined,
+  role: 'supplier' | 'client',
+): SagaPartnerRecord {
+  if (!document) return { name: '' };
+  return role === 'supplier'
+    ? {
+        name: document.vendor,
+        taxId: document.vendorEin,
+        registration: document.vendorRegistration,
+        country: document.vendorCountry,
+        county: document.vendorCounty,
+        city: document.vendorCity,
+        address: document.vendorAddress,
+        iban: document.vendorIban,
+        bankName: document.vendorBankName,
+        phone: document.vendorPhone,
+        email: document.vendorEmail,
+      }
+    : {
+        name: document.buyer,
+        taxId: document.buyerEin,
+        registration: document.buyerRegistration,
+        country: document.buyerCountry,
+        county: document.buyerCounty,
+        city: document.buyerCity,
+        address: document.buyerAddress,
+        iban: document.buyerIban,
+        bankName: document.buyerBankName,
+        phone: document.buyerPhone,
+        email: document.buyerEmail,
+      };
 }
 
 function normalizeTypes(types?: SagaExportType[]): SagaExportType[] {
@@ -689,7 +858,26 @@ function inRange(value: string, from: string, to: string): boolean {
 }
 
 function cleanFilePart(value: string): string {
-  return value.replace(/^RO/i, '').replace(/[^A-Za-z0-9_-]/g, '');
+  return value.replace(/[^A-Za-z0-9_-]/g, '') || 'FARA_VALOARE';
+}
+
+function cleanTaxIdPart(value: string): string {
+  return cleanFilePart(value.replace(/^RO/i, ''));
+}
+
+export function sagaInvoiceFileName(
+  invoice: SagaInvoiceRecord,
+  tenantCui?: string | null,
+  fallbackDate = new Date().toISOString().slice(0, 10),
+): string {
+  const issuerTaxId = cleanTaxIdPart(
+    invoice.data.vendorEin || tenantCui || 'FARA_CUI',
+  );
+  const invoiceNumber = cleanFilePart(
+    invoice.data.documentNumber || String(invoice.id),
+  );
+  const invoiceDate = invoice.data.documentDate || fallbackDate;
+  return `F_${issuerTaxId}_${invoiceNumber}_${invoiceDate}.xml`;
 }
 
 function buildCompatibilityCsv(invoices: SagaInvoiceRecord[]): string {

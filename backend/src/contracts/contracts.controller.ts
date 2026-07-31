@@ -34,7 +34,7 @@ export class ContractsController {
   }
 
   @Post('generate')
-  @Roles('OWNER', 'MANAGER', 'SALES')
+  @Roles('ACCOUNTANT', 'SALES')
   generate(@CurrentUser() user: AuthUser, @Body() dto: GenerateContractDto) {
     return this.contracts.generate(user.tenantId, user.userId, dto);
   }

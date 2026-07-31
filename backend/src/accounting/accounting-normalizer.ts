@@ -33,12 +33,27 @@ export interface CanonicalAccountingDocument {
   vendorCountry: string;
   vendorKind: 'INDIVIDUAL' | 'COMPANY';
   vendorIdentifierType: PartyIdentifierTypeValue;
+  vendorRegistration?: string;
+  vendorAddress?: string;
+  vendorCity?: string;
+  vendorCounty?: string;
+  vendorPhone?: string;
+  vendorEmail?: string;
+  vendorBankName?: string;
   vendorIban?: string;
   buyer: string;
   buyerEin: string;
   buyerCountry: string;
   buyerKind: 'INDIVIDUAL' | 'COMPANY';
   buyerIdentifierType: PartyIdentifierTypeValue;
+  buyerRegistration?: string;
+  buyerAddress?: string;
+  buyerCity?: string;
+  buyerCounty?: string;
+  buyerPhone?: string;
+  buyerEmail?: string;
+  buyerBankName?: string;
+  buyerIban?: string;
   documentNumber: string;
   documentDate?: string;
   dueDate?: string;
@@ -48,6 +63,7 @@ export interface CanonicalAccountingDocument {
   currency: string;
   exchangeRate?: number;
   reverseCharge: boolean;
+  vatOnCollection: boolean;
   isAdvance: boolean;
   aviz: boolean;
   receiptType?: 'payment_receipt' | 'independent_receipt';
@@ -232,6 +248,7 @@ export function normalizeAccountingDocument(
   const paymentMethod = normalizePaymentMethod(raw.payment_method ?? raw.payment_info);
   const lineItems = lines.map((line, index) => normalizeLineItem(line, index));
   enforceVehicleArticleIdentity(normalizedType, direction, raw, lineItems);
+  removeVehicleCostArticleIdentity(normalizedType, raw, lineItems);
 
   return {
     documentType: normalizedType,
@@ -252,6 +269,30 @@ export function normalizeAccountingDocument(
       vendorKind,
       vendorCountry,
     ),
+    vendorRegistration: optionalString(
+      raw.vendor_registration ??
+        raw.vendor_reg_com ??
+        raw.supplier_registration ??
+        contractVendor?.registration,
+    ),
+    vendorAddress: optionalString(
+      raw.vendor_address ?? raw.supplier_address ?? contractVendor?.address,
+    ),
+    vendorCity: optionalString(
+      raw.vendor_city ?? raw.supplier_city ?? contractVendor?.city,
+    ),
+    vendorCounty: optionalString(
+      raw.vendor_county ?? raw.supplier_county ?? contractVendor?.county,
+    ),
+    vendorPhone: optionalString(
+      raw.vendor_phone ?? raw.supplier_phone ?? contractVendor?.phone,
+    ),
+    vendorEmail: optionalString(
+      raw.vendor_email ?? raw.supplier_email ?? contractVendor?.email,
+    ),
+    vendorBankName: optionalString(
+      raw.vendor_bank ?? raw.supplier_bank ?? contractVendor?.bank_name,
+    ),
     vendorIban: optionalString(raw.vendor_iban ?? raw.supplier_iban),
     buyer: stringValue(raw.buyer ?? raw.customer_name ?? contractBuyer?.name),
     buyerEin,
@@ -263,6 +304,33 @@ export function normalizeAccountingDocument(
         contractBuyer?.identifier_type,
       buyerKind,
       buyerCountry,
+    ),
+    buyerRegistration: optionalString(
+      raw.buyer_registration ??
+        raw.buyer_reg_com ??
+        raw.customer_registration ??
+        contractBuyer?.registration,
+    ),
+    buyerAddress: optionalString(
+      raw.buyer_address ?? raw.customer_address ?? contractBuyer?.address,
+    ),
+    buyerCity: optionalString(
+      raw.buyer_city ?? raw.customer_city ?? contractBuyer?.city,
+    ),
+    buyerCounty: optionalString(
+      raw.buyer_county ?? raw.customer_county ?? contractBuyer?.county,
+    ),
+    buyerPhone: optionalString(
+      raw.buyer_phone ?? raw.customer_phone ?? contractBuyer?.phone,
+    ),
+    buyerEmail: optionalString(
+      raw.buyer_email ?? raw.customer_email ?? contractBuyer?.email,
+    ),
+    buyerBankName: optionalString(
+      raw.buyer_bank ?? raw.customer_bank ?? contractBuyer?.bank_name,
+    ),
+    buyerIban: optionalString(
+      raw.buyer_iban ?? raw.customer_iban ?? contractBuyer?.iban,
     ),
     documentNumber: stringValue(
       raw.document_number ??
@@ -282,12 +350,17 @@ export function normalizeAccountingDocument(
     vatAmount,
     netAmount,
     currency: normalizeCurrency(raw.currency),
-    exchangeRate: optionalPositiveNumber(
+    exchangeRate: optionalExchangeRate(
       raw.exchangeRate ?? raw.exchange_rate ?? raw.curs_valutar ?? raw.curs,
     ),
     reverseCharge:
       raw.reverse_charge === true ||
       String(raw.reverse_charge ?? '').toLowerCase() === 'true',
+    vatOnCollection: booleanValue(
+      raw.vat_on_collection ??
+        raw.tva_la_incasare ??
+        raw.cash_accounting,
+    ),
     isAdvance:
       raw.is_advance === true ||
       raw.advance === true ||
@@ -476,6 +549,24 @@ function enforceVehicleArticleIdentity(
   }
 }
 
+function removeVehicleCostArticleIdentity(
+  documentType: string,
+  raw: Record<string, any>,
+  lines: CanonicalLineItem[],
+): void {
+  if (
+    documentType !== 'Invoice' ||
+    stringValue(raw.vehicle_transaction).toLowerCase() !== 'cost'
+  ) {
+    return;
+  }
+  for (const line of lines) {
+    line.articleCode = '';
+    line.articleType = 'Nedefinit';
+    line.management = undefined;
+  }
+}
+
 function isVehicleStockArticleLine(line: CanonicalLineItem): boolean {
   return (
     /^371/.test(line.accountCode) ||
@@ -548,6 +639,14 @@ function optionalPositiveNumber(value: unknown): number | undefined {
   return numeric > 0 ? numeric : undefined;
 }
 
+function optionalExchangeRate(value: unknown): number | undefined {
+  if (typeof value === 'string') {
+    value = value.replace(/\s/g, '').replace(',', '.').replace(/[^\d.-]/g, '');
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+}
+
 function stringValue(value: unknown): string {
   return value == null ? '' : String(value).trim();
 }
@@ -555,6 +654,11 @@ function stringValue(value: unknown): string {
 function optionalString(value: unknown): string | undefined {
   const text = stringValue(value);
   return text || undefined;
+}
+
+function booleanValue(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  return ['true', 'da', 'yes', '1'].includes(stringValue(value).toLowerCase());
 }
 
 function uniqueStrings(values: unknown[]): string[] {

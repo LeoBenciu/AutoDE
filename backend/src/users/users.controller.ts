@@ -4,7 +4,7 @@ import { CurrentUser, JwtAuthGuard, Roles, RolesGuard } from '../auth/guards';
 import { AuthUser } from '../auth/jwt.strategy';
 import { UsersService } from './users.service';
 
-const ROLES = ['OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT', 'VIEWER'] as const;
+const ROLES = ['ACCOUNTANT', 'SALES', 'VIEWER'] as const;
 
 class CreateUserDto {
   @IsString()
@@ -47,19 +47,19 @@ export class UsersController {
   constructor(private readonly users: UsersService) {}
 
   @Get()
-  @Roles('OWNER', 'MANAGER')
+  @Roles('ACCOUNTANT')
   list(@CurrentUser() user: AuthUser) {
     return this.users.list(user.tenantId);
   }
 
   @Post()
-  @Roles('OWNER')
+  @Roles('ACCOUNTANT')
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateUserDto) {
     return this.users.create(user.tenantId, user.userId, dto);
   }
 
   @Patch(':id')
-  @Roles('OWNER')
+  @Roles('ACCOUNTANT')
   update(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
     return this.users.update(user.tenantId, user.userId, id, dto);
   }

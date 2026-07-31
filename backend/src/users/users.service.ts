@@ -61,10 +61,19 @@ export class UsersService {
     if (id === actorId && (dto.role !== undefined || dto.active === false)) {
       throw new BadRequestException('Nu îți poți schimba propriul rol și nu te poți dezactiva singur');
     }
-    // Never leave the tenant without an active OWNER.
-    if (user.role === 'OWNER' && (dto.active === false || (dto.role && dto.role !== 'OWNER'))) {
-      const owners = await this.prisma.user.count({ where: { tenantId, role: 'OWNER', active: true } });
-      if (owners <= 1) throw new BadRequestException('Firma trebuie să aibă cel puțin un OWNER activ');
+    // Never leave the tenant without an active administrator.
+    if (
+      user.role === 'ACCOUNTANT' &&
+      (dto.active === false || (dto.role && dto.role !== 'ACCOUNTANT'))
+    ) {
+      const accountants = await this.prisma.user.count({
+        where: { tenantId, role: 'ACCOUNTANT', active: true },
+      });
+      if (accountants <= 1) {
+        throw new BadRequestException(
+          'Firma trebuie să aibă cel puțin un contabil activ',
+        );
+      }
     }
 
     const updated = await this.prisma.user.update({

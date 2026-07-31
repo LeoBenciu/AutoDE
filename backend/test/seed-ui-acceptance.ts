@@ -52,7 +52,7 @@ async function main() {
         name: 'Ana Acceptance',
         email: UI_ACCEPTANCE_EMAIL,
         passwordHash: await bcrypt.hash(UI_ACCEPTANCE_PASSWORD, 4),
-        role: 'OWNER',
+        role: 'ACCOUNTANT',
       },
     });
     const party = await prisma.party.create({
