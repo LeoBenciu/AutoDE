@@ -10,8 +10,9 @@ import {
 } from '../store/api';
 import { StatusChip } from '../components/StatusChip';
 import { VehicleBrandLogo } from '../components/VehicleBrandLogo';
+import { VehicleStatusSelector } from '../components/VehicleStatusSelector';
+import type { VehicleStatus } from '../data/vehicleStatuses';
 
-const STATUSES = ['SOURCED', 'PURCHASED', 'IN_TRANSIT', 'CUSTOMS', 'IN_STOCK', 'RESERVED', 'SOLD', 'DELIVERED'];
 const COST_CATEGORIES = ['TRANSPORT', 'CUSTOMS', 'VAT', 'ITP', 'REGISTRATION', 'REFURB', 'OTHER'];
 
 export default function VehicleDetail() {
@@ -54,15 +55,15 @@ export default function VehicleDetail() {
             <p className="font-mono text-xs text-muted">{v.vin}</p>
           </div>
         </div>
-        <select
-          value={v.status}
-          onChange={(e) => updateVehicle({ id: vehicleId, body: { status: e.target.value } })}
-          className="rounded-control border border-line-strong px-3 py-2 text-sm text-ink-soft focus:border-brand focus:outline-none"
-        >
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
+        <VehicleStatusSelector
+          status={v.status}
+          onChange={async (status: VehicleStatus) => {
+            await updateVehicle({
+              id: vehicleId,
+              body: { status },
+            }).unwrap();
+          }}
+        />
       </div>
 
       {/* Dosarul mașinii — progress toward a complete file */}

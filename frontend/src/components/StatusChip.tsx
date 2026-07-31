@@ -1,3 +1,5 @@
+import { VEHICLE_STATUS_LABELS } from '../data/vehicleStatuses';
+
 // Redesign chip palette — soft tinted background + saturated foreground, all
 // on the cool-neutral OKLCH scale from the AutoImport Redesign spec.
 type Palette = { bg: string; fg: string };
@@ -40,14 +42,7 @@ const PALETTES: Record<string, Palette> = {
 };
 
 const LABELS: Record<string, string> = {
-  SOURCED: 'Identificat',
-  PURCHASED: 'Cumpărat',
-  IN_TRANSIT: 'În tranzit',
-  CUSTOMS: 'În vamă',
-  IN_STOCK: 'În stoc',
-  RESERVED: 'Rezervat',
-  SOLD: 'Vândut',
-  DELIVERED: 'Livrat',
+  ...VEHICLE_STATUS_LABELS,
   DRAFT: 'Ciornă',
   APPROVED: 'Aprobat',
   SUBMITTED: 'Trimis',
