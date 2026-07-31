@@ -20,19 +20,19 @@ export class VehiclesController {
   }
 
   @Post()
-  @Roles('OWNER', 'MANAGER', 'SALES')
+  @Roles('ACCOUNTANT', 'SALES')
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateVehicleDto) {
     return this.vehicles.create(user.tenantId, dto);
   }
 
   @Patch(':id')
-  @Roles('OWNER', 'MANAGER', 'SALES')
+  @Roles('ACCOUNTANT', 'SALES')
   update(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateVehicleDto) {
     return this.vehicles.update(user.tenantId, id, dto);
   }
 
   @Post(':id/costs')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   addCost(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: AddCostDto) {
     return this.vehicles.addCost(user.tenantId, id, dto);
   }

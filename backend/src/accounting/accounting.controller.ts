@@ -38,7 +38,7 @@ export class AccountingController {
   }
 
   @Patch('company')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   updateCompany(
     @CurrentUser() user: AuthUser,
     @Body() body: Record<string, unknown>,
@@ -47,7 +47,7 @@ export class AccountingController {
   }
 
   @Get('ledger')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   ledger(
     @CurrentUser() user: AuthUser,
     @Query('from') from?: string,
@@ -80,7 +80,7 @@ export class AccountingController {
   }
 
   @Post('articles/import')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   @UseInterceptors(FileInterceptor('file', CSV_UPLOAD))
   importArticles(
     @CurrentUser() user: AuthUser,
@@ -90,7 +90,7 @@ export class AccountingController {
   }
 
   @Post('articles')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   createArticle(
     @CurrentUser() user: AuthUser,
     @Body() body: Record<string, unknown>,
@@ -99,7 +99,7 @@ export class AccountingController {
   }
 
   @Patch('articles/:id')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   updateArticle(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseIntPipe) id: number,
@@ -114,7 +114,7 @@ export class AccountingController {
   }
 
   @Post('managements/import')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   @UseInterceptors(FileInterceptor('file', CSV_UPLOAD))
   importManagements(
     @CurrentUser() user: AuthUser,
@@ -124,7 +124,7 @@ export class AccountingController {
   }
 
   @Post('managements')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   createManagement(
     @CurrentUser() user: AuthUser,
     @Body() body: Record<string, unknown>,
@@ -133,7 +133,7 @@ export class AccountingController {
   }
 
   @Patch('managements/:id')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   updateManagement(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseIntPipe) id: number,

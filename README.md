@@ -106,7 +106,7 @@ npm install
 npm run dev                      # http://localhost:5173
 ```
 
-Register a company from the login screen (first user becomes OWNER).
+Register a company from the login screen (the first user becomes ACCOUNTANT).
 
 An older local database created with `prisma db push` must be baselined once;
 follow [backend/prisma/BASELINING.md](backend/prisma/BASELINING.md) instead of

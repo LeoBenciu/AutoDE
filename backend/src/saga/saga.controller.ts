@@ -19,7 +19,7 @@ export class SagaController {
   constructor(private readonly saga: SagaService) {}
 
   @Post('preview')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   preview(
     @CurrentUser() user: AuthUser,
     @Body() request: SagaExportRequest,
@@ -28,13 +28,13 @@ export class SagaController {
   }
 
   @Get('preferences')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   preferences(@CurrentUser() user: AuthUser) {
     return this.saga.getPreferences(user.tenantId);
   }
 
   @Post('preferences')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   savePreferences(
     @CurrentUser() user: AuthUser,
     @Body() request: SagaExportRequest,
@@ -43,7 +43,7 @@ export class SagaController {
   }
 
   @Post('export')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   async exportZip(
     @CurrentUser() user: AuthUser,
     @Body() request: SagaExportRequest,
@@ -64,7 +64,7 @@ export class SagaController {
   }
 
   @Get('export.:format')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   async export(
     @CurrentUser() user: AuthUser,
     @Param('format') format: string,
@@ -81,7 +81,7 @@ export class SagaController {
   }
 
   @Get('parteneri.xml')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   async exportPartners(
     @CurrentUser() user: AuthUser,
     @Res() res: Response,

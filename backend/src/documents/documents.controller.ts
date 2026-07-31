@@ -25,7 +25,7 @@ export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
   @Post('upload')
-  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT', 'SALES')
   @UseInterceptors(FilesInterceptor('files', 20, { limits: { fileSize: 50 * 1024 * 1024 } }))
   async upload(
     @CurrentUser() user: AuthUser,
@@ -76,13 +76,13 @@ export class DocumentsController {
   }
 
   @Post('pending/:id/retry')
-  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT', 'SALES')
   retryPending(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.retryPendingUpload(user.tenantId, id);
   }
 
   @Post('pending/:id/cancel')
-  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT', 'SALES')
   cancelPending(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.cancelPendingUpload(user.tenantId, id);
   }
@@ -98,7 +98,7 @@ export class DocumentsController {
   }
 
   @Post(':id/corrections')
-  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT', 'SALES')
   correct(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseIntPipe) id: number,
@@ -108,31 +108,31 @@ export class DocumentsController {
   }
 
   @Post(':id/reviewed')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   markReviewed(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.markReviewed(user.tenantId, user.userId, id);
   }
 
   @Get(':id/posting-preview')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   postingPreview(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.previewPosting(user.tenantId, id);
   }
 
   @Post(':id/approve')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   approve(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.approve(user.tenantId, user.userId, id);
   }
 
   @Post(':id/reopen')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   reopen(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.reopen(user.tenantId, user.userId, id);
   }
 
   @Post(':id/assign')
-  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT', 'SALES')
   assign(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseIntPipe) id: number,
@@ -142,19 +142,19 @@ export class DocumentsController {
   }
 
   @Post(':id/archive')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   archive(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.setArchived(user.tenantId, id, user.userId, true);
   }
 
   @Post(':id/unarchive')
-  @Roles('OWNER', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT')
   unarchive(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.setArchived(user.tenantId, id, user.userId, false);
   }
 
   @Delete(':id')
-  @Roles('OWNER', 'MANAGER')
+  @Roles('ACCOUNTANT')
   remove(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.documents.softDelete(user.tenantId, id, user.userId);
   }

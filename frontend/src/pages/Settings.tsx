@@ -22,12 +22,10 @@ import type { ImportResult } from '../store/api';
 import { apiUrl } from '../store/apiBase';
 import type { RootState } from '../store/store';
 
-const ROLES = ['OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT', 'VIEWER'];
+const ROLES = ['ACCOUNTANT', 'SALES', 'VIEWER'];
 const ROLE_LABELS: Record<string, string> = {
-  OWNER: 'Proprietar',
-  MANAGER: 'Manager',
-  SALES: 'Vânzări',
   ACCOUNTANT: 'Contabil',
+  SALES: 'Vânzări',
   VIEWER: 'Doar citire',
 };
 const VAT_RATE_LABELS: Record<string, string> = {
@@ -41,12 +39,11 @@ const VAT_RATE_LABELS: Record<string, string> = {
 
 export default function Settings() {
   const me = useSelector((state: RootState) => state.auth.user);
-  const canManageUsers = ['OWNER', 'MANAGER'].includes(me?.role ?? '');
+  const canManageUsers = me?.role === 'ACCOUNTANT';
   const { data: users = [], isLoading: loadingUsers, error: usersError } =
     useUsersQuery(undefined, { skip: !canManageUsers });
   const [updateUser] = useUpdateUserMutation();
   const [message, setMessage] = useState('');
-  const isOwner = me?.role === 'OWNER';
 
   const act = async (fn: () => Promise<any>) => {
     setMessage('');
@@ -100,7 +97,7 @@ export default function Settings() {
                   <p className="truncate text-xs text-muted">{user.email}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {isOwner && user.id !== me?.id ? (
+                  {canManageUsers && user.id !== me?.id ? (
                     <>
                       <select
                         value={user.role}
@@ -153,7 +150,7 @@ export default function Settings() {
             ))}
             {loadingUsers && <p className="text-sm text-muted">Se încarcă…</p>}
           </div>
-          {isOwner && <NewUserForm onError={setMessage} />}
+          {canManageUsers && <NewUserForm onError={setMessage} />}
         </section>
       )}
     </div>

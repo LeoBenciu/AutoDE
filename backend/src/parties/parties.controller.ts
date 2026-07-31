@@ -34,13 +34,13 @@ export class PartiesController {
   }
 
   @Post()
-  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT', 'SALES')
   create(@CurrentUser() user: AuthUser, @Body() dto: CreatePartyDto) {
     return this.parties.create(user.tenantId, dto);
   }
 
   @Post('import')
-  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT', 'SALES')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   import(
     @CurrentUser() user: AuthUser,
@@ -54,7 +54,7 @@ export class PartiesController {
   }
 
   @Patch(':id')
-  @Roles('OWNER', 'MANAGER', 'SALES', 'ACCOUNTANT')
+  @Roles('ACCOUNTANT', 'SALES')
   update(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePartyDto) {
     return this.parties.update(user.tenantId, id, dto);
   }

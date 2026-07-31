@@ -47,10 +47,8 @@ model Tenant {
 }
 
 enum Role {
-  OWNER
-  MANAGER
-  SALES
   ACCOUNTANT
+  SALES
   VIEWER
 }
 
@@ -101,14 +99,14 @@ model Party {
   identifierType   PartyIdentifierType?
   name             String
   taxId            String? // CUI/CIF (company), CNP or foreign personal identifier
-  isSupplier       Boolean   @default(false)
-  isClient         Boolean   @default(false)
+  isSupplier       Boolean              @default(false)
+  isClient         Boolean              @default(false)
   supplierCode     String?
   clientCode       String?
   supplierAnalytic String?
   clientAnalytic   String?
   registration     String?
-  country          String    @default("RO")
+  country          String               @default("RO")
   county           String?
   city             String?
   address          String?
@@ -118,9 +116,9 @@ model Party {
   phone            String?
   discount         String?
   tenantId         Int
-  tenant           Tenant    @relation(fields: [tenantId], references: [id])
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  tenant           Tenant               @relation(fields: [tenantId], references: [id])
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   documents      Document[]
   contracts      Contract[]

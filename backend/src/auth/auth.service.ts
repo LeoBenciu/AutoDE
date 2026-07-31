@@ -35,7 +35,7 @@ export class AuthService {
         email: dto.email,
         name: dto.name,
         passwordHash: await bcrypt.hash(dto.password, 10),
-        role: 'OWNER',
+        role: 'ACCOUNTANT',
         tenantId: tenant.id,
       },
     });

@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import {
   useAddCostMutation,
   useGenerateContractMutation,
+  useLazyDownloadUrlQuery,
   usePartiesQuery,
   useUpdateVehicleMutation,
   useUploadDocumentsMutation,
@@ -21,18 +22,51 @@ export default function VehicleDetail() {
   const { data: v, isLoading } = useVehicleQuery(vehicleId);
   const [updateVehicle] = useUpdateVehicleMutation();
   const [upload, { isLoading: uploading }] = useUploadDocumentsMutation();
+  const [getDownloadUrl] = useLazyDownloadUrlQuery();
+  const [openingDocumentId, setOpeningDocumentId] = useState<number>();
+  const [documentOpenError, setDocumentOpenError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const openDocument = async (documentId: number) => {
+    setDocumentOpenError('');
+
+    // Open the tab during the click event. Waiting for the signed URL first
+    // makes browsers treat window.open as an unsolicited popup and block it.
+    const documentTab = window.open('about:blank', '_blank');
+    if (!documentTab) {
+      setDocumentOpenError('Browserul a blocat fila nouă. Permite ferestrele pop-up pentru această aplicație și încearcă din nou.');
+      return;
+    }
+    documentTab.opener = null;
+
+    setOpeningDocumentId(documentId);
+    try {
+      const { url } = await getDownloadUrl(documentId).unwrap();
+      documentTab.location.replace(url);
+    } catch (error: any) {
+      documentTab.close();
+      setDocumentOpenError(
+        error?.data?.message ?? error?.message ?? 'PDF-ul nu a putut fi deschis.',
+      );
+    } finally {
+      setOpeningDocumentId(undefined);
+    }
+  };
 
   if (isLoading || !v) return <p className="text-sm text-muted">Se încarcă…</p>;
 
   const fmt = (n: any, cur?: string) => (n != null ? `${Number(n).toLocaleString('ro-RO')} ${cur ?? ''}` : '—');
 
   // Dosarul mașinii — never starts at 0: the vehicle data itself is step 1.
-  const docTypes = new Set((v.documents ?? []).map((d: any) => d.type));
+  const documents = v.documents ?? [];
+  const docTypes = new Set(documents.map((d: any) => d.type));
+  const hasAcquisitionDocument = documents.some((document: any) =>
+    document.type === 'Invoice' || isVehiclePurchaseContract(document),
+  );
   const hasUit = (v.transports ?? []).some((t: any) => t.status === 'CONFIRMED') || docTypes.has('UIT');
   const dosar = [
     { label: 'Date vehicul', done: true },
-    { label: 'Factură achiziție', done: docTypes.has('Invoice') },
+    { label: 'Factură achiziție', done: hasAcquisitionDocument },
     { label: 'CMR', done: docTypes.has('CMR') },
     { label: 'Talon / certificat', done: docTypes.has('Vehicle Registration Certificate') },
     { label: 'Cod UIT', done: hasUit },
@@ -132,7 +166,15 @@ export default function VehicleDetail() {
           {(v.documents ?? []).map((d: any) => (
             <div key={d.id} className="flex items-center justify-between rounded-xl border border-line p-3">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-ink">{d.name}</p>
+                <button
+                  type="button"
+                  onClick={() => openDocument(d.id)}
+                  disabled={openingDocumentId === d.id}
+                  className="block max-w-full truncate text-left text-sm font-medium text-brand hover:underline disabled:cursor-wait disabled:opacity-60"
+                  aria-label={`Deschide ${d.name} într-o filă nouă`}
+                >
+                  {openingDocumentId === d.id ? 'Se deschide…' : d.name}
+                </button>
                 <p className="text-xs text-muted">{d.type ?? 'Necategorisit'}</p>
               </div>
               <div className="flex items-center gap-2">
@@ -142,6 +184,7 @@ export default function VehicleDetail() {
             </div>
           ))}
           {(v.documents ?? []).length === 0 && <p className="text-sm text-muted">Niciun document — fotografiază factura, CMR-ul sau talonul.</p>}
+          {documentOpenError && <p className="text-sm text-red-600">{documentOpenError}</p>}
         </div>
       </section>
 
@@ -153,6 +196,8 @@ export default function VehicleDetail() {
         vehicleId={vehicleId}
         contracts={v.contracts ?? []}
         defaultPrice={v.soldPrice ?? v.listPrice ?? undefined}
+        onOpenDocument={openDocument}
+        openingDocumentId={openingDocumentId}
       />
 
       {/* e-Transport */}
@@ -175,6 +220,26 @@ export default function VehicleDetail() {
         </div>
       </section>
     </div>
+  );
+}
+
+function isVehiclePurchaseContract(document: any): boolean {
+  if (document.type !== 'Contract') return false;
+
+  const storedFields = document.processedData?.extractedFields;
+  const fields =
+    storedFields?.result && typeof storedFields.result === 'object'
+      ? storedFields.result
+      : storedFields ?? {};
+  const direction = String(fields.direction ?? '').toLowerCase();
+  if (direction === 'outgoing') return false;
+  if (String(fields.vehicle_transaction ?? '').toLowerCase() === 'purchase') {
+    return true;
+  }
+
+  return (
+    Boolean(fields.vin) &&
+    /(vanzare|vânzare|sale|achiz)/i.test(String(fields.contract_type ?? ''))
   );
 }
 
@@ -412,10 +477,14 @@ function ContractSection({
   vehicleId,
   contracts,
   defaultPrice,
+  onOpenDocument,
+  openingDocumentId,
 }: {
   vehicleId: number;
   contracts: any[];
   defaultPrice?: number;
+  onOpenDocument: (documentId: number) => void;
+  openingDocumentId?: number;
 }) {
   const { data: parties = [] } = usePartiesQuery();
   const [generate, { isLoading }] = useGenerateContractMutation();
@@ -448,9 +517,16 @@ function ContractSection({
       <h2 className="font-semibold text-ink">Contracte</h2>
       <div className="mt-2 space-y-1">
         {contracts.map((c: any) => (
-          <p key={c.id} className="text-sm text-muted">
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onOpenDocument(c.documentId)}
+            disabled={!c.documentId || openingDocumentId === c.documentId}
+            className="block text-left text-sm text-brand hover:underline disabled:cursor-wait disabled:text-muted disabled:no-underline"
+            aria-label={`Deschide ${c.contractType === 'proces-verbal' ? 'procesul-verbal' : 'contractul'} ${c.contractNumber} într-o filă nouă`}
+          >
             {c.contractNumber} · {c.contractType} · {c.totalValue ? `${Number(c.totalValue).toLocaleString('ro-RO')} ${c.currency}` : ''}
-          </p>
+          </button>
         ))}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">

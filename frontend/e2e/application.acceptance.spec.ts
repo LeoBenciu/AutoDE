@@ -21,6 +21,15 @@ test('@desktop core flows and side-by-side extraction review', async ({
     page.getByRole('heading', { name: 'Volkswagen Golf Acceptance' }),
   ).toBeVisible();
   await expect(page.getByText(/CV-UI-00001 · vanzare-cumparare/)).toBeVisible();
+  const contractPopupPromise = page.waitForEvent('popup');
+  await page
+    .getByRole('button', {
+      name: /Deschide contractul CV-UI-00001 într-o filă nouă/,
+    })
+    .click();
+  const contractPopup = await contractPopupPromise;
+  await expect.poll(() => contractPopup.url()).not.toBe('about:blank');
+  await contractPopup.close();
 
   await page.goto('/documente');
   await expect(page.locator('select option[value="Contract"]')).toHaveCount(1);

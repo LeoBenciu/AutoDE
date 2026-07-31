@@ -15,6 +15,13 @@ async function main() {
     data: {
       name: marker,
       cui: '50675950',
+      registrationNumber: 'J40/123/2024',
+      address: 'Str. Integrării 1',
+      country: 'RO',
+      county: 'B',
+      city: 'București',
+      phone: '+40 700 000 000',
+      email: `${marker}@company.test`,
       accountingCutoverAt: new Date('2025-01-01T00:00:00.000Z'),
       isVatPayer: true,
     },
@@ -28,7 +35,7 @@ async function main() {
       name: 'Integration Owner',
       email: `${marker}@example.test`,
       passwordHash: 'not-used-by-integration-test',
-      role: 'OWNER',
+      role: 'ACCOUNTANT',
     },
   });
   const posting = new PostingService(prisma);
@@ -89,6 +96,12 @@ async function main() {
     const incoming = await createDocument('Invoice', 'IN-1', {
       vendor: 'Furnizor Test SRL',
       vendor_ein: 'RO999001',
+      vendor_registration: 'J40/999/2020',
+      vendor_address: 'Str. Furnizorului 9',
+      vendor_city: 'București',
+      vendor_county: 'B',
+      vendor_phone: '+40 700 999 001',
+      vendor_email: 'contact@furnizor.test',
       buyer: marker,
       buyer_ein: 'RO50675950',
       total_amount: 119,
@@ -118,6 +131,13 @@ async function main() {
 
     await posting.approve(tenant.id, user.id, incoming.id);
     await posting.approve(tenant.id, user.id, incoming.id);
+    const storedSupplier = await prisma.party.findFirst({
+      where: { tenantId: tenant.id, taxId: '999001' },
+    });
+    assert.equal(storedSupplier?.address, 'Str. Furnizorului 9');
+    assert.equal(storedSupplier?.city, 'București');
+    assert.equal(storedSupplier?.phone, '+40 700 999 001');
+    assert.equal(storedSupplier?.email, 'contact@furnizor.test');
     assert.equal(
       await prisma.generalLedgerEntry.count({ where: { documentId: incoming.id } }),
       incomingPreview.entries.length,
@@ -423,6 +443,76 @@ async function main() {
         (entry) => entry.accountCode === '4427' && entry.credit === 21,
       ),
     );
+    await posting.approve(tenant.id, user.id, reverseCharge.id);
+
+    const reverseChargeRoundingCases = [
+      {
+        number: 'REV-EUR-1023',
+        total: 1023,
+        amounts: [539, 279, 205],
+        expectedPayable: 5355.41,
+        expectedVat: 1124.64,
+      },
+      {
+        number: 'REV-EUR-835',
+        total: 835,
+        amounts: [377, 299, 159],
+        expectedPayable: 4371.23,
+        expectedVat: 917.96,
+      },
+    ];
+    for (const testCase of reverseChargeRoundingCases) {
+      const document = await createDocument('Invoice', testCase.number, {
+        vendor: `EU Supplier ${testCase.number}`,
+        vendor_ein: `DE${testCase.total}`,
+        vendor_country: 'DE',
+        buyer: marker,
+        buyer_ein: '50675950',
+        reverse_charge: true,
+        currency: 'EUR',
+        exchange_rate: 5.235,
+        total_amount: testCase.total,
+        net_amount: testCase.total,
+        vat_amount: 0,
+        line_items: testCase.amounts.map((amount, index) => ({
+          name: `Serviciu UE ${index + 1}`,
+          quantity: 1,
+          unit_price: amount,
+          total: amount,
+          vat_amount: 0,
+          vat: 'TWENTYONE',
+          account_code: '371',
+          articleCode: `${testCase.number}-${index + 1}`,
+        })),
+      });
+      const preview = await posting.preview(tenant.id, document.id);
+      const deductibleReverseVat = preview.entries.find(
+        (entry) =>
+          entry.accountCode === '4426' &&
+          entry.description === 'Taxare inversă – TVA deductibilă',
+      );
+      const collectedReverseVat = preview.entries.find(
+        (entry) =>
+          entry.accountCode === '4427' &&
+          entry.description === 'Taxare inversă – TVA colectată',
+      );
+      const inventoryTotal = roundLedgerEntries(
+        preview.entries
+          .filter((entry) => entry.accountCode === '371')
+          .reduce((sum, entry) => sum + entry.debit, 0),
+      );
+      const payable = preview.entries.find((entry) =>
+        entry.accountCode.startsWith('401'),
+      );
+
+      assert.deepEqual(preview.errors, []);
+      assert.equal(preview.exchangeRate, 5.235);
+      assert.equal(preview.totalDebit, preview.totalCredit);
+      assert.equal(inventoryTotal, testCase.expectedPayable);
+      assert.equal(payable?.credit, testCase.expectedPayable);
+      assert.equal(deductibleReverseVat?.debit, testCase.expectedVat);
+      assert.equal(collectedReverseVat?.credit, testCase.expectedVat);
+    }
 
     const foreign = await createDocument('Invoice', 'EUR-1', {
       vendor: 'EU Supplier 2',
@@ -961,18 +1051,35 @@ async function main() {
       from: today,
       to: today,
     });
-    assert.equal(archive.fileCount, 6);
+    assert.equal(archive.fileCount, sagaPreview.counts.facturi + 5);
     const zip = await JSZip.loadAsync(archive.content);
     const fileNames = Object.keys(zip.files);
-    assert.equal(fileNames.length, 6);
-    const facturiName = fileNames.find((name) => name.startsWith('F_'))!;
-    const facturiXml = await zip.file(facturiName)!.async('string');
+    assert.equal(fileNames.length, sagaPreview.counts.facturi + 5);
+    const facturiNames = fileNames.filter((name) => name.startsWith('F_'));
+    assert.equal(facturiNames.length, sagaPreview.counts.facturi);
+    assert.ok(
+      facturiNames.every((name) =>
+        /^F_[A-Za-z0-9_-]+_[A-Za-z0-9_-]+_\d{4}-\d{2}-\d{2}\.xml$/.test(
+          name,
+        ),
+      ),
+    );
+    const facturiXml = (
+      await Promise.all(
+        facturiNames.map((name) => zip.file(name)!.async('string')),
+      )
+    ).join('\n');
     const incasariXml = await zip.file(fileNames.find((name) => name.startsWith('I_'))!)!.async('string');
     const platiXml = await zip.file(fileNames.find((name) => name.startsWith('P_'))!)!.async('string');
     const suppliersXml = await zip.file(fileNames.find((name) => name.startsWith('FUR_'))!)!.async('string');
     const clientsXml = await zip.file(fileNames.find((name) => name.startsWith('CLI_'))!)!.async('string');
     const articlesXml = await zip.file(fileNames.find((name) => name.startsWith('ART_'))!)!.async('string');
     assert.match(facturiXml, /<Facturi>[\s\S]*<FacturaTip>C<\/FacturaTip>/);
+    assert.match(
+      facturiXml,
+      /<FacturaNumar>REV-1<\/FacturaNumar>[\s\S]*?<FacturaTaxareInversa>Da<\/FacturaTaxareInversa>[\s\S]*?<FacturaTVAIncasare>Nu<\/FacturaTVAIncasare>[\s\S]*?<FacturaTip>T<\/FacturaTip>/,
+    );
+    assert.match(facturiXml, /<FacturaTip>T<\/FacturaTip>[\s\S]*?<ProcTVA>21<\/ProcTVA>/);
     assert.match(facturiXml, /<FacturaNumar>CA-1<\/FacturaNumar>/);
     assert.match(facturiXml, /<Descriere>Autoturism Volkswagen Golf VIN WVWZZZ1JZXW000001<\/Descriere>/);
     assert.match(facturiXml, /<TipDeducere><\/TipDeducere>/);
@@ -981,7 +1088,12 @@ async function main() {
     assert.match(platiXml, /<Suma>30<\/Suma>/);
     assert.match(platiXml, /<Suma>20<\/Suma>/);
     assert.match(suppliersXml, /<Furnizori>[\s\S]*<Cod_fiscal>/);
+    assert.match(suppliersXml, /<Adresa>Str\. Furnizorului 9<\/Adresa>/);
+    assert.match(suppliersXml, /<Localitate>București<\/Localitate>/);
+    assert.match(suppliersXml, /<Tel>\+40 700 999 001<\/Tel>/);
+    assert.match(suppliersXml, /<Email>contact@furnizor\.test<\/Email>/);
     assert.match(clientsXml, /<Clienti>[\s\S]*<Reg_com>/);
+    assert.match(clientsXml, /<Adresa>Str\. Integrării 1<\/Adresa>/);
     assert.match(articlesXml, /<Articole>[\s\S]*<UM>/);
 
     await posting.reopen(tenant.id, user.id, incoming.id);
@@ -1004,7 +1116,7 @@ async function main() {
     });
     assert.equal(Number(vehicleAfterCostReopen?.landedCost), 50_000);
 
-    console.log('Accounting posting and all six SAGA exports passed.');
+    console.log('Accounting posting and all SAGA export categories passed.');
   } finally {
     await cleanupTenant(tenant.id);
     await cleanupTenant(otherTenant.id);
@@ -1047,6 +1159,10 @@ async function cleanupTenant(tenantId: number) {
     prisma.user.deleteMany({ where: { tenantId } }),
   ]);
   await prisma.tenant.deleteMany({ where: { id: tenantId } });
+}
+
+function roundLedgerEntries(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 main().catch((error) => {
