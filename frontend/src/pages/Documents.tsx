@@ -35,6 +35,99 @@ const DOC_TYPES = [
   'Other',
 ];
 
+type SelectOption = [string, string];
+
+const BOOLEAN_OPTIONS: SelectOption[] = [
+  ['true', 'Da'],
+  ['false', 'Nu'],
+];
+
+const CURRENCY_OPTIONS: SelectOption[] = [
+  'RON',
+  'EUR',
+  'USD',
+  'GBP',
+  'CHF',
+  'JPY',
+  'CAD',
+  'AUD',
+  'SEK',
+  'NOK',
+  'DKK',
+  'PLN',
+  'CZK',
+  'HUF',
+  'BGN',
+].map((currency) => [currency, currency]);
+
+const EXTRACTED_FIELD_OPTIONS: Record<string, SelectOption[]> = {
+  document_type: DOC_TYPES.map((type): SelectOption => [type, type]),
+  direction: [
+    ['incoming', 'Intrare'],
+    ['outgoing', 'Ieșire'],
+  ],
+  currency: CURRENCY_OPTIONS,
+  receipt_type: [
+    ['independent_receipt', 'Document independent'],
+    ['payment_receipt', 'Plată/încasare factură'],
+  ],
+  payment_method: [
+    ['cash', 'Numerar'],
+    ['bank', 'Bancă / card'],
+  ],
+  vehicle_transaction: [
+    ['purchase', 'Achiziție vehicul'],
+    ['cost', 'Cost asociat vehiculului'],
+    ['other', 'Fără legătură cu vehiculul'],
+  ],
+  vendor_kind: [
+    ['INDIVIDUAL', 'Persoană fizică'],
+    ['COMPANY', 'Companie'],
+  ],
+  supplier_kind: [
+    ['INDIVIDUAL', 'Persoană fizică'],
+    ['COMPANY', 'Companie'],
+  ],
+  buyer_kind: [
+    ['INDIVIDUAL', 'Persoană fizică'],
+    ['COMPANY', 'Companie'],
+  ],
+  customer_kind: [
+    ['INDIVIDUAL', 'Persoană fizică'],
+    ['COMPANY', 'Companie'],
+  ],
+  vendor_identifier_type: [
+    ['CUI', 'CUI'],
+    ['CNP', 'CNP'],
+    ['FOREIGN_ID', 'Identificator extern'],
+  ],
+  supplier_identifier_type: [
+    ['CUI', 'CUI'],
+    ['CNP', 'CNP'],
+    ['FOREIGN_ID', 'Identificator extern'],
+  ],
+  buyer_identifier_type: [
+    ['CUI', 'CUI'],
+    ['CNP', 'CNP'],
+    ['FOREIGN_ID', 'Identificator extern'],
+  ],
+  customer_identifier_type: [
+    ['CUI', 'CUI'],
+    ['CNP', 'CNP'],
+    ['FOREIGN_ID', 'Identificator extern'],
+  ],
+  operation_type: [
+    ['payment', 'Plată'],
+    ['collection', 'Încasare'],
+  ],
+  transaction_type: [
+    ['transfer', 'Transfer'],
+    ['payment', 'Plată'],
+    ['deposit', 'Depunere'],
+    ['withdrawal', 'Retragere'],
+  ],
+};
+
 const COST_CATEGORY_OPTIONS: Array<[string, string]> = [
   ['TRANSPORT', 'Transport'],
   ['CUSTOMS', 'Taxe vamale'],
@@ -873,6 +966,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
           {visibleEntries.map(([key, value]) => {
             const conf = confidence[key];
             const flagged = isFlagged(key);
+            const options = extractedFieldOptions(key, value);
             return (
               <div key={key} className={`py-2 ${flagged ? '-mx-2 rounded bg-amber-50/60 px-2' : ''}`}>
                 <div className="flex items-center justify-between gap-2">
@@ -882,7 +976,12 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                   </p>
                   <button
                     disabled={doc.reviewStatus === 'APPROVED'}
-                    onClick={() => setEditing({ field: key, value: String(value) })}
+                    onClick={() =>
+                      setEditing({
+                        field: key,
+                        value: extractedFieldDraftValue(key, value),
+                      })
+                    }
                     title={doc.reviewStatus === 'APPROVED' ? 'Redeschide documentul pentru a-l corecta' : 'Editează'}
                     className="text-xs text-muted-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
                   >
@@ -894,20 +993,54 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                     className="mt-1 flex gap-2"
                     onSubmit={async (e) => {
                       e.preventDefault();
-                      await correct({ id, field: key, newValue: editing.value });
+                      await correct({
+                        id,
+                        field: key,
+                        newValue: extractedFieldCorrectionValue(
+                          key,
+                          value,
+                          editing.value,
+                        ),
+                      });
                       setEditing(null);
                     }}
                   >
-                    <input
-                      autoFocus
-                      className="flex-1 rounded-control border border-line-strong px-2.5 py-1.5 text-sm focus:border-brand focus:outline-none"
-                      value={editing.value}
-                      onChange={(e) => setEditing({ field: key, value: e.target.value })}
-                    />
+                    {options ? (
+                      <select
+                        autoFocus
+                        className="flex-1 rounded-control border border-line-strong bg-white px-2.5 py-1.5 text-sm focus:border-brand focus:outline-none"
+                        value={editing.value}
+                        onChange={(e) =>
+                          setEditing({ field: key, value: e.target.value })
+                        }
+                      >
+                        {!options.some(([option]) => option === editing.value) && (
+                          <option value={editing.value}>
+                            {editing.value || '—'}
+                          </option>
+                        )}
+                        {options.map(([option, label]) => (
+                          <option key={option} value={option}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        autoFocus
+                        className="flex-1 rounded-control border border-line-strong px-2.5 py-1.5 text-sm focus:border-brand focus:outline-none"
+                        value={editing.value}
+                        onChange={(e) =>
+                          setEditing({ field: key, value: e.target.value })
+                        }
+                      />
+                    )}
                     <button className="rounded-control bg-brand px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-hover">Salvează</button>
                   </form>
                 ) : (
-                  <p className="text-sm font-medium text-ink">{String(value)}</p>
+                  <p className="text-sm font-medium text-ink">
+                    {displayExtractedFieldValue(key, value)}
+                  </p>
                 )}
               </div>
             );
@@ -1304,6 +1437,45 @@ function parseReferences(value: string): Array<{ number: string; amount?: number
         amount: Number(match[2].replace(',', '.')),
       };
     });
+}
+
+function extractedFieldOptions(
+  field: string,
+  value: unknown,
+): SelectOption[] | undefined {
+  if (isBooleanExtractedField(value)) return BOOLEAN_OPTIONS;
+  return EXTRACTED_FIELD_OPTIONS[field];
+}
+
+function isBooleanExtractedField(value: unknown): boolean {
+  return (
+    typeof value === 'boolean' ||
+    (typeof value === 'string' && /^(true|false)$/i.test(value.trim()))
+  );
+}
+
+function extractedFieldDraftValue(field: string, value: unknown): string {
+  if (extractedFieldOptions(field, value) === BOOLEAN_OPTIONS) {
+    return String(value).trim().toLowerCase();
+  }
+  return String(value ?? '');
+}
+
+function extractedFieldCorrectionValue(
+  field: string,
+  originalValue: unknown,
+  draft: string,
+): unknown {
+  if (extractedFieldOptions(field, originalValue) === BOOLEAN_OPTIONS) {
+    return draft === 'true';
+  }
+  return draft;
+}
+
+function displayExtractedFieldValue(field: string, value: unknown): string {
+  const options = extractedFieldOptions(field, value);
+  const draft = extractedFieldDraftValue(field, value);
+  return options?.find(([option]) => option === draft)?.[1] ?? String(value);
 }
 
 function humanField(field: string): string {
