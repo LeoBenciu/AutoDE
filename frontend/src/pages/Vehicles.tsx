@@ -12,8 +12,7 @@ import {
   VEHICLE_BRANDS,
   VEHICLE_COUNTRIES,
 } from '../data/vehicleCatalog';
-
-const STATUSES = ['', 'SOURCED', 'PURCHASED', 'IN_TRANSIT', 'CUSTOMS', 'IN_STOCK', 'RESERVED', 'SOLD', 'DELIVERED'];
+import { VEHICLE_STATUSES } from '../data/vehicleStatuses';
 
 const PlusIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -84,9 +83,10 @@ export default function Vehicles() {
           onChange={(e) => setStatus(e.target.value)}
           className="rounded-control border border-line-strong px-3 py-2.5 text-sm text-ink-soft focus:border-brand focus:outline-none"
         >
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s === '' ? 'Toate statusurile' : s}
+          <option value="">Toate stările</option>
+          {VEHICLE_STATUSES.map(({ value, label }) => (
+            <option key={value} value={value}>
+              {label}
             </option>
           ))}
         </select>
