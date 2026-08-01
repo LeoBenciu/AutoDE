@@ -144,12 +144,19 @@ test('@desktop contract templates are editable and preview as PDF', async ({
 }) => {
   await page.goto('/setari');
   await page.getByRole('button', { name: 'Contracte PDF' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Alege documentul' }),
+  ).toBeVisible();
 
   const saleTemplate = page.getByLabel('Șablon contract vânzare');
   await expect(saleTemplate).toHaveValue(/CONTRACT DE VÂNZARE-CUMPĂRARE AUTO/);
+  await page.getByRole('button', { name: 'Vehicul', exact: true }).click();
+  await expect(page.getByRole('button', { name: /Serie șasiu/ })).toBeVisible();
   await saleTemplate.fill(
     '# CONTRACT PERSONALIZAT ȘȚĂÎÂ\n> Nr. {{contract_number}} din {{contract_date}}\n\n{{vehicle_details}}\n\n{{signature_block}}',
   );
+  await expect(page.getByText('1 document nesalvat')).toBeVisible();
+  await expect(page.getByText('Șablon gata de generare')).toBeVisible();
   await page.getByRole('button', { name: 'Previzualizează PDF' }).click();
   await expect(page.getByTitle('Previzualizare șablon PDF')).toHaveAttribute(
     'src',
@@ -160,6 +167,22 @@ test('@desktop contract templates are editable and preview as PDF', async ({
   await expect(page.getByLabel('Șablon proces-verbal')).toHaveValue(
     /PROCES-VERBAL DE PREDARE-PRIMIRE AUTOVEHICUL/,
   );
+});
+
+test('@mobile contract customizer remains usable without horizontal overflow', async ({
+  page,
+}) => {
+  await page.goto('/setari');
+  await page.getByRole('button', { name: 'Contracte PDF' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Alege documentul' })).toBeVisible();
+  await expect(page.getByLabel('Șablon contract vânzare')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Salvează modificările' })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    )
+    .toBe(true);
 });
 
 test('@mobile 360 layout keeps document and extracted data usable', async ({

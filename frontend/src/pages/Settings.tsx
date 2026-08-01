@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import {
   useArticlesQuery,
@@ -443,7 +443,15 @@ function ContractTemplatesSettings({
     tone: 'success' | 'error';
     text: string;
   }>();
-  const [previewUrl, setPreviewUrl] = useState('');
+  const [pdfPreview, setPdfPreview] = useState<{
+    url: string;
+    kind: 'sale' | 'handover';
+    source: string;
+  }>();
+  const [placeholderSearch, setPlaceholderSearch] = useState('');
+  const [placeholderGroup, setPlaceholderGroup] = useState('all');
+  const [showFormattingHelp, setShowFormattingHelp] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   const editorRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -454,20 +462,86 @@ function ContractTemplatesSettings({
 
   useEffect(
     () => () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
     },
-    [previewUrl],
+    [pdfPreview?.url],
   );
 
   const activeTemplate = kind === 'sale' ? sale : handover;
-  const setActiveTemplate = (value: string) =>
-    kind === 'sale' ? setSale(value) : setHandover(value);
+  const setActiveTemplate = (value: string) => {
+    setStatus(undefined);
+    if (kind === 'sale') setSale(value);
+    else setHandover(value);
+  };
   const documentKind =
     kind === 'sale' ? 'vanzare-cumparare' : 'proces-verbal';
+  const saleDirty = Boolean(data && sale !== data.templates.sale);
+  const handoverDirty = Boolean(data && handover !== data.templates.handover);
+  const dirtyCount = Number(saleDirty) + Number(handoverDirty);
+
+  const placeholderGroups = [
+    { id: 'all', label: 'Toate' },
+    { id: 'blocks', label: 'Blocuri' },
+    { id: 'document', label: 'Document' },
+    { id: 'seller', label: 'Vânzător' },
+    { id: 'buyer', label: 'Cumpărător' },
+    { id: 'vehicle', label: 'Vehicul' },
+    { id: 'price', label: 'Preț' },
+  ];
+
+  const visiblePlaceholders = useMemo(() => {
+    if (!data) return [];
+    const search = placeholderSearch.trim().toLocaleLowerCase('ro-RO');
+    return data.placeholders.filter((placeholder: any) => {
+      const group = contractPlaceholderGroup(placeholder);
+      const inGroup = placeholderGroup === 'all' || placeholderGroup === group;
+      const matchesSearch =
+        !search ||
+        placeholder.label.toLocaleLowerCase('ro-RO').includes(search) ||
+        placeholder.token.toLocaleLowerCase('ro-RO').includes(search);
+      return inGroup && matchesSearch;
+    });
+  }, [data, placeholderGroup, placeholderSearch]);
+
+  const saleValidation = useMemo(
+    () => contractTemplateValidation(sale, data?.placeholders ?? []),
+    [data?.placeholders, sale],
+  );
+  const handoverValidation = useMemo(
+    () => contractTemplateValidation(handover, data?.placeholders ?? []),
+    [data?.placeholders, handover],
+  );
+  const activeValidation = kind === 'sale' ? saleValidation : handoverValidation;
+  const hasValidationErrors =
+    saleValidation.errors.length > 0 || handoverValidation.errors.length > 0;
+  const activeDirty = kind === 'sale' ? saleDirty : handoverDirty;
+  const activeCustomized = Boolean(
+    data && activeTemplate !== data.defaults[kind],
+  );
+  const previewIsCurrent = Boolean(
+    pdfPreview &&
+      pdfPreview.kind === kind &&
+      pdfPreview.source === activeTemplate,
+  );
+  const outline = useMemo(
+    () =>
+      Array.from(activeTemplate.matchAll(/^##\s+(.+)$/gm)).map((match) => ({
+        label: match[1],
+        position: match.index ?? 0,
+      })),
+    [activeTemplate],
+  );
 
   const save = async () => {
     onError('');
     setStatus(undefined);
+    if (hasValidationErrors) {
+      setStatus({
+        tone: 'error',
+        text: 'Corectează erorile semnalate înainte de salvare.',
+      });
+      return;
+    }
     try {
       await updateTemplates({ sale, handover }).unwrap();
       setStatus({
@@ -493,26 +567,112 @@ function ContractTemplatesSettings({
       const nextUrl = URL.createObjectURL(
         new Blob([bytes], { type: result.contentType }),
       );
-      setPreviewUrl(nextUrl);
+      setPdfPreview({ url: nextUrl, kind, source: activeTemplate });
     } catch (requestError: any) {
       setStatus({ tone: 'error', text: apiError(requestError) });
     }
   };
 
-  const insertPlaceholder = (token: string) => {
+  const replaceEditorSelection = (
+    replacement: (before: string, selected: string, after: string) => {
+      text: string;
+      selectionStart: number;
+      selectionEnd: number;
+    },
+  ) => {
     const editor = editorRef.current;
     if (!editor) {
-      setActiveTemplate(`${activeTemplate}${token}`);
       return;
     }
     const start = editor.selectionStart;
     const end = editor.selectionEnd;
-    const next = `${activeTemplate.slice(0, start)}${token}${activeTemplate.slice(end)}`;
+    const result = replacement(
+      activeTemplate.slice(0, start),
+      activeTemplate.slice(start, end),
+      activeTemplate.slice(end),
+    );
+    setActiveTemplate(result.text);
+    requestAnimationFrame(() => {
+      editor.focus();
+      editor.setSelectionRange(result.selectionStart, result.selectionEnd);
+    });
+  };
+
+  const insertPlaceholder = (placeholder: any) => {
+    const { token, block } = placeholder;
+    const editor = editorRef.current;
+    if (!editor) {
+      setActiveTemplate(`${activeTemplate}${block ? `\n${token}\n` : token}`);
+      return;
+    }
+    replaceEditorSelection((before, _selected, after) => {
+      const prefix = block && before && !before.endsWith('\n') ? '\n' : '';
+      const suffix = block && after && !after.startsWith('\n') ? '\n' : '';
+      const insertion = `${prefix}${token}${suffix}`;
+      const cursor = before.length + insertion.length;
+      return {
+        text: `${before}${insertion}${after}`,
+        selectionStart: cursor,
+        selectionEnd: cursor,
+      };
+    });
+  };
+
+  const formatSelectedLines = (prefix: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const selectionStart = editor.selectionStart;
+    const selectionEnd = editor.selectionEnd;
+    const lineStart = activeTemplate.lastIndexOf('\n', selectionStart - 1) + 1;
+    const nextLine = activeTemplate.indexOf('\n', selectionEnd);
+    const lineEnd = nextLine === -1 ? activeTemplate.length : nextLine;
+    const selectedLines = activeTemplate.slice(lineStart, lineEnd);
+    const formatted = selectedLines
+      .split('\n')
+      .map((line) => {
+        const content = line.replace(/^(?:#{1,2}|>|-)\s+/, '');
+        return `${prefix}${content}`;
+      })
+      .join('\n');
+    const next = `${activeTemplate.slice(0, lineStart)}${formatted}${activeTemplate.slice(lineEnd)}`;
     setActiveTemplate(next);
     requestAnimationFrame(() => {
       editor.focus();
-      editor.setSelectionRange(start + token.length, start + token.length);
+      editor.setSelectionRange(lineStart, lineStart + formatted.length);
     });
+  };
+
+  const insertStandaloneLine = (value: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    replaceEditorSelection((before, _selected, after) => {
+      const prefix = before && !before.endsWith('\n') ? '\n' : '';
+      const suffix = after && !after.startsWith('\n') ? '\n' : '';
+      const insertion = `${prefix}${value}${suffix}`;
+      const cursor = before.length + insertion.length;
+      return {
+        text: `${before}${insertion}${after}`,
+        selectionStart: cursor,
+        selectionEnd: cursor,
+      };
+    });
+  };
+
+  const changeKind = (nextKind: 'sale' | 'handover') => {
+    setKind(nextKind);
+    setConfirmReset(false);
+    setStatus(undefined);
+    setPlaceholderSearch('');
+  };
+
+  const jumpToOutline = (position: number) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    editor.setSelectionRange(position, position);
+    const line = activeTemplate.slice(0, position).split('\n').length;
+    const lineHeight = 20;
+    editor.scrollTop = Math.max(0, line * lineHeight - 80);
   };
 
   if (isLoading) {
@@ -526,157 +686,579 @@ function ContractTemplatesSettings({
     );
   }
 
+  const documentOptions = [
+    {
+      id: 'sale' as const,
+      short: 'CV',
+      title: 'Contract de vânzare',
+      description: 'Clauze, părți, preț și semnături',
+      value: sale,
+      dirty: saleDirty,
+    },
+    {
+      id: 'handover' as const,
+      short: 'PV',
+      title: 'Proces-verbal',
+      description: 'Predarea vehiculului și documentelor',
+      value: handover,
+      dirty: handoverDirty,
+    },
+  ];
+
   return (
-    <div className="p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="font-semibold text-ink">Șabloane documente de vânzare</h3>
-          <p className="mt-1 max-w-3xl text-sm text-muted">
-            Personalizează integral textul. Datele reale sunt introduse automat în locul placeholderelor la generarea unui document nou.
-          </p>
-        </div>
-        {!canEdit && (
-          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-            Doar contabilul poate modifica șabloanele
-          </span>
-        )}
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            setKind('sale');
-            setPreviewUrl('');
-          }}
-          className={`rounded-control px-3.5 py-2 text-sm font-semibold ${
-            kind === 'sale'
-              ? 'bg-brand text-white'
-              : 'border border-line-strong text-ink-soft'
-          }`}
-        >
-          Contract vânzare
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setKind('handover');
-            setPreviewUrl('');
-          }}
-          className={`rounded-control px-3.5 py-2 text-sm font-semibold ${
-            kind === 'handover'
-              ? 'bg-brand text-white'
-              : 'border border-line-strong text-ink-soft'
-          }`}
-        >
-          Proces-verbal
-        </button>
-        {data.customized[kind] && (
-          <span className="self-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-brand">
-            Personalizat
-          </span>
-        )}
-      </div>
-
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
-        <div className="min-w-0">
-          <label className="text-xs font-semibold text-muted" htmlFor="contract-template-editor">
-            Conținutul șablonului
-          </label>
-          <textarea
-            ref={editorRef}
-            id="contract-template-editor"
-            aria-label={kind === 'sale' ? 'Șablon contract vânzare' : 'Șablon proces-verbal'}
-            value={activeTemplate}
-            readOnly={!canEdit}
-            onChange={(event) => setActiveTemplate(event.target.value)}
-            spellCheck
-            className="mt-1 min-h-[620px] w-full resize-y rounded-xl border border-line-strong bg-white p-4 font-mono text-[12px] leading-5 text-ink focus:border-brand focus:outline-none read-only:bg-slate-50"
-          />
-
-          <div className="mt-3 rounded-xl border border-line bg-slate-50 p-3">
-            <p className="text-xs font-semibold text-ink-soft">Formatare</p>
-            <p className="mt-1 text-xs leading-5 text-muted">
-              <code># Titlu</code> pentru titlul principal, <code>## Secțiune</code> pentru subtitluri, <code>&gt; Text</code> pentru text centrat și <code>- Element</code> pentru liste. Placeholder-ele de tip bloc trebuie puse singure pe rând.
+    <div>
+      <div className="border-b border-line bg-slate-50/60 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand text-xs font-bold text-white">
+                1
+              </span>
+              <h3 className="font-semibold text-ink">Alege documentul</h3>
+            </div>
+            <p className="ml-9 mt-1 max-w-3xl text-sm text-muted">
+              Configurează o singură dată textele folosite la toate vânzările viitoare.
             </p>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {dirtyCount > 0 && (
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                {dirtyCount === 1
+                  ? '1 document nesalvat'
+                  : '2 documente nesalvate'}
+              </span>
+            )}
+            {!canEdit && (
+              <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                Mod doar citire
+              </span>
+            )}
+          </div>
+        </div>
 
-          <div className="mt-3">
-            <p className="text-xs font-semibold text-ink-soft">Inserează un placeholder</p>
-            <div className="mt-2 flex max-h-36 flex-wrap gap-1.5 overflow-y-auto">
-              {data.placeholders.map((placeholder: any) => (
-                <button
-                  key={placeholder.token}
-                  type="button"
-                  disabled={!canEdit}
-                  title={placeholder.label}
-                  onClick={() => insertPlaceholder(placeholder.token)}
-                  className="rounded-md border border-line-strong bg-white px-2 py-1 font-mono text-[10px] text-ink-soft hover:border-brand hover:text-brand disabled:opacity-50"
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {documentOptions.map((option) => {
+            const selected = option.id === kind;
+            const customized = option.value !== data.defaults[option.id];
+            return (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => changeKind(option.id)}
+                className={`flex items-center gap-3 rounded-xl border p-3.5 text-left transition ${
+                  selected
+                    ? 'border-brand bg-white shadow-sm ring-1 ring-brand/15'
+                    : 'border-line-strong bg-white/70 hover:border-slate-300 hover:bg-white'
+                }`}
+              >
+                <span
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold ${
+                    selected ? 'bg-brand text-white' : 'bg-slate-100 text-ink-soft'
+                  }`}
                 >
-                  {placeholder.token}
-                </button>
-              ))}
-            </div>
+                  {option.short}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-ink">
+                    {option.title}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted">
+                    {option.description}
+                  </span>
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${
+                    option.dirty
+                      ? 'bg-amber-100 text-amber-800'
+                      : customized
+                        ? 'bg-blue-50 text-brand'
+                        : 'bg-slate-100 text-muted'
+                  }`}
+                >
+                  {option.dirty
+                    ? 'Nesalvat'
+                    : customized
+                      ? 'Personalizat'
+                      : 'Standard'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="p-5">
+        <div className="grid gap-5 xl:grid-cols-[minmax(560px,1.08fr)_minmax(400px,0.92fr)]">
+          <div className="min-w-0 space-y-4">
+            <section className="overflow-hidden rounded-card border border-line-strong bg-white">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-brand text-[11px] font-bold text-white">
+                      2
+                    </span>
+                    <h4 className="text-sm font-semibold text-ink">Editează conținutul</h4>
+                    {activeDirty && (
+                      <span className="h-2 w-2 rounded-full bg-amber-500" title="Modificări nesalvate" />
+                    )}
+                  </div>
+                  <p className="ml-8 mt-0.5 text-xs text-muted">
+                    {activeCustomized ? 'Șablon personalizat' : 'Șablon standard'} ·{' '}
+                    {activeTemplate.split('\n').length} rânduri ·{' '}
+                    {activeTemplate.length.toLocaleString('ro-RO')} caractere
+                  </p>
+                </div>
+                {canEdit && (
+                  <div className="flex items-center gap-2">
+                    {confirmReset && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmReset(false)}
+                        className="rounded-control px-2.5 py-1.5 text-xs font-semibold text-muted hover:bg-slate-100"
+                      >
+                        Renunță
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={!activeCustomized && !activeDirty}
+                      onClick={() => {
+                        if (!confirmReset) {
+                          setConfirmReset(true);
+                          return;
+                        }
+                        setActiveTemplate(data.defaults[kind]);
+                        setConfirmReset(false);
+                      }}
+                      className={`rounded-control border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${
+                        confirmReset
+                          ? 'border-red-300 bg-red-50 text-red-700'
+                          : 'border-line-strong text-ink-soft hover:bg-slate-50'
+                      }`}
+                    >
+                      {confirmReset ? 'Confirmă resetarea' : 'Revino la standard'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {canEdit && (
+                <div className="flex items-center gap-1 overflow-x-auto border-b border-line bg-slate-50 px-3 py-2">
+                  <span className="mr-1 shrink-0 text-[10px] font-bold uppercase tracking-wider text-muted-2">
+                    Formatare
+                  </span>
+                  {[
+                    ['Titlu', '# ', 'Titlu principal'],
+                    ['Secțiune', '## ', 'Titlu de secțiune'],
+                    ['Centrat', '> ', 'Text centrat'],
+                    ['Listă', '- ', 'Element de listă'],
+                  ].map(([label, prefix, title]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      title={title}
+                      onClick={() => formatSelectedLines(prefix)}
+                      className="shrink-0 rounded-md border border-line-strong bg-white px-2.5 py-1.5 text-xs font-semibold text-ink-soft hover:border-brand hover:text-brand"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <span className="mx-1 h-5 w-px shrink-0 bg-line-strong" />
+                  <button
+                    type="button"
+                    onClick={() => insertStandaloneLine('---')}
+                    className="shrink-0 rounded-md border border-line-strong bg-white px-2.5 py-1.5 text-xs font-semibold text-ink-soft hover:border-brand hover:text-brand"
+                  >
+                    Linie
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      insertPlaceholder({ token: '{{page_break}}', block: true })
+                    }
+                    className="shrink-0 rounded-md border border-line-strong bg-white px-2.5 py-1.5 text-xs font-semibold text-ink-soft hover:border-brand hover:text-brand"
+                  >
+                    Pagină nouă
+                  </button>
+                  <button
+                    type="button"
+                    aria-expanded={showFormattingHelp}
+                    onClick={() => setShowFormattingHelp(!showFormattingHelp)}
+                    className="ml-auto shrink-0 rounded-md px-2 py-1.5 text-xs font-semibold text-brand hover:bg-blue-50"
+                  >
+                    Ajutor
+                  </button>
+                </div>
+              )}
+
+              {showFormattingHelp && (
+                <div className="border-b border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-5 text-blue-900">
+                  Selectează unul sau mai multe rânduri și aplică formatarea din bara de mai sus.
+                  Câmpurile automate sunt completate cu datele vânzării, iar blocurile trebuie să
+                  rămână singure pe rând.
+                </div>
+              )}
+
+              {outline.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto border-b border-line px-3 py-2">
+                  <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-muted-2">
+                    Cuprins
+                  </span>
+                  {outline.map((section) => (
+                    <button
+                      key={`${section.position}-${section.label}`}
+                      type="button"
+                      onClick={() => jumpToOutline(section.position)}
+                      className="max-w-[190px] shrink-0 truncate rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-ink-soft hover:bg-blue-50 hover:text-brand"
+                      title={section.label}
+                    >
+                      {section.label.replace(/^\w+\.\s*/, '')}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <textarea
+                ref={editorRef}
+                id="contract-template-editor"
+                aria-label={kind === 'sale' ? 'Șablon contract vânzare' : 'Șablon proces-verbal'}
+                value={activeTemplate}
+                readOnly={!canEdit}
+                onChange={(event) => setActiveTemplate(event.target.value)}
+                onKeyDown={(event) => {
+                  if (canEdit && (event.metaKey || event.ctrlKey) && event.key === 's') {
+                    event.preventDefault();
+                    void save();
+                  }
+                }}
+                spellCheck
+                className="min-h-[590px] w-full resize-y border-0 bg-white p-5 font-mono text-[12px] leading-5 text-ink outline-none focus:bg-blue-50/10 read-only:bg-slate-50"
+              />
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line bg-slate-50 px-4 py-2.5">
+                <div className="flex items-center gap-2 text-xs">
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      activeValidation.errors.length > 0
+                        ? 'bg-red-500'
+                        : activeValidation.warnings.length > 0
+                          ? 'bg-amber-500'
+                          : 'bg-emerald-500'
+                    }`}
+                  />
+                  <span className="font-semibold text-ink-soft">
+                    {activeValidation.errors.length > 0
+                      ? `${activeValidation.errors.length} ${activeValidation.errors.length === 1 ? 'eroare' : 'erori'}`
+                      : activeValidation.warnings.length > 0
+                        ? `${activeValidation.warnings.length} atenționări`
+                        : 'Șablon gata de generare'}
+                  </span>
+                </div>
+                <span className="text-[11px] text-muted">⌘S / Ctrl+S pentru salvare</span>
+              </div>
+            </section>
+
+            {(activeValidation.errors.length > 0 ||
+              activeValidation.warnings.length > 0) && (
+              <section
+                className={`rounded-xl border p-3 ${
+                  activeValidation.errors.length > 0
+                    ? 'border-red-200 bg-red-50'
+                    : 'border-amber-200 bg-amber-50'
+                }`}
+              >
+                <p
+                  className={`text-xs font-semibold ${
+                    activeValidation.errors.length > 0 ? 'text-red-800' : 'text-amber-800'
+                  }`}
+                >
+                  Verificare șablon
+                </p>
+                <ul
+                  className={`mt-1.5 space-y-1 text-xs ${
+                    activeValidation.errors.length > 0 ? 'text-red-700' : 'text-amber-700'
+                  }`}
+                >
+                  {[...activeValidation.errors, ...activeValidation.warnings].map((issue) => (
+                    <li key={issue}>• {issue}</li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {canEdit && (
+              <section className="rounded-card border border-line-strong bg-white p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-ink">Câmpuri automate</h4>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Apasă pe un câmp pentru a-l insera la poziția cursorului.
+                    </p>
+                  </div>
+                  <input
+                    type="search"
+                    aria-label="Caută câmpuri automate"
+                    placeholder="Caută nume, VIN, preț…"
+                    value={placeholderSearch}
+                    onChange={(event) => setPlaceholderSearch(event.target.value)}
+                    className="w-full rounded-control border border-line-strong px-3 py-2 text-xs text-ink outline-none focus:border-brand sm:w-60"
+                  />
+                </div>
+                <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
+                  {placeholderGroups.map((group) => (
+                    <button
+                      key={group.id}
+                      type="button"
+                      onClick={() => setPlaceholderGroup(group.id)}
+                      className={`shrink-0 rounded-full px-2.5 py-1.5 text-[11px] font-semibold ${
+                        placeholderGroup === group.id
+                          ? 'bg-brand text-white'
+                          : 'bg-slate-100 text-ink-soft hover:bg-slate-200'
+                      }`}
+                    >
+                      {group.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3 grid max-h-72 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2">
+                  {visiblePlaceholders.map((placeholder: any) => (
+                    <button
+                      key={placeholder.token}
+                      type="button"
+                      onClick={() => insertPlaceholder(placeholder)}
+                      className="group flex min-w-0 items-center justify-between gap-2 rounded-lg border border-line bg-slate-50 px-3 py-2 text-left hover:border-brand hover:bg-blue-50"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-semibold text-ink-soft group-hover:text-brand">
+                          {placeholder.label}
+                        </span>
+                        <code className="mt-0.5 block truncate text-[9px] text-muted">
+                          {placeholder.token}
+                        </code>
+                      </span>
+                      {placeholder.block && (
+                        <span className="shrink-0 rounded bg-white px-1.5 py-0.5 text-[9px] font-bold uppercase text-muted">
+                          bloc
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                  {visiblePlaceholders.length === 0 && (
+                    <p className="col-span-full rounded-lg bg-slate-50 p-4 text-center text-xs text-muted">
+                      Nu am găsit niciun câmp pentru această căutare.
+                    </p>
+                  )}
+                </div>
+              </section>
+            )}
           </div>
 
-          {status && (
-            <p
-              className={`mt-3 rounded-xl px-3 py-2 text-sm ${
-                status.tone === 'success'
-                  ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : 'border border-red-200 bg-red-50 text-red-700'
-              }`}
+          <section className="min-w-0 xl:sticky xl:top-4 xl:self-start">
+            <div className="overflow-hidden rounded-card border border-line-strong bg-white">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-brand text-[11px] font-bold text-white">
+                      3
+                    </span>
+                    <h4 className="text-sm font-semibold text-ink">Verifică documentul</h4>
+                  </div>
+                  <p className="ml-8 mt-0.5 text-xs text-muted">
+                    Vezi documentul exact așa cum îl va primi clientul.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {pdfPreview?.url && pdfPreview.kind === kind && (
+                    <a
+                      href={pdfPreview.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-control px-2.5 py-2 text-xs font-semibold text-ink-soft hover:bg-slate-100"
+                    >
+                      Deschide separat
+                    </a>
+                  )}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      aria-label="Previzualizează PDF"
+                      onClick={preview}
+                      disabled={
+                        previewing ||
+                        !activeTemplate.trim() ||
+                        activeValidation.errors.length > 0
+                      }
+                      className="rounded-control bg-brand px-3.5 py-2 text-xs font-semibold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {previewing
+                        ? 'Se generează…'
+                        : pdfPreview?.kind === kind
+                          ? 'Actualizează PDF'
+                          : 'Previzualizează PDF'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {pdfPreview?.url && pdfPreview.kind === kind ? (
+                <div className="relative bg-slate-100 p-2">
+                  {!previewIsCurrent && (
+                    <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      <span>Previzualizarea nu include ultimele modificări.</span>
+                      <button
+                        type="button"
+                        onClick={preview}
+                        className="shrink-0 font-semibold underline underline-offset-2"
+                      >
+                        Actualizează
+                      </button>
+                    </div>
+                  )}
+                  <iframe
+                    title="Previzualizare șablon PDF"
+                    src={pdfPreview.url}
+                    className="h-[760px] w-full rounded-lg border border-line bg-white"
+                  />
+                </div>
+              ) : (
+                <div className="flex h-[520px] flex-col items-center justify-center bg-slate-50 p-8 text-center">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-line-strong bg-white text-sm font-extrabold text-brand shadow-sm">
+                    PDF
+                  </div>
+                  <p className="mt-4 text-sm font-semibold text-ink">Documentul este gata de verificat</p>
+                  <p className="mt-1 max-w-xs text-xs leading-5 text-muted">
+                    Generează o previzualizare cu date demonstrative pentru a verifica textul,
+                    diacriticele, paginarea și semnăturile.
+                  </p>
+                  <p className="mt-4 text-[11px] font-medium text-brand">
+                    {canEdit
+                      ? 'Folosește butonul „Previzualizează PDF” de mai sus.'
+                      : 'Doar contabilul poate genera o previzualizare.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        {status && (
+          <p
+            className={`mt-4 rounded-xl px-4 py-3 text-sm ${
+              status.tone === 'success'
+                ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border border-red-200 bg-red-50 text-red-700'
+            }`}
+          >
+            {status.text}
+          </p>
+        )}
+
+        {canEdit && (
+          <div className="sticky bottom-3 z-10 mt-5 flex flex-wrap items-center justify-between gap-3 rounded-card border border-line-strong bg-white/95 p-3 shadow-lg shadow-slate-900/10 backdrop-blur">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-ink">
+                {dirtyCount === 0
+                  ? 'Toate modificările sunt salvate'
+                  : dirtyCount === 1
+                    ? 'Ai modificări nesalvate într-un document'
+                    : 'Ai modificări nesalvate în ambele documente'}
+              </p>
+              <p className="text-xs text-muted">
+                Salvarea se aplică documentelor generate de acum înainte.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={save}
+              disabled={
+                saving ||
+                dirtyCount === 0 ||
+                hasValidationErrors ||
+                !sale.trim() ||
+                !handover.trim()
+              }
+              className="rounded-control bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {status.text}
-            </p>
-          )}
-
-          {canEdit && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setActiveTemplate(data.defaults[kind])}
-                className="rounded-control border border-line-strong px-3.5 py-2 text-sm font-semibold text-ink-soft"
-              >
-                Resetează documentul curent
-              </button>
-              <button
-                type="button"
-                onClick={preview}
-                disabled={previewing || !activeTemplate.trim()}
-                className="rounded-control border border-brand px-3.5 py-2 text-sm font-semibold text-brand disabled:opacity-50"
-              >
-                {previewing ? 'Se generează…' : 'Previzualizează PDF'}
-              </button>
-              <button
-                type="button"
-                onClick={save}
-                disabled={saving || !sale.trim() || !handover.trim()}
-                className="rounded-control bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-50"
-              >
-                {saving ? 'Se salvează…' : 'Salvează ambele șabloane'}
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="min-w-0 xl:sticky xl:top-4 xl:self-start">
-          <p className="text-xs font-semibold text-muted">Previzualizare PDF</p>
-          {previewUrl ? (
-            <iframe
-              title="Previzualizare șablon PDF"
-              src={previewUrl}
-              className="mt-1 h-[780px] w-full rounded-xl border border-line bg-slate-100"
-            />
-          ) : (
-            <div className="mt-1 flex h-[420px] items-center justify-center rounded-xl border border-dashed border-line-strong bg-slate-50 p-6 text-center text-sm text-muted">
-              Apasă „Previzualizează PDF” pentru a verifica aspectul, diacriticele și paginarea înainte de salvare.
-            </div>
-          )}
-        </div>
+              {saving ? 'Se salvează…' : 'Salvează modificările'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+function contractPlaceholderGroup(placeholder: {
+  token: string;
+  block?: boolean;
+}) {
+  if (placeholder.block) return 'blocks';
+  if (placeholder.token.startsWith('{{seller_')) return 'seller';
+  if (placeholder.token.startsWith('{{buyer_')) return 'buyer';
+  if (placeholder.token.startsWith('{{vehicle_')) return 'vehicle';
+  if (
+    placeholder.token.startsWith('{{price_') ||
+    placeholder.token === '{{currency}}'
+  ) {
+    return 'price';
+  }
+  return 'document';
+}
+
+function contractTemplateValidation(
+  template: string,
+  placeholders: Array<{ token: string; label: string; block?: boolean }>,
+) {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const allowed = new Set(placeholders.map(({ token }) => token));
+
+  if (!template.trim()) errors.push('Documentul nu poate fi gol.');
+  if (template.length > 30_000) {
+    errors.push('Documentul depășește limita de 30.000 de caractere.');
+  }
+
+  const unknown = new Set<string>();
+  for (const match of template.matchAll(/{{([^{}]+)}}/g)) {
+    const token = `{{${match[1].trim()}}}`;
+    if (!allowed.has(token)) unknown.add(token);
+  }
+  if (unknown.size > 0) {
+    errors.push(`Câmpuri necunoscute: ${[...unknown].join(', ')}.`);
+  }
+
+  const misplacedBlocks = new Set<string>();
+  for (const line of template.split('\n')) {
+    for (const placeholder of placeholders) {
+      if (
+        placeholder.block &&
+        line.includes(placeholder.token) &&
+        line.trim() !== placeholder.token
+      ) {
+        misplacedBlocks.add(placeholder.token);
+      }
+    }
+  }
+  if (misplacedBlocks.size > 0) {
+    errors.push(
+      `Aceste blocuri trebuie să fie singure pe rând: ${[
+        ...misplacedBlocks,
+      ].join(', ')}.`,
+    );
+  }
+
+  if (!template.includes('{{vehicle_details}}')) {
+    warnings.push('Lipsește tabelul cu detaliile vehiculului.');
+  }
+  if (!template.includes('{{signature_block}}')) {
+    warnings.push('Lipsește blocul pentru semnăturile părților.');
+  }
+  if (!template.includes('{{contract_number}}')) {
+    warnings.push('Numărul documentului nu va apărea în PDF.');
+  }
+
+  return { errors, warnings };
 }
 
 function PartnersCatalogue({
