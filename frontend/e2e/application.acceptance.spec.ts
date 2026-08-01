@@ -22,13 +22,17 @@ test('@desktop core flows and side-by-side extraction review', async ({
   ).toBeVisible();
   await expect(page.getByText(/CV-UI-00001 · vanzare-cumparare/)).toBeVisible();
   const contractPopupPromise = page.waitForEvent('popup');
+  const contractPdfRequestPromise = page.context().waitForEvent('request', {
+    predicate: (request) => request.url().includes('ui-acceptance.pdf'),
+  });
   await page
     .getByRole('button', {
       name: /Deschide contractul CV-UI-00001 într-o filă nouă/,
     })
     .click();
   const contractPopup = await contractPopupPromise;
-  await expect.poll(() => contractPopup.url()).not.toBe('about:blank');
+  const contractPdfRequest = await contractPdfRequestPromise;
+  expect(contractPdfRequest.url()).toContain('ui-acceptance.pdf');
   await contractPopup.close();
 
   await page.goto('/documente');
@@ -133,6 +137,29 @@ test('@desktop document review hides internal extraction metadata', async ({
   });
   await expect(dialog).toBeVisible();
   await expect(dialog).not.toContainText('internal-document-hash-must-not-render');
+});
+
+test('@desktop contract templates are editable and preview as PDF', async ({
+  page,
+}) => {
+  await page.goto('/setari');
+  await page.getByRole('button', { name: 'Contracte PDF' }).click();
+
+  const saleTemplate = page.getByLabel('Șablon contract vânzare');
+  await expect(saleTemplate).toHaveValue(/CONTRACT DE VÂNZARE-CUMPĂRARE AUTO/);
+  await saleTemplate.fill(
+    '# CONTRACT PERSONALIZAT ȘȚĂÎÂ\n> Nr. {{contract_number}} din {{contract_date}}\n\n{{vehicle_details}}\n\n{{signature_block}}',
+  );
+  await page.getByRole('button', { name: 'Previzualizează PDF' }).click();
+  await expect(page.getByTitle('Previzualizare șablon PDF')).toHaveAttribute(
+    'src',
+    /^blob:/,
+  );
+
+  await page.getByRole('button', { name: 'Proces-verbal' }).click();
+  await expect(page.getByLabel('Șablon proces-verbal')).toHaveValue(
+    /PROCES-VERBAL DE PREDARE-PRIMIRE AUTOVEHICUL/,
+  );
 });
 
 test('@mobile 360 layout keeps document and extracted data usable', async ({

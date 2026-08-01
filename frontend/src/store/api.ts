@@ -222,6 +222,38 @@ export const api = createApi({
       query: (body) => ({ url: '/contracts/generate', method: 'POST', body }),
       invalidatesTags: ['Contract', 'Vehicle', 'Document'],
     }),
+    regenerateContract: build.mutation<any, number>({
+      query: (id) => ({
+        url: `/contracts/${id}/regenerate`,
+        method: 'POST',
+      }),
+      invalidatesTags: ['Contract', 'Vehicle', 'Document'],
+    }),
+    contractTemplates: build.query<any, void>({
+      query: () => '/contracts/templates',
+      providesTags: ['Contract'],
+    }),
+    updateContractTemplates: build.mutation<
+      any,
+      { sale: string; handover: string }
+    >({
+      query: (body) => ({
+        url: '/contracts/templates',
+        method: 'PATCH',
+        body,
+      }),
+      invalidatesTags: ['Contract'],
+    }),
+    previewContractTemplate: build.mutation<
+      { contentType: string; fileName: string; data: string },
+      { kind: 'vanzare-cumparare' | 'proces-verbal'; template: string }
+    >({
+      query: (body) => ({
+        url: '/contracts/templates/preview',
+        method: 'POST',
+        body,
+      }),
+    }),
 
     users: build.query<any[], void>({
       query: () => '/users',
@@ -361,6 +393,10 @@ export const {
   useSubmitEtransportMutation,
   useContractsQuery,
   useGenerateContractMutation,
+  useRegenerateContractMutation,
+  useContractTemplatesQuery,
+  useUpdateContractTemplatesMutation,
+  usePreviewContractTemplateMutation,
   useUsersQuery,
   useCreateUserMutation,
   useUpdateUserMutation,

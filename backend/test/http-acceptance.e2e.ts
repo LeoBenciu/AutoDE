@@ -519,6 +519,55 @@ async function main() {
       expected: 404,
     });
 
+    const defaultTemplates = await request(baseUrl, '/contracts/templates', {
+      token: tokens.get('VIEWER'),
+      expected: 200,
+    });
+    assert.match(defaultTemplates.templates.sale, /VÂNZARE-CUMPĂRARE/);
+    assert.match(defaultTemplates.templates.sale, /{{buyer_name}}/);
+    await request(baseUrl, '/contracts/templates', {
+      method: 'PATCH',
+      token: tokens.get('SALES'),
+      expected: 403,
+      body: { sale: defaultTemplates.templates.sale },
+    });
+    await request(baseUrl, '/contracts/templates', {
+      method: 'PATCH',
+      token: tokens.get('ACCOUNTANT'),
+      expected: 400,
+      body: { sale: '# Contract\n{{unknown_placeholder}}' },
+    });
+    const customizedTemplates = await request(baseUrl, '/contracts/templates', {
+      method: 'PATCH',
+      token: tokens.get('ACCOUNTANT'),
+      expected: 200,
+      body: {
+        sale:
+          '# CONTRACT PERSONALIZAT\n> Nr. {{contract_number}} din {{contract_date}}\n\n{{vehicle_details}}\n\n{{signature_block}}',
+        handover: defaultTemplates.templates.handover,
+      },
+    });
+    assert.equal(customizedTemplates.customized.sale, true);
+    assert.equal(customizedTemplates.customized.handover, false);
+    const contractPreview = await request(
+      baseUrl,
+      '/contracts/templates/preview',
+      {
+        method: 'POST',
+        token: tokens.get('ACCOUNTANT'),
+        expected: 201,
+        body: {
+          kind: 'vanzare-cumparare',
+          template: customizedTemplates.templates.sale,
+        },
+      },
+    );
+    assert.equal(contractPreview.contentType, 'application/pdf');
+    assert.equal(
+      Buffer.from(contractPreview.data, 'base64').subarray(0, 4).toString(),
+      '%PDF',
+    );
+
     const generated = await request(baseUrl, '/contracts/generate', {
       method: 'POST',
       token: tokens.get('SALES'),
@@ -532,6 +581,17 @@ async function main() {
       },
     });
     assert.ok(generated.documentId);
+    const regenerated = await request(
+      baseUrl,
+      `/contracts/${generated.contract.id}/regenerate`,
+      {
+        method: 'POST',
+        token: tokens.get('SALES'),
+        expected: 201,
+      },
+    );
+    assert.equal(regenerated.documentId, generated.documentId);
+    assert.equal(regenerated.contract.contractNumber, generated.contract.contractNumber);
     const contracts = await request(
       baseUrl,
       `/contracts?vehicleId=${vehicle.id}`,

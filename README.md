@@ -46,7 +46,9 @@ document management, LLM document extraction, contract generation, and RO e-Tran
   documents uploaded after each tenant's accounting cutover enter this flow. Approved incoming
   invoices/independent receipts linked to a car also create document-backed landed-cost rows.
 - **Contracts**: generate *contract de vânzare-cumpărare* / *proces-verbal* PDFs
-  (price in words in Romanian, per-tenant number sequences), stored back as documents. An
+  (embedded Unicode fonts, price in words in Romanian, per-tenant number sequences), stored
+  back as documents. Full-text templates are editable per company in Settings, support safe
+  data placeholders and PDF preview, and existing generated files can be regenerated in place. An
   uploaded private-person vehicle purchase contract creates the vehicle/seller catalogue
   records from extracted identity data and, after review, posts `371 = 462`.
 - **SAGA export**: `/exporturi` previews and generates `SAGA_Export_<date>.zip` with

@@ -3,6 +3,7 @@ import { useSelector } from 'react-redux';
 import {
   useArticlesQuery,
   useCompanyQuery,
+  useContractTemplatesQuery,
   useCreateArticleMutation,
   useCreateManagementMutation,
   useCreatePartyMutation,
@@ -13,7 +14,9 @@ import {
   useLazyCompanyFromAnafQuery,
   useManagementsQuery,
   usePartiesQuery,
+  usePreviewContractTemplateMutation,
   useUpdateCompanyMutation,
+  useUpdateContractTemplatesMutation,
   useUpdatePartyMutation,
   useUpdateUserMutation,
   useUsersQuery,
@@ -66,7 +69,10 @@ export default function Settings() {
         </p>
       )}
 
-      <AccountingSettings onMessage={setMessage} />
+      <AccountingSettings
+        onMessage={setMessage}
+        canEditTemplates={canManageUsers}
+      />
 
       {canManageUsers && (
         <section className="mt-8">
@@ -159,8 +165,10 @@ export default function Settings() {
 
 function AccountingSettings({
   onMessage,
+  canEditTemplates,
 }: {
   onMessage: (message: string) => void;
+  canEditTemplates: boolean;
 }) {
   const {
     data: company,
@@ -172,9 +180,9 @@ function AccountingSettings({
     useUpdateCompanyMutation();
   const [loadCompanyFromAnaf, { isFetching: loadingCompanyFromAnaf }] =
     useLazyCompanyFromAnafQuery();
-  const [tab, setTab] = useState<'company' | 'partners' | 'articles' | 'managements'>(
-    'company',
-  );
+  const [tab, setTab] = useState<
+    'company' | 'contracts' | 'partners' | 'articles' | 'managements'
+  >('company');
   const [form, setForm] = useState<Record<string, any>>({});
   const [anafMessage, setAnafMessage] = useState('');
 
@@ -288,6 +296,7 @@ function AccountingSettings({
 
   const tabs = [
     ['company', 'Companie & SAGA'],
+    ['contracts', 'Contracte PDF'],
     ['partners', 'Parteneri'],
     ['articles', 'Articole'],
     ['managements', 'Gestiuni'],
@@ -402,10 +411,271 @@ function AccountingSettings({
           </div>
         </form>
       )}
+      {tab === 'contracts' && (
+        <ContractTemplatesSettings
+          canEdit={canEditTemplates}
+          onError={onMessage}
+        />
+      )}
       {tab === 'partners' && <PartnersCatalogue onMessage={onMessage} />}
       {tab === 'articles' && <ArticlesCatalogue onMessage={onMessage} />}
       {tab === 'managements' && <ManagementsCatalogue onMessage={onMessage} />}
     </section>
+  );
+}
+
+function ContractTemplatesSettings({
+  canEdit,
+  onError,
+}: {
+  canEdit: boolean;
+  onError: (message: string) => void;
+}) {
+  const { data, isLoading, error } = useContractTemplatesQuery();
+  const [updateTemplates, { isLoading: saving }] =
+    useUpdateContractTemplatesMutation();
+  const [previewTemplate, { isLoading: previewing }] =
+    usePreviewContractTemplateMutation();
+  const [kind, setKind] = useState<'sale' | 'handover'>('sale');
+  const [sale, setSale] = useState('');
+  const [handover, setHandover] = useState('');
+  const [status, setStatus] = useState<{
+    tone: 'success' | 'error';
+    text: string;
+  }>();
+  const [previewUrl, setPreviewUrl] = useState('');
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!data) return;
+    setSale(data.templates.sale);
+    setHandover(data.templates.handover);
+  }, [data]);
+
+  useEffect(
+    () => () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    },
+    [previewUrl],
+  );
+
+  const activeTemplate = kind === 'sale' ? sale : handover;
+  const setActiveTemplate = (value: string) =>
+    kind === 'sale' ? setSale(value) : setHandover(value);
+  const documentKind =
+    kind === 'sale' ? 'vanzare-cumparare' : 'proces-verbal';
+
+  const save = async () => {
+    onError('');
+    setStatus(undefined);
+    try {
+      await updateTemplates({ sale, handover }).unwrap();
+      setStatus({
+        tone: 'success',
+        text: 'Șabloanele au fost salvate. Se aplică automat documentelor noi; pentru un document existent folosește „Regenerează PDF” din fișa vehiculului.',
+      });
+    } catch (requestError: any) {
+      setStatus({ tone: 'error', text: apiError(requestError) });
+    }
+  };
+
+  const preview = async () => {
+    onError('');
+    setStatus(undefined);
+    try {
+      const result = await previewTemplate({
+        kind: documentKind,
+        template: activeTemplate,
+      }).unwrap();
+      const bytes = Uint8Array.from(atob(result.data), (character) =>
+        character.charCodeAt(0),
+      );
+      const nextUrl = URL.createObjectURL(
+        new Blob([bytes], { type: result.contentType }),
+      );
+      setPreviewUrl(nextUrl);
+    } catch (requestError: any) {
+      setStatus({ tone: 'error', text: apiError(requestError) });
+    }
+  };
+
+  const insertPlaceholder = (token: string) => {
+    const editor = editorRef.current;
+    if (!editor) {
+      setActiveTemplate(`${activeTemplate}${token}`);
+      return;
+    }
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const next = `${activeTemplate.slice(0, start)}${token}${activeTemplate.slice(end)}`;
+    setActiveTemplate(next);
+    requestAnimationFrame(() => {
+      editor.focus();
+      editor.setSelectionRange(start + token.length, start + token.length);
+    });
+  };
+
+  if (isLoading) {
+    return <p className="p-5 text-sm text-muted">Se încarcă șabloanele…</p>;
+  }
+  if (error || !data) {
+    return (
+      <div className="m-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        Șabloanele contractelor nu au putut fi încărcate: {apiError(error)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-ink">Șabloane documente de vânzare</h3>
+          <p className="mt-1 max-w-3xl text-sm text-muted">
+            Personalizează integral textul. Datele reale sunt introduse automat în locul placeholderelor la generarea unui document nou.
+          </p>
+        </div>
+        {!canEdit && (
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+            Doar contabilul poate modifica șabloanele
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setKind('sale');
+            setPreviewUrl('');
+          }}
+          className={`rounded-control px-3.5 py-2 text-sm font-semibold ${
+            kind === 'sale'
+              ? 'bg-brand text-white'
+              : 'border border-line-strong text-ink-soft'
+          }`}
+        >
+          Contract vânzare
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setKind('handover');
+            setPreviewUrl('');
+          }}
+          className={`rounded-control px-3.5 py-2 text-sm font-semibold ${
+            kind === 'handover'
+              ? 'bg-brand text-white'
+              : 'border border-line-strong text-ink-soft'
+          }`}
+        >
+          Proces-verbal
+        </button>
+        {data.customized[kind] && (
+          <span className="self-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-brand">
+            Personalizat
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
+        <div className="min-w-0">
+          <label className="text-xs font-semibold text-muted" htmlFor="contract-template-editor">
+            Conținutul șablonului
+          </label>
+          <textarea
+            ref={editorRef}
+            id="contract-template-editor"
+            aria-label={kind === 'sale' ? 'Șablon contract vânzare' : 'Șablon proces-verbal'}
+            value={activeTemplate}
+            readOnly={!canEdit}
+            onChange={(event) => setActiveTemplate(event.target.value)}
+            spellCheck
+            className="mt-1 min-h-[620px] w-full resize-y rounded-xl border border-line-strong bg-white p-4 font-mono text-[12px] leading-5 text-ink focus:border-brand focus:outline-none read-only:bg-slate-50"
+          />
+
+          <div className="mt-3 rounded-xl border border-line bg-slate-50 p-3">
+            <p className="text-xs font-semibold text-ink-soft">Formatare</p>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              <code># Titlu</code> pentru titlul principal, <code>## Secțiune</code> pentru subtitluri, <code>&gt; Text</code> pentru text centrat și <code>- Element</code> pentru liste. Placeholder-ele de tip bloc trebuie puse singure pe rând.
+            </p>
+          </div>
+
+          <div className="mt-3">
+            <p className="text-xs font-semibold text-ink-soft">Inserează un placeholder</p>
+            <div className="mt-2 flex max-h-36 flex-wrap gap-1.5 overflow-y-auto">
+              {data.placeholders.map((placeholder: any) => (
+                <button
+                  key={placeholder.token}
+                  type="button"
+                  disabled={!canEdit}
+                  title={placeholder.label}
+                  onClick={() => insertPlaceholder(placeholder.token)}
+                  className="rounded-md border border-line-strong bg-white px-2 py-1 font-mono text-[10px] text-ink-soft hover:border-brand hover:text-brand disabled:opacity-50"
+                >
+                  {placeholder.token}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {status && (
+            <p
+              className={`mt-3 rounded-xl px-3 py-2 text-sm ${
+                status.tone === 'success'
+                  ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border border-red-200 bg-red-50 text-red-700'
+              }`}
+            >
+              {status.text}
+            </p>
+          )}
+
+          {canEdit && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTemplate(data.defaults[kind])}
+                className="rounded-control border border-line-strong px-3.5 py-2 text-sm font-semibold text-ink-soft"
+              >
+                Resetează documentul curent
+              </button>
+              <button
+                type="button"
+                onClick={preview}
+                disabled={previewing || !activeTemplate.trim()}
+                className="rounded-control border border-brand px-3.5 py-2 text-sm font-semibold text-brand disabled:opacity-50"
+              >
+                {previewing ? 'Se generează…' : 'Previzualizează PDF'}
+              </button>
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving || !sale.trim() || !handover.trim()}
+                className="rounded-control bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-50"
+              >
+                {saving ? 'Se salvează…' : 'Salvează ambele șabloane'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0 xl:sticky xl:top-4 xl:self-start">
+          <p className="text-xs font-semibold text-muted">Previzualizare PDF</p>
+          {previewUrl ? (
+            <iframe
+              title="Previzualizare șablon PDF"
+              src={previewUrl}
+              className="mt-1 h-[780px] w-full rounded-xl border border-line bg-slate-100"
+            />
+          ) : (
+            <div className="mt-1 flex h-[420px] items-center justify-center rounded-xl border border-dashed border-line-strong bg-slate-50 p-6 text-center text-sm text-muted">
+              Apasă „Previzualizează PDF” pentru a verifica aspectul, diacriticele și paginarea înainte de salvare.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
