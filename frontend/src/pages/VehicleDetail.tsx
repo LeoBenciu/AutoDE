@@ -5,6 +5,7 @@ import {
   useGenerateContractMutation,
   useLazyDownloadUrlQuery,
   usePartiesQuery,
+  useRegenerateContractMutation,
   useUpdateVehicleMutation,
   useUploadDocumentsMutation,
   useVehicleQuery,
@@ -37,8 +38,6 @@ export default function VehicleDetail() {
       setDocumentOpenError('Browserul a blocat fila nouă. Permite ferestrele pop-up pentru această aplicație și încearcă din nou.');
       return;
     }
-    documentTab.opener = null;
-
     setOpeningDocumentId(documentId);
     try {
       const { url } = await getDownloadUrl(documentId).unwrap();
@@ -488,6 +487,8 @@ function ContractSection({
 }) {
   const { data: parties = [] } = usePartiesQuery();
   const [generate, { isLoading }] = useGenerateContractMutation();
+  const [regenerate] = useRegenerateContractMutation();
+  const [regeneratingId, setRegeneratingId] = useState<number>();
   const [buyerId, setBuyerId] = useState('');
   // Smart default: the vehicle's sale/list price is pre-filled, adjust if needed.
   const [price, setPrice] = useState(defaultPrice != null ? String(defaultPrice) : '');
@@ -517,16 +518,37 @@ function ContractSection({
       <h2 className="font-semibold text-ink">Contracte</h2>
       <div className="mt-2 space-y-1">
         {contracts.map((c: any) => (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => onOpenDocument(c.documentId)}
-            disabled={!c.documentId || openingDocumentId === c.documentId}
-            className="block text-left text-sm text-brand hover:underline disabled:cursor-wait disabled:text-muted disabled:no-underline"
-            aria-label={`Deschide ${c.contractType === 'proces-verbal' ? 'procesul-verbal' : 'contractul'} ${c.contractNumber} într-o filă nouă`}
-          >
-            {c.contractNumber} · {c.contractType} · {c.totalValue ? `${Number(c.totalValue).toLocaleString('ro-RO')} ${c.currency}` : ''}
-          </button>
+          <div key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button
+              type="button"
+              onClick={() => onOpenDocument(c.documentId)}
+              disabled={!c.documentId || openingDocumentId === c.documentId}
+              className="text-left text-sm text-brand hover:underline disabled:cursor-wait disabled:text-muted disabled:no-underline"
+              aria-label={`Deschide ${c.contractType === 'proces-verbal' ? 'procesul-verbal' : 'contractul'} ${c.contractNumber} într-o filă nouă`}
+            >
+              {c.contractNumber} · {c.contractType} · {c.totalValue ? `${Number(c.totalValue).toLocaleString('ro-RO')} ${c.currency}` : ''}
+            </button>
+            <button
+              type="button"
+              disabled={!c.documentId || regeneratingId === c.id}
+              onClick={async () => {
+                setMessage('');
+                setRegeneratingId(c.id);
+                try {
+                  await regenerate(c.id).unwrap();
+                  setMessage(`${c.contractNumber} a fost regenerat cu șablonul curent.`);
+                } catch (error: any) {
+                  setMessage(error?.data?.message ?? 'PDF-ul nu a putut fi regenerat');
+                } finally {
+                  setRegeneratingId(undefined);
+                }
+              }}
+              className="text-xs font-semibold text-muted hover:text-brand disabled:cursor-wait disabled:opacity-50"
+              aria-label={`Regenerează PDF ${c.contractNumber}`}
+            >
+              {regeneratingId === c.id ? 'Se regenerează…' : 'Regenerează PDF'}
+            </button>
+          </div>
         ))}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">

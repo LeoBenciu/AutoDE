@@ -13,24 +13,26 @@ datasource db {
 // ---------- Tenancy & auth ----------
 
 model Tenant {
-  id                  Int      @id @default(autoincrement())
-  name                String
-  cui                 String? // CUI/CIF of the dealership
-  registrationNumber  String?
-  address             String?
-  country             String   @default("RO")
-  county              String?
-  city                String?
-  iban                String?
-  bankName            String?
-  email               String?
-  phone               String?
-  defaultCurrency     String   @default("RON")
-  isVatPayer          Boolean  @default(true)
-  hasTvaLaIncasare    Boolean  @default(false)
-  accountingCutoverAt DateTime @default(now())
-  sagaExportConfig    Json?
-  createdAt           DateTime @default(now())
+  id                       Int      @id @default(autoincrement())
+  name                     String
+  cui                      String? // CUI/CIF of the dealership
+  registrationNumber       String?
+  address                  String?
+  country                  String   @default("RO")
+  county                   String?
+  city                     String?
+  iban                     String?
+  bankName                 String?
+  email                    String?
+  phone                    String?
+  defaultCurrency          String   @default("RON")
+  isVatPayer               Boolean  @default(true)
+  hasTvaLaIncasare         Boolean  @default(false)
+  accountingCutoverAt      DateTime @default(now())
+  sagaExportConfig         Json?
+  saleContractTemplate     String?  @db.Text
+  handoverProtocolTemplate String?  @db.Text
+  createdAt                DateTime @default(now())
 
   users          User[]
   parties        Party[]

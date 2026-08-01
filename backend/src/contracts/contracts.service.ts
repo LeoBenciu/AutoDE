@@ -1,12 +1,20 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
-import PDFDocument = require('pdfkit');
 import { PrismaService } from '../common/prisma.service';
 import { S3Service } from '../common/s3.service';
 import { AuditService } from '../common/audit.service';
 import { amountInWords } from './ro-words';
-
-export type ContractKind = 'vanzare-cumparare' | 'proces-verbal';
+import { renderContractPdf } from './contract-pdf';
+import {
+  CONTRACT_PLACEHOLDERS,
+  ContractKind,
+  ContractTemplateData,
+  DEFAULT_HANDOVER_PROTOCOL_TEMPLATE,
+  DEFAULT_SALE_CONTRACT_TEMPLATE,
+  defaultTemplateFor,
+  misplacedBlockPlaceholders,
+  unknownTemplatePlaceholders,
+} from './contract-templates';
 
 interface GenerateInput {
   vehicleId: number;
@@ -36,6 +44,150 @@ export class ContractsService {
     });
   }
 
+  async templates(tenantId: number) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        saleContractTemplate: true,
+        handoverProtocolTemplate: true,
+      },
+    });
+    if (!tenant) throw new NotFoundException('Compania nu a fost găsită');
+    return {
+      templates: {
+        sale:
+          tenant.saleContractTemplate ?? DEFAULT_SALE_CONTRACT_TEMPLATE,
+        handover:
+          tenant.handoverProtocolTemplate ??
+          DEFAULT_HANDOVER_PROTOCOL_TEMPLATE,
+      },
+      defaults: {
+        sale: DEFAULT_SALE_CONTRACT_TEMPLATE,
+        handover: DEFAULT_HANDOVER_PROTOCOL_TEMPLATE,
+      },
+      customized: {
+        sale: tenant.saleContractTemplate != null,
+        handover: tenant.handoverProtocolTemplate != null,
+      },
+      placeholders: CONTRACT_PLACEHOLDERS,
+    };
+  }
+
+  async updateTemplates(
+    tenantId: number,
+    userId: number,
+    input: { sale?: string; handover?: string },
+  ) {
+    const data: {
+      saleContractTemplate?: string | null;
+      handoverProtocolTemplate?: string | null;
+    } = {};
+    if (input.sale !== undefined) {
+      data.saleContractTemplate = this.customTemplateOrNull(
+        input.sale,
+        DEFAULT_SALE_CONTRACT_TEMPLATE,
+      );
+    }
+    if (input.handover !== undefined) {
+      data.handoverProtocolTemplate = this.customTemplateOrNull(
+        input.handover,
+        DEFAULT_HANDOVER_PROTOCOL_TEMPLATE,
+      );
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Nu a fost trimis niciun șablon');
+    }
+
+    await this.prisma.tenant.update({ where: { id: tenantId }, data });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'contract.templates.updated',
+      entity: 'Tenant',
+      entityId: tenantId,
+      details: {
+        saleCustomized: data.saleContractTemplate != null,
+        handoverCustomized: data.handoverProtocolTemplate != null,
+      },
+    });
+    return this.templates(tenantId);
+  }
+
+  async previewTemplate(kind: ContractKind, template?: string) {
+    const selected = template?.trim() || defaultTemplateFor(kind);
+    this.validateTemplate(selected);
+    const pdf = await renderContractPdf(selected, previewData(kind));
+    return {
+      contentType: 'application/pdf',
+      fileName:
+        kind === 'vanzare-cumparare'
+          ? 'previzualizare-contract.pdf'
+          : 'previzualizare-proces-verbal.pdf',
+      data: pdf.toString('base64'),
+    };
+  }
+
+  async regenerate(tenantId: number, userId: number, id: number) {
+    const contract = await this.prisma.contract.findFirst({
+      where: { id, tenantId },
+      include: {
+        vehicle: { include: { tenant: true } },
+        party: true,
+        document: true,
+      },
+    });
+    if (!contract) throw new NotFoundException('Contractul nu a fost găsit');
+    if (
+      !contract.document ||
+      !contract.vehicle ||
+      !['vanzare-cumparare', 'proces-verbal'].includes(contract.contractType)
+    ) {
+      throw new BadRequestException(
+        'Doar contractele și procesele-verbale generate de aplicație pot fi regenerate',
+      );
+    }
+
+    const kind = contract.contractType as ContractKind;
+    const template = this.templateFor(kind, contract.vehicle.tenant);
+    this.validateTemplate(template);
+    const price =
+      contract.totalValue == null ? undefined : Number(contract.totalValue);
+    const data = this.templateData(
+      contract.vehicle,
+      contract.party,
+      contract.contractNumber ?? String(contract.id),
+      (contract.contractDate ?? contract.document.uploadedAt).toLocaleDateString(
+        'ro-RO',
+      ),
+      price,
+      contract.currency ?? contract.vehicle.soldCurrency ?? 'RON',
+    );
+    const pdf = await renderContractPdf(template, data);
+    await this.s3.putObject(contract.document.s3Key, pdf, 'application/pdf');
+    await this.prisma.document.update({
+      where: { id: contract.document.id },
+      data: {
+        contentType: 'application/pdf',
+        fileSize: pdf.length,
+        documentHash: createHash('sha256').update(pdf).digest('hex'),
+        processingStatus: 'COMPLETED',
+      },
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'contract.regenerated',
+      entity: 'Contract',
+      entityId: contract.id,
+      details: {
+        contractNumber: contract.contractNumber,
+        kind,
+        documentId: contract.document.id,
+      },
+    });
+    return { contract, documentId: contract.document.id };
+  }
+
   /**
    * Generates a Romanian contract PDF from vehicle + party data, stores it
    * through the document store (attached to the vehicle) and records the
@@ -62,33 +214,17 @@ export class ContractsService {
     const contractNumber = `${series}-${String(number).padStart(5, '0')}`;
     const today = new Date();
 
-    const pdf = await this.renderPdf(input.kind, {
+    const template = this.templateFor(input.kind, vehicle.tenant);
+    this.validateTemplate(template);
+    const templateData = this.templateData(
+      vehicle,
+      buyer,
       contractNumber,
-      date: today.toLocaleDateString('ro-RO'),
-      seller: {
-        name: vehicle.tenant.name,
-        taxId: vehicle.tenant.cui ?? '________________',
-        address: vehicle.tenant.address ?? '________________',
-      },
-      buyer: {
-        name: buyer.name,
-        taxId: buyer.taxId ?? '________________',
-        address: buyer.address ?? '________________',
-        kind: buyer.kind,
-      },
-      vehicle: {
-        make: vehicle.make,
-        model: vehicle.model,
-        variant: vehicle.variant ?? '',
-        vin: vehicle.vin,
-        year: vehicle.year,
-        firstRegistered: vehicle.firstRegistered?.toLocaleDateString('ro-RO') ?? '—',
-        mileageKm: vehicle.mileageKm ?? undefined,
-        color: vehicle.color ?? '—',
-      },
+      today.toLocaleDateString('ro-RO'),
       price,
       currency,
-    });
+    );
+    const pdf = await renderContractPdf(template, templateData);
 
     const fileName = `${contractNumber}_${vehicle.vin}.pdf`;
     const s3Key = `tenants/${tenantId}/contracts/${randomUUID()}/${fileName}`;
@@ -148,92 +284,144 @@ export class ContractsService {
     });
   }
 
-  private renderPdf(kind: ContractKind, data: any): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ size: 'A4', margin: 56 });
-      const chunks: Buffer[] = [];
-      doc.on('data', (c: Buffer) => chunks.push(c));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
+  private templateFor(
+    kind: ContractKind,
+    tenant: {
+      saleContractTemplate?: string | null;
+      handoverProtocolTemplate?: string | null;
+    },
+  ) {
+    return kind === 'vanzare-cumparare'
+      ? tenant.saleContractTemplate ?? DEFAULT_SALE_CONTRACT_TEMPLATE
+      : tenant.handoverProtocolTemplate ?? DEFAULT_HANDOVER_PROTOCOL_TEMPLATE;
+  }
 
-      const title =
-        kind === 'vanzare-cumparare'
-          ? 'CONTRACT DE VÂNZARE-CUMPĂRARE AUTO'
-          : 'PROCES-VERBAL DE PREDARE-PRIMIRE AUTOVEHICUL';
+  private templateData(
+    vehicle: any,
+    buyer: any,
+    contractNumber: string,
+    date: string,
+    price: number | undefined,
+    currency: string,
+  ): ContractTemplateData {
+    return {
+      contractNumber,
+      date,
+      seller: {
+        name: vehicle.tenant.name,
+        taxId: vehicle.tenant.cui,
+        registration: vehicle.tenant.registrationNumber,
+        address: vehicle.tenant.address,
+        city: vehicle.tenant.city,
+        county: vehicle.tenant.county,
+        country: vehicle.tenant.country,
+        iban: vehicle.tenant.iban,
+        bankName: vehicle.tenant.bankName,
+        email: vehicle.tenant.email,
+        phone: vehicle.tenant.phone,
+      },
+      buyer: {
+        name: buyer.name,
+        taxId: buyer.taxId,
+        identifierType: buyer.identifierType,
+        registration: buyer.registration,
+        address: buyer.address,
+        city: buyer.city,
+        county: buyer.county,
+        country: buyer.country,
+        iban: buyer.iban,
+        bankName: buyer.bankName,
+        email: buyer.email,
+        phone: buyer.phone,
+        kind: buyer.kind,
+      },
+      vehicle: {
+        make: vehicle.make,
+        model: vehicle.model,
+        variant: vehicle.variant ?? '',
+        vin: vehicle.vin,
+        year: vehicle.year,
+        firstRegistered:
+          vehicle.firstRegistered?.toLocaleDateString('ro-RO') ?? null,
+        mileageKm: vehicle.mileageKm,
+        color: vehicle.color,
+      },
+      price,
+      currency,
+      priceInWords:
+        price == null ? undefined : amountInWords(price, currency),
+    };
+  }
 
-      doc.font('Helvetica-Bold').fontSize(14).text(title, { align: 'center' });
-      doc.moveDown(0.3);
-      doc.font('Helvetica').fontSize(10).text(`Nr. ${data.contractNumber} din ${data.date}`, { align: 'center' });
-      doc.moveDown(1.2);
+  private customTemplateOrNull(template: string, defaultTemplate: string) {
+    const normalized = template.trim();
+    if (!normalized) {
+      throw new BadRequestException('Șablonul nu poate fi gol');
+    }
+    this.validateTemplate(normalized);
+    return normalized === defaultTemplate.trim() ? null : normalized;
+  }
 
-      doc.fontSize(10);
-      section(doc, 'I. PĂRȚILE');
-      doc.text(
-        `1. ${data.seller.name}, cu sediul în ${data.seller.address}, CUI/CIF ${data.seller.taxId}, în calitate de VÂNZĂTOR,`,
+  private validateTemplate(template: string) {
+    if (template.length > 30_000) {
+      throw new BadRequestException(
+        'Șablonul este prea lung (maximum 30.000 de caractere)',
       );
-      doc.moveDown(0.3);
-      doc.text(
-        `2. ${data.buyer.name}, ${data.buyer.kind === 'COMPANY' ? 'cu sediul în' : 'domiciliat(ă) în'} ${data.buyer.address}, ` +
-          `${data.buyer.kind === 'COMPANY' ? 'CUI/CIF' : 'CNP'} ${data.buyer.taxId}, în calitate de CUMPĂRĂTOR,`,
+    }
+    const unknown = unknownTemplatePlaceholders(template);
+    if (unknown.length > 0) {
+      throw new BadRequestException(
+        `Placeholder necunoscut: ${unknown.join(', ')}`,
       );
-      doc.moveDown(0.8);
-
-      section(doc, 'II. OBIECTUL');
-      doc.text(
-        `${kind === 'vanzare-cumparare' ? 'Vânzătorul vinde și cumpărătorul cumpără' : 'Se predă, respectiv se primește,'} autovehiculul:`,
+    }
+    const misplaced = misplacedBlockPlaceholders(template);
+    if (misplaced.length > 0) {
+      throw new BadRequestException(
+        `Placeholder-ele bloc trebuie puse singure pe rând: ${misplaced.join(', ')}`,
       );
-      doc.moveDown(0.3);
-      const v = data.vehicle;
-      const rows: Array<[string, string]> = [
-        ['Marcă / Model', `${v.make} ${v.model} ${v.variant}`.trim()],
-        ['Serie șasiu (VIN)', v.vin],
-        ['An fabricație', String(v.year)],
-        ['Prima înmatriculare', v.firstRegistered],
-        ['Kilometraj', v.mileageKm != null ? `${v.mileageKm} km` : '—'],
-        ['Culoare', v.color],
-      ];
-      for (const [label, value] of rows) {
-        doc.font('Helvetica-Bold').text(`${label}: `, { continued: true }).font('Helvetica').text(value);
-      }
-      doc.moveDown(0.8);
-
-      if (kind === 'vanzare-cumparare') {
-        section(doc, 'III. PREȚUL');
-        doc.text(
-          `Prețul de vânzare este de ${data.price.toLocaleString('ro-RO')} ${data.currency} ` +
-            `(${amountInWords(data.price, data.currency)}), achitat conform înțelegerii părților.`,
-        );
-        doc.moveDown(0.8);
-        section(doc, 'IV. DECLARAȚII');
-        doc.text(
-          'Vânzătorul declară că autovehiculul este proprietatea sa, nu este gajat, sechestrat sau urmărit, ' +
-            'iar cumpărătorul declară că a văzut și a verificat autovehiculul, cunoscând starea tehnică a acestuia. ' +
-            'Predarea-primirea se consemnează prin proces-verbal separat sau prin semnarea prezentului contract.',
-        );
-      } else {
-        section(doc, 'III. CONSTATĂRI');
-        doc.text(
-          'Autovehiculul se predă împreună cu cheile, documentele de înmatriculare și accesoriile aferente. ' +
-            'Părțile constată că autovehiculul corespunde descrierii de mai sus.',
-        );
-      }
-      doc.moveDown(2);
-
-      const y = doc.y;
-      doc.font('Helvetica-Bold').text('VÂNZĂTOR', 70, y);
-      doc.text('CUMPĂRĂTOR', 350, y);
-      doc.font('Helvetica').text(data.seller.name, 70, y + 16);
-      doc.text(data.buyer.name, 350, y + 16);
-      doc.text('Semnătura: ______________', 70, y + 44);
-      doc.text('Semnătura: ______________', 350, y + 44);
-
-      doc.end();
-    });
+    }
   }
 }
 
-function section(doc: InstanceType<typeof PDFDocument>, title: string) {
-  doc.font('Helvetica-Bold').text(title);
-  doc.font('Helvetica');
-  doc.moveDown(0.3);
+function previewData(kind: ContractKind): ContractTemplateData {
+  return {
+    contractNumber: kind === 'vanzare-cumparare' ? 'CV-00001' : 'PV-00001',
+    date: '01.08.2026',
+    seller: {
+      name: 'DEALER AUTO ROMÂNIA S.R.L.',
+      taxId: 'RO12345678',
+      registration: 'J40/1234/2020',
+      address: 'Str. Independenței nr. 10, bl. A2, et. 1, ap. 4',
+      city: 'București',
+      county: 'București',
+      country: 'RO',
+      iban: 'RO49AAAA1B31007593840000',
+      bankName: 'Banca Exemplu',
+      email: 'vanzari@dealer-exemplu.ro',
+      phone: '+40 721 000 000',
+    },
+    buyer: {
+      name: 'Șerban-Țăndărică Ionuț',
+      kind: 'INDIVIDUAL',
+      identifierType: 'CNP',
+      taxId: '1900101223344',
+      address: 'Str. Mărășești nr. 25, sat Pâncești, comuna Sascut',
+      city: 'Sascut',
+      county: 'Bacău',
+      country: 'RO',
+    },
+    vehicle: {
+      make: 'Volkswagen',
+      model: 'Passat',
+      variant: 'Variant B8 2.0 TDI',
+      vin: 'WVWZZZ3CZJE000000',
+      year: 2018,
+      firstRegistered: '15.03.2018',
+      mileageKm: 145_320,
+      color: 'Gri metalizat',
+    },
+    price: 100_000,
+    currency: 'RON',
+    priceInWords: amountInWords(100_000, 'RON'),
+  };
 }
