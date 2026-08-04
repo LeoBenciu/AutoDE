@@ -162,19 +162,11 @@ export class SagaService {
     };
 
     if (data.types.includes('facturi')) {
-      const invoiceNames = new Set<string>();
-      for (const invoice of data.invoices) {
-        const name = sagaInvoiceFileName(invoice, data.tenant.cui, stamp);
-        if (invoiceNames.has(name)) {
-          throw new BadRequestException(
-            `Două documente generează același nume SAGA: ${name}`,
-          );
-        }
-        invoiceNames.add(name);
-        add(name, [invoice], () =>
-          buildFacturiXml([invoice], company, data.articles),
-        );
-      }
+      add(
+        sagaInvoicesFileName(data.tenant.cui, stamp),
+        data.invoices,
+        () => buildFacturiXml(data.invoices, company, data.articles),
+      );
     }
     if (data.types.includes('incasari')) {
       add(`I_${stamp}.xml`, data.receipts, () =>
@@ -865,19 +857,12 @@ function cleanTaxIdPart(value: string): string {
   return cleanFilePart(value.replace(/^RO/i, ''));
 }
 
-export function sagaInvoiceFileName(
-  invoice: SagaInvoiceRecord,
+export function sagaInvoicesFileName(
   tenantCui?: string | null,
   fallbackDate = new Date().toISOString().slice(0, 10),
 ): string {
-  const issuerTaxId = cleanTaxIdPart(
-    invoice.data.vendorEin || tenantCui || 'FARA_CUI',
-  );
-  const invoiceNumber = cleanFilePart(
-    invoice.data.documentNumber || String(invoice.id),
-  );
-  const invoiceDate = invoice.data.documentDate || fallbackDate;
-  return `F_${issuerTaxId}_${invoiceNumber}_${invoiceDate}.xml`;
+  const companyTaxId = cleanTaxIdPart(tenantCui || 'FARA_CUI');
+  return `F_${companyTaxId}_${fallbackDate}.xml`;
 }
 
 function buildCompatibilityCsv(invoices: SagaInvoiceRecord[]): string {

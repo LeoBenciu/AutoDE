@@ -107,6 +107,21 @@ export class DocumentsController {
     return this.documents.correctField(user.tenantId, user.userId, id, body.field, body.newValue);
   }
 
+  @Post(':id/reprocess')
+  @Roles('ACCOUNTANT', 'SALES')
+  reprocess(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { documentType: string },
+  ) {
+    return this.documents.reprocess(
+      user.tenantId,
+      user.userId,
+      id,
+      body.documentType,
+    );
+  }
+
   @Post(':id/reviewed')
   @Roles('ACCOUNTANT')
   markReviewed(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {

@@ -896,7 +896,7 @@ async function main() {
       buyer: marker,
       buyer_ein: '50675950',
       vehicle_transaction: 'cost',
-      vehicle_cost_categories_reviewed: false,
+      vehicle_cost_categories_reviewed: true,
       vin: 'WVWZZZ1JZXW000001',
       currency: 'EUR',
       exchange_rate: 5,
@@ -911,7 +911,8 @@ async function main() {
           total: 100,
           vat_amount: 21,
           vat: 'TWENTYONE',
-          account_code: '611',
+          account_code: '628',
+          vehicle_cost_category: 'REFURB',
           articleCode: 'REFURB-TEST',
           um: 'UNITATE_DE_SERVICE',
           vat_deductibility: 'FULL',
@@ -1051,24 +1052,22 @@ async function main() {
       from: today,
       to: today,
     });
-    assert.equal(archive.fileCount, sagaPreview.counts.facturi + 5);
+    assert.equal(archive.fileCount, 6);
     const zip = await JSZip.loadAsync(archive.content);
     const fileNames = Object.keys(zip.files);
-    assert.equal(fileNames.length, sagaPreview.counts.facturi + 5);
+    assert.equal(fileNames.length, 6);
     const facturiNames = fileNames.filter((name) => name.startsWith('F_'));
-    assert.equal(facturiNames.length, sagaPreview.counts.facturi);
+    assert.equal(facturiNames.length, 1);
     assert.ok(
       facturiNames.every((name) =>
-        /^F_[A-Za-z0-9_-]+_[A-Za-z0-9_-]+_\d{4}-\d{2}-\d{2}\.xml$/.test(
-          name,
-        ),
+        /^F_[A-Za-z0-9_-]+_\d{4}-\d{2}-\d{2}\.xml$/.test(name),
       ),
     );
-    const facturiXml = (
-      await Promise.all(
-        facturiNames.map((name) => zip.file(name)!.async('string')),
-      )
-    ).join('\n');
+    const facturiXml = await zip.file(facturiNames[0])!.async('string');
+    assert.equal(
+      (facturiXml.match(/<Factura>/g) ?? []).length,
+      sagaPreview.counts.facturi,
+    );
     const incasariXml = await zip.file(fileNames.find((name) => name.startsWith('I_'))!)!.async('string');
     const platiXml = await zip.file(fileNames.find((name) => name.startsWith('P_'))!)!.async('string');
     const suppliersXml = await zip.file(fileNames.find((name) => name.startsWith('FUR_'))!)!.async('string');
@@ -1080,7 +1079,10 @@ async function main() {
       /<FacturaNumar>REV-1<\/FacturaNumar>[\s\S]*?<FacturaTaxareInversa>Da<\/FacturaTaxareInversa>[\s\S]*?<FacturaTVAIncasare>Nu<\/FacturaTVAIncasare>[\s\S]*?<FacturaTip>T<\/FacturaTip>/,
     );
     assert.match(facturiXml, /<FacturaTip>T<\/FacturaTip>[\s\S]*?<ProcTVA>21<\/ProcTVA>/);
-    assert.match(facturiXml, /<FacturaNumar>CA-1<\/FacturaNumar>/);
+    assert.match(
+      facturiXml,
+      /<FacturaNumar>CA-1<\/FacturaNumar>[\s\S]*?<FacturaTip>R<\/FacturaTip>/,
+    );
     assert.match(facturiXml, /<Descriere>Autoturism Volkswagen Golf VIN WVWZZZ1JZXW000001<\/Descriere>/);
     assert.match(facturiXml, /<TipDeducere><\/TipDeducere>/);
     assert.match(incasariXml, /<Incasari>[\s\S]*<Cont>5311<\/Cont>/);

@@ -157,6 +157,18 @@ export const api = createApi({
       query: ({ id, ...body }) => ({ url: `/documents/${id}/corrections`, method: 'POST', body }),
       invalidatesTags: (_r, _e, { id }) => ['Document', { type: 'Document', id }, 'Accounting', 'Saga'],
     }),
+    reprocessDocument: build.mutation<any, { id: number; documentType: string }>({
+      query: ({ id, ...body }) => ({
+        url: `/documents/${id}/reprocess`,
+        method: 'POST',
+        body,
+      }),
+      invalidatesTags: (_r, _e, { id }) => [
+        'Document',
+        { type: 'Document', id },
+        { type: 'Accounting', id },
+      ],
+    }),
     postingPreview: build.query<any, number>({
       query: (id) => `/documents/${id}/posting-preview`,
       providesTags: (_r, _e, id) => [{ type: 'Accounting', id }],
@@ -378,6 +390,7 @@ export const {
   useDocumentQuery,
   useUploadDocumentsMutation,
   useCorrectFieldMutation,
+  useReprocessDocumentMutation,
   usePostingPreviewQuery,
   useApproveDocumentMutation,
   useReopenDocumentMutation,

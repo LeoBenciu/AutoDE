@@ -77,16 +77,18 @@ extract_invoice_data_task:
       {client_company_ein}; set "cost" when it charges transport, customs,
       registration, inspection, repair/refurbishment, parts, or another service
       for a vehicle; otherwise set "other".
-    - On a purchase invoice, transport/freight-in that brings the purchased
-      vehicle to us (e.g. "Fahrzeugtransport", "Frachtkosten", "Transport") is
-      part of its acquisition cost: set that line's account_code to 371 (same
-      VIN/stock), not 624. Keep 624 only when the transport is billed on its own
-      as a vehicle cost invoice (vehicle_transaction="cost").
+    - CLIENT-SPECIFIC SAGA RULE (overrides the generic account hierarchy): 371
+      is ONLY for the actual purchased car line. Transport is ALWAYS 624,
+      including transport/freight shown on the vehicle purchase invoice.
+      Document handling, customs/registration/inspection fees, repairs, parts,
+      taxes and every other ancillary vehicle service/cost are 628. Never put
+      any service, fee or tax line on 371.
     - For a cost invoice, classify EVERY line item in vehicle_cost_category as
       TRANSPORT, CUSTOMS, VAT, ITP, REGISTRATION, REFURB, or OTHER. Use OTHER
       when none of the specific categories applies; never leave a line null on
-      a cost invoice. Use null for every line on purchase/other invoices. There
-      is no document-level default category.
+      a cost invoice. Set account_code=624 for TRANSPORT and account_code=628
+      for every other vehicle cost category. Use null for every line on
+      purchase/other invoices. There is no document-level default category.
     - Cost-invoice services are not stock articles: set articleCode="",
       isNew=false, and management=null on every vehicle cost line. The vehicle
       VIN/article code belongs only to the actual vehicle purchase line.
@@ -190,7 +192,7 @@ extract_receipt_data_task:
     - When in doubt and items are listed → 'independent_receipt'
     - Examples of independent receipts: supermarket receipts, gas station receipts, retail store receipts, restaurant bills with items
 
-    Common fields for all receipts: receipt_number, receipt_type ('payment_receipt' OR 'independent_receipt'), vendor, vendor_ein (number only, remove 'RO'), buyer, buyer_ein (number only, remove 'RO'), total_amount (paid/received - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), document_date (DD-MM-YYYY, must not be after {current_date}), payment_method (MANDATORY - must be either 'cash' or 'bank' - analyze the document carefully: if payment was made by cash/numerar use 'cash', if payment was made by bank transfer/transfer bancar OR card/card bancar use 'bank' - card payments are treated as bank payments - this is critical for bank reconciliation), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - detect from document or default to RON), vin (17-character chassis number or null), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text.
+    Common fields for all receipts: direction ('incoming' when {client_company_ein} is the buyer/payer, 'outgoing' when it is the vendor/payee, null only when the document does not identify the company), receipt_number, receipt_type ('payment_receipt' OR 'independent_receipt'), vendor, vendor_ein (number only, remove 'RO'), vendor_country (ISO code or null), vendor_address, vendor_city, vendor_county, buyer, buyer_ein (number only, remove 'RO'), buyer_country (ISO code or null), buyer_address, buyer_city, buyer_county, total_amount (paid/received - CRITICAL: This MUST ALWAYS be the FULL AMOUNT WITH VAT INCLUDED, regardless of whether the company is a VAT payer or not. Extract the gross total amount that includes all VAT. If the document shows separate net and VAT amounts, calculate: total_amount = net_amount + vat_amount), document_date (DD-MM-YYYY, must not be after {current_date}), payment_method (MANDATORY - must be either 'cash' or 'bank' - analyze the document carefully: if payment was made by cash/numerar use 'cash', if payment was made by bank transfer/transfer bancar OR card/card bancar use 'bank' - card payments are treated as bank payments - this is critical for bank reconciliation), currency (RON/EUR/USD/GBP/CHF/JPY/CAD/AUD/SEK/NOK/DKK/PLN/CZK/HUF/BGN - detect from document or default to RON), vin (17-character chassis number or null), referenced_numbers array listing every document number which the current document references(invoice, contract, receipt, etc.) detected anywhere in the text. Extract the full printed supplier/buyer address rather than collapsing it into the name; use null for address/location fields that are not printed.
 
     For PAYMENT RECEIPTS only: invoice_reference (MANDATORY - extract invoice number from phrases like "Pentru factura", "Factura nr.", "Invoice No.", "Payment for invoice", "Referinta: factura" - look in headers, footers, and reference sections. Also add to referenced_numbers array.)
 
@@ -200,7 +202,7 @@ extract_receipt_data_task:
     CRITICAL - LINE ITEMS EXTRACTION RULES:
     1. Extract EVERY item listed on the receipt: products, services, fuel, discounts (use NEGATIVE total), fees, and any other itemized charges.
 
-    2. For each line item extract: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING receipts - see rules below), vehicle_cost_category (TRANSPORT, CUSTOMS, VAT, ITP, REGISTRATION, REFURB, OTHER, or null). When the receipt is related to a vehicle, categorize EVERY line and use OTHER when no specific category applies. Use null for every line only when the receipt is unrelated to a vehicle. There is no document-level default category.
+    2. For each line item extract: quantity, unit_price, vat_amount, total, articleCode (existing or next available), name, vat (from {vat_rates}), um (from {units_of_measure}), account_code (THIS IS CRITICAL as the type will be determined automatically based on account_code), management (from {management_records} if not 'Nedefinit'), isNew (true if new), vat_deductibility (ONLY for INCOMING receipts - see rules below), vehicle_cost_category (TRANSPORT, CUSTOMS, VAT, ITP, REGISTRATION, REFURB, OTHER, or null). When the receipt is related to a vehicle, categorize EVERY line and use OTHER when no specific category applies. For vehicle-related receipts set account_code=624 only for TRANSPORT and account_code=628 for CUSTOMS, VAT, ITP, REGISTRATION, REFURB and OTHER; never use 371 for a vehicle cost. Use null for every line only when the receipt is unrelated to a vehicle. There is no document-level default category.
        {VAT_RATE_MAPPING}
 
        NET vs VAT-INCLUSIVE PRICES (CRITICAL): unit_price and total MUST be NET (WITHOUT VAT); vat_amount is the line's VAT; the gross line equals total + vat_amount. Romanian fiscal receipts (BON FISCAL) and most till receipts print VAT-INCLUSIVE prices — when the listed unit price / line amount already contains VAT, you MUST convert to net before output: net_total = printed_amount / (1 + rate/100) and vat_amount = printed_amount − net_total (e.g. a 100.06 line at 19% → total 84.08, vat_amount 15.98). NEVER copy a VAT-inclusive printed amount into total, otherwise the VAT gets added twice. (The document-level total_amount still stays the GROSS, VAT-inclusive figure.)

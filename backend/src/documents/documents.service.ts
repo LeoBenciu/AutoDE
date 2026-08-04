@@ -20,6 +20,19 @@ export interface UploadedDoc {
   buffer: Buffer;
 }
 
+const REEXTRACTABLE_DOCUMENT_TYPES = new Set([
+  'Invoice',
+  'Receipt',
+  'Bank Statement',
+  'Contract',
+  'Z Report',
+  'Payment Disposition',
+  'Collection Disposition',
+  'CMR',
+  'Vehicle Registration Certificate',
+  'Other',
+]);
+
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
@@ -350,6 +363,116 @@ export class DocumentsService {
   // Compatibility alias for the old UI/API. Review now means approval + posting.
   async markReviewed(tenantId: number, userId: number, id: number) {
     return this.approve(tenantId, userId, id);
+  }
+
+  /** Re-run phase 1 with an explicitly confirmed document schema. */
+  async reprocess(
+    tenantId: number,
+    userId: number,
+    id: number,
+    documentType: string,
+  ) {
+    const document = await this.get(tenantId, id);
+    if (document.reviewStatus === 'APPROVED') {
+      throw new BadRequestException(
+        'Redeschide documentul înainte de a relansa extracția.',
+      );
+    }
+    if (!REEXTRACTABLE_DOCUMENT_TYPES.has(documentType)) {
+      throw new BadRequestException(`Tip de document nesuportat: ${documentType}`);
+    }
+
+    const activeStatuses = [
+      'QUEUED',
+      'UPLOADED',
+      'PROCESSING',
+      'PHASE0_COMPLETE',
+      'PHASE1_COMPLETE',
+    ];
+    const upload = await this.prisma.pendingUpload.findFirst({
+      where: { tenantId, s3Key: document.s3Key },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (upload && activeStatuses.includes(upload.status)) {
+      throw new BadRequestException('Documentul este deja în curs de procesare.');
+    }
+
+    const currentDirection = String(
+      (document.processedData?.extractedFields as Record<string, unknown> | null)
+        ?.direction ?? '',
+    );
+    const phase0Data = {
+      document_type: documentType,
+      direction:
+        documentType === 'Invoice' &&
+        ['incoming', 'outgoing'].includes(currentDirection)
+          ? currentDirection
+          : null,
+      confidence: 1,
+      aviz: false,
+      _needs_type_review: false,
+    };
+
+    await this.prisma.$transaction(async (tx) => {
+      if (upload) {
+        await tx.pendingUpload.update({
+          where: { id: upload.id },
+          data: {
+            status: 'QUEUED',
+            processingPhase: 1,
+            phase0Data: phase0Data as any,
+            phase1Data: Prisma.DbNull,
+            retryCount: 0,
+            processingStartedAt: null,
+            lastAttemptAt: null,
+            errorMessage: null,
+            documentId: document.id,
+            vehicleId: document.vehicleId,
+            partyId: document.partyId,
+          },
+        });
+      } else {
+        await tx.pendingUpload.create({
+          data: {
+            s3Key: document.s3Key,
+            fileName: document.name,
+            contentType: document.contentType,
+            fileSize: document.fileSize,
+            documentHash: document.documentHash,
+            tenantId,
+            vehicleId: document.vehicleId,
+            partyId: document.partyId,
+            documentId: document.id,
+            status: 'QUEUED',
+            processingPhase: 1,
+            phase0Data: phase0Data as any,
+          },
+        });
+      }
+      await tx.document.update({
+        where: { id },
+        data: {
+          type: documentType,
+          processingStatus: 'PROCESSING',
+          processingStartedAt: new Date(),
+          processingCompletedAt: null,
+          needsReview: true,
+          reviewStatus:
+            document.reviewStatus === 'LEGACY' ? 'LEGACY' : 'PENDING_APPROVAL',
+          postingStatus: 'NONE',
+          postingError: null,
+        },
+      });
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'document.reprocess_requested',
+      entity: 'Document',
+      entityId: id,
+      details: { documentType },
+    });
+    return { ok: true, documentType };
   }
 
   async retryPendingUpload(tenantId: number, id: number) {
