@@ -17,7 +17,7 @@ import { resolveExchangeRateToRon } from './fx';
 import {
   removeDocumentVehicleCosts,
   syncApprovedDocumentVehicleEffects,
-  vehicleCostReviewErrors,
+  vehicleAccountingReviewErrors,
 } from '../vehicles/vehicle-document-sync';
 import {
   PartyIdentifierTypeValue,
@@ -546,7 +546,7 @@ export class PostingService {
         );
       }
     }
-    errors.push(...vehicleCostReviewErrors(canonical, vehicleId));
+    errors.push(...vehicleAccountingReviewErrors(canonical, vehicleId));
     if (
       canonical.documentType === 'Receipt' &&
       canonical.receiptType !== 'payment_receipt' &&

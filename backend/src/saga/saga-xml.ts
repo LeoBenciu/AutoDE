@@ -241,6 +241,8 @@ function buildFactura(
   articles: SagaArticleRecord[],
 ): string {
   const data = invoice.data;
+  const isContract =
+    invoice.type === 'Contract' || data.documentType === 'Contract';
   const isIndependentReceipt =
     invoice.type === 'Receipt' || data.receiptType === 'independent_receipt';
   const companyIsVendor = sameTaxId(data.vendorEin, company.cui);
@@ -338,7 +340,13 @@ function buildFactura(
     ),
     xmlTag(
       'FacturaTip',
-      data.reverseCharge ? 'T' : isIndependentReceipt ? 'C' : '',
+      isContract
+        ? 'R'
+        : data.reverseCharge
+          ? 'T'
+          : isIndependentReceipt
+            ? 'C'
+            : '',
     ),
     xmlTag('FacturaInformatiiSuplimentare', data.raw.additional_info),
     xmlTag('FacturaMoneda', data.currency || 'RON'),

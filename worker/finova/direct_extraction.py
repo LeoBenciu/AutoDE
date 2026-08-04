@@ -1013,16 +1013,49 @@ def categorize_document(
     prompt = _format_prompt(template, inputs)
 
     text = _read_cached_document_text(doc_path)
-    messages = _build_messages(prompt, text, os.path.basename(doc_path))
 
-    return _call_structured(
+    # Strong printed headings beat a probabilistic classification. In
+    # particular, photographed Romanian fiscal receipts often have noisy OCR,
+    # but "BON FISCAL" / "CHITANȚĂ" is still recovered reliably. Letting a
+    # low-confidence model answer "Other" here selects the tiny generic schema
+    # in phase 1 and permanently loses vendor, totals, VAT and line items.
+    normalized = " ".join((text or "").upper().split())
+    if re.search(r"\bBON\s+FISCAL\b|\bCHITAN[TȚ][AĂ]\b", normalized):
+        return (
+            {
+                "document_type": "Receipt",
+                "direction": None,
+                "confidence": 0.99,
+                "aviz": False,
+            },
+            {"model": "deterministic-heading", "vision": False},
+        )
+
+    # Phase 0 used to be text-only even when phase 1 had vision enabled. That is
+    # exactly backwards for phone photos: a weak OCR pass chose the wrong schema
+    # before the model ever saw the image. Use the same rendered page images for
+    # classification, always for image uploads and whenever vision is enabled.
+    is_image_doc = doc_path.lower().endswith(_IMAGE_EXTS)
+    images = _render_doc_images(doc_path) if (_vision_enabled() or is_image_doc) else []
+    if images:
+        messages = _build_vision_messages(
+            prompt, text, images, os.path.basename(doc_path)
+        )
+        label = f"phase0:categorize:vision({len(images)}p)"
+    else:
+        messages = _build_messages(prompt, text, os.path.basename(doc_path))
+        label = "phase0:categorize"
+
+    data, meta = _call_structured(
         messages=messages,
         schema_cls=CategorizationResult,
         schema_name="categorization_result",
         max_tokens=get_categorization_max_tokens(),
-        label="phase0:categorize",
+        label=label,
         cache_key="finova-categorize",
     )
+    meta["vision"] = bool(images)
+    return data, meta
 
 
 _EXTRACTION_TASK_NAMES = {

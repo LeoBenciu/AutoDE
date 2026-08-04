@@ -12,6 +12,7 @@ import {
   useLazyDownloadUrlQuery,
   usePartiesQuery,
   usePostingPreviewQuery,
+  useReprocessDocumentMutation,
   useReopenDocumentMutation,
   useRetryPendingUploadMutation,
   useUploadDocumentsMutation,
@@ -33,6 +34,79 @@ const DOC_TYPES = [
   'Handover Protocol',
   'UIT',
   'Other',
+];
+
+const REEXTRACTABLE_DOC_TYPES = [
+  'Invoice',
+  'Receipt',
+  'Bank Statement',
+  'Contract',
+  'Z Report',
+  'Payment Disposition',
+  'Collection Disposition',
+  'CMR',
+  'Vehicle Registration Certificate',
+  'Other',
+];
+
+const EXTRACTED_FIELD_LABELS: Record<string, string> = {
+  document_type: 'Tip document',
+  direction: 'Direcție',
+  receipt_type: 'Tip bon / chitanță',
+  receipt_number: 'Număr bon',
+  document_number: 'Număr document',
+  document_date: 'Data emiterii',
+  due_date: 'Data scadenței',
+  vendor: 'Furnizor',
+  vendor_ein: 'CUI furnizor',
+  vendor_country: 'Țară furnizor',
+  vendor_address: 'Adresă furnizor',
+  vendor_city: 'Localitate furnizor',
+  vendor_county: 'Județ furnizor',
+  buyer: 'Cumpărător',
+  buyer_ein: 'CUI cumpărător',
+  buyer_country: 'Țară cumpărător',
+  buyer_address: 'Adresă cumpărător',
+  buyer_city: 'Localitate cumpărător',
+  buyer_county: 'Județ cumpărător',
+  total_amount: 'Total document',
+  net_amount: 'Total fără TVA',
+  vat_amount: 'TVA',
+  currency: 'Monedă',
+  payment_method: 'Metodă de plată',
+  invoice_reference: 'Factură asociată',
+  referenced_numbers: 'Referințe documente',
+  vin: 'VIN',
+  summary: 'Rezumat',
+};
+
+const EXTRACTED_FIELD_ORDER = [
+  'document_type',
+  'direction',
+  'receipt_type',
+  'receipt_number',
+  'document_number',
+  'document_date',
+  'due_date',
+  'vendor',
+  'vendor_ein',
+  'vendor_country',
+  'vendor_address',
+  'vendor_city',
+  'vendor_county',
+  'buyer',
+  'buyer_ein',
+  'buyer_country',
+  'buyer_address',
+  'buyer_city',
+  'buyer_county',
+  'total_amount',
+  'net_amount',
+  'vat_amount',
+  'currency',
+  'payment_method',
+  'invoice_reference',
+  'vin',
 ];
 
 type SelectOption = [string, string];
@@ -141,8 +215,12 @@ const COST_CATEGORY_OPTIONS: Array<[string, string]> = [
 function defaultVehicleCostCategoryForAccount(accountCode: unknown): string {
   const account = String(accountCode ?? '').trim();
   if (/^624/.test(account)) return 'TRANSPORT';
-  if (/^(611|6024)/.test(account)) return 'REFURB';
   return '';
+}
+
+function vehicleCostAccountForCategory(category: string): string {
+  if (category === 'TRANSPORT') return '624';
+  return COST_CATEGORY_OPTIONS.some(([value]) => value === category) ? '628' : '';
 }
 
 const INTERNAL_EXTRACTED_FIELDS = new Set([
@@ -409,14 +487,16 @@ function pendingStageLabel(pending: any): string {
 function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void }) {
   const user = useSelector((state: RootState) => state.auth.user);
   const canApprove = user?.role === 'ACCOUNTANT';
-  const { data: doc } = useDocumentQuery(id);
+  const { data: doc } = useDocumentQuery(id, { pollingInterval: 2000 });
   const { data: posting, isFetching: postingLoading } = usePostingPreviewQuery(id, {
     skip: !canApprove,
+    pollingInterval: 2000,
   });
   const { data: vehicles = [] } = useVehiclesQuery();
   const { data: parties = [] } = usePartiesQuery();
   const { data: accounts = [] } = useChartOfAccountsQuery();
   const [correct] = useCorrectFieldMutation();
+  const [reprocess, { isLoading: reprocessing }] = useReprocessDocumentMutation();
   const [approve, { isLoading: approving }] = useApproveDocumentMutation();
   const [reopen, { isLoading: reopening }] = useReopenDocumentMutation();
   const [assign] = useAssignDocumentMutation();
@@ -428,6 +508,18 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   const [previewUrl, setPreviewUrl] = useState<string>();
   const [previewLoading, setPreviewLoading] = useState(true);
   const [previewError, setPreviewError] = useState('');
+  const [reprocessType, setReprocessType] = useState('');
+
+  useEffect(() => {
+    if (!doc) return;
+    const extracted = doc.processedData?.extractedFields as
+      | Record<string, unknown>
+      | undefined;
+    const suggested = String(extracted?.document_type ?? doc.type ?? '');
+    setReprocessType(
+      REEXTRACTABLE_DOC_TYPES.includes(suggested) ? suggested : 'Receipt',
+    );
+  }, [doc?.id, doc?.type, doc?.processedData?.updatedAt]);
 
   useEffect(() => {
     let active = true;
@@ -467,6 +559,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
 
   if (!doc) return null;
   const fields = (doc.processedData?.extractedFields ?? {}) as Record<string, any>;
+  const effectiveDocumentType = String(fields.document_type ?? doc.type ?? '');
   const contractVendor = Array.isArray(fields.parties)
     ? fields.parties.find((party: any) =>
         ['vendor', 'seller', 'vanzator', 'vânzător'].includes(
@@ -487,7 +580,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
         ? 'CNP'
         : 'FOREIGN_ID');
   const isPurchaseContract =
-    doc.type === 'Contract' &&
+    effectiveDocumentType === 'Contract' &&
     (fields.vehicle_transaction === 'purchase' ||
       (Boolean(fields.vin) &&
         /(vanzare|vânzare|sale|achiz)/i.test(String(fields.contract_type ?? ''))));
@@ -496,7 +589,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
     'Receipt',
     'Payment Disposition',
     'Collection Disposition',
-  ].includes(doc.type) || isPurchaseContract;
+  ].includes(effectiveDocumentType) || isPurchaseContract;
   const confidence = (doc.processedData?.fieldConfidence ?? {}) as Record<string, number>;
   const issues: any[] = (doc.processedData?.validationIssues ?? []) as any[];
   const issueFields = new Set(issues.map((i) => i.field));
@@ -516,7 +609,13 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   // Finova review order: flagged → neutral → high-confidence/auto-accepted.
   entries.sort(([a], [b]) => {
     const rank = (key: string) => (isFlagged(key) ? 0 : isAccepted(key) ? 2 : 1);
-    return rank(a) - rank(b);
+    const confidenceRank = rank(a) - rank(b);
+    if (confidenceRank !== 0) return confidenceRank;
+    const order = (key: string) => {
+      const index = EXTRACTED_FIELD_ORDER.indexOf(key);
+      return index === -1 ? EXTRACTED_FIELD_ORDER.length : index;
+    };
+    return order(a) - order(b);
   });
   const visibleEntries = hideAccepted ? entries.filter(([key]) => !isAccepted(key)) : entries;
   const acceptedCount = entries.filter(([key]) => isAccepted(key)).length;
@@ -531,6 +630,10 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
     confidenceValues.length > 0
       ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
       : doc.processedData?.typeConfidence ?? 0;
+  const needsTypeRecovery =
+    doc.type === 'Other' ||
+    effectiveDocumentType !== String(doc.type ?? '') ||
+    Number(doc.processedData?.typeConfidence ?? 0) < 0.7;
   const lineItems = Array.isArray(fields.line_items) ? fields.line_items : [];
   const hasExtractedVehicleCostCategory = lineItems.some((line: any) =>
     COST_CATEGORY_OPTIONS.some(
@@ -538,7 +641,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
     ),
   );
   const isVehicleCostDocument =
-    ['Invoice', 'Receipt'].includes(doc.type) &&
+    ['Invoice', 'Receipt'].includes(effectiveDocumentType) &&
     fields.receipt_type !== 'payment_receipt' &&
     fields.vehicle_transaction !== 'purchase' &&
     (fields.vehicle_transaction === 'cost' ||
@@ -564,6 +667,22 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
         Array.isArray(details)
           ? details.join(' · ')
           : error?.data?.message ?? error?.message ?? 'Acțiunea nu a putut fi finalizată',
+      );
+    }
+  };
+
+  const runReprocess = async (documentType: string) => {
+    setActionMessage('');
+    try {
+      await reprocess({ id, documentType }).unwrap();
+      setActionMessage(
+        `Re-extragerea ca ${documentType === 'Receipt' ? 'bon / chitanță' : documentType} a fost pornită. Câmpurile se actualizează automat.`,
+      );
+    } catch (error: any) {
+      setActionMessage(
+        error?.data?.message ??
+          error?.message ??
+          'Re-extragerea nu a putut fi pornită.',
       );
     }
   };
@@ -610,7 +729,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-bold text-ink md:text-[15px]">{doc.name}</h2>
             <p className="truncate text-xs text-muted">
-              {doc.type ?? 'Necategorisit'} · clasificare {Math.round((doc.processedData?.typeConfidence ?? 0) * 100)}%
+              {effectiveDocumentType || 'Necategorisit'} · clasificare {Math.round((doc.processedData?.typeConfidence ?? 0) * 100)}%
             </p>
           </div>
 
@@ -712,7 +831,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
           </select>
         </div>
 
-        {['Invoice', 'Receipt', 'Payment Disposition', 'Collection Disposition', 'Contract'].includes(doc.type) && (
+        {['Invoice', 'Receipt', 'Payment Disposition', 'Collection Disposition', 'Contract'].includes(effectiveDocumentType) && (
           <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl border border-line bg-slate-50 p-3 lg:grid-cols-4">
             <LineField
               label="Direcție"
@@ -724,7 +843,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
               disabled={doc.reviewStatus === 'APPROVED'}
               onSave={(value) => correct({ id, field: 'direction', newValue: value }).unwrap()}
             />
-            {doc.type === 'Invoice' && (
+            {effectiveDocumentType === 'Invoice' && (
               <LineField
                 label="Rol în fluxul vehiculului"
                 value={fields.vehicle_transaction ?? 'other'}
@@ -766,7 +885,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                 Am verificat categoriile pentru conturile ambigue
               </label>
             )}
-            {doc.type === 'Contract' && (
+            {effectiveDocumentType === 'Contract' && (
               <>
                 <LineField
                   label="Rolul contractului"
@@ -869,7 +988,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                 )}
               </>
             )}
-            {doc.type === 'Receipt' && (
+            {effectiveDocumentType === 'Receipt' && (
               <>
                 <LineField
                   label="Tip chitanță / bon"
@@ -893,7 +1012,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                 />
               </>
             )}
-            {['Receipt', 'Payment Disposition', 'Collection Disposition'].includes(doc.type) && (
+            {['Receipt', 'Payment Disposition', 'Collection Disposition'].includes(effectiveDocumentType) && (
               <LineField
                 label="Facturi și sume alocate"
                 value={formatReferences(fields)}
@@ -912,10 +1031,50 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
           </div>
         )}
 
+        {doc.processingStatus === 'PROCESSING' ? (
+          <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+            Re-extragerea rulează cu schema <b>{doc.type}</b>. Datele și liniile
+            documentului se vor actualiza automat.
+          </div>
+        ) : needsTypeRecovery && doc.reviewStatus !== 'APPROVED' ? (
+          <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3">
+            <p className="text-sm font-semibold text-amber-900">
+              Clasificarea inițială nu este sigură. Alege tipul corect și relansează extracția completă.
+            </p>
+            <p className="mt-1 text-xs text-amber-800">
+              Schimbarea tipului fără re-extragere nu poate recupera furnizorul,
+              totalul, TVA-ul și articolele lipsă.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <select
+                value={reprocessType}
+                onChange={(event) => setReprocessType(event.target.value)}
+                className="min-w-56 rounded-control border border-amber-300 bg-white px-3 py-2 text-sm text-ink focus:outline-none"
+              >
+                {REEXTRACTABLE_DOC_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type === 'Receipt' ? 'Bon fiscal / chitanță' : type}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={reprocessing || !reprocessType}
+                onClick={() => runReprocess(reprocessType)}
+                className="rounded-control bg-amber-700 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
+              >
+                {reprocessing ? 'Se pornește…' : 'Re-extrage cu tipul ales'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {actionMessage && (
           <div
             className={`mt-4 rounded-xl border p-3 text-sm ${
-              actionMessage.includes('aprobat') || actionMessage.includes('redeschis')
+              actionMessage.includes('aprobat') ||
+              actionMessage.includes('redeschis') ||
+              actionMessage.includes('pornită')
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                 : 'border-red-200 bg-red-50 text-red-700'
             }`}
@@ -993,15 +1152,22 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                     className="mt-1 flex gap-2"
                     onSubmit={async (e) => {
                       e.preventDefault();
-                      await correct({
-                        id,
-                        field: key,
-                        newValue: extractedFieldCorrectionValue(
-                          key,
-                          value,
-                          editing.value,
-                        ),
-                      });
+                      if (
+                        key === 'document_type' &&
+                        editing.value !== String(doc.type ?? '')
+                      ) {
+                        await runReprocess(editing.value);
+                      } else {
+                        await correct({
+                          id,
+                          field: key,
+                          newValue: extractedFieldCorrectionValue(
+                            key,
+                            value,
+                            editing.value,
+                          ),
+                        });
+                      }
                       setEditing(null);
                     }}
                   >
@@ -1048,7 +1214,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
           {visibleEntries.length === 0 && <p className="py-3 text-sm text-muted">Nu s-au extras câmpuri.</p>}
         </div>
 
-        {['Invoice', 'Receipt'].includes(doc.type) && (
+        {['Invoice', 'Receipt'].includes(effectiveDocumentType) && (
           <div className="mt-5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-ink">Linii document ({lineItems.length})</h3>
@@ -1071,7 +1237,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                         um: 'BUCATA',
                         articleCode: '',
                         management: '',
-                        account_code: doc.type === 'Invoice' ? '628' : '628',
+                        account_code: '628',
                         vehicle_cost_category: isVehicleCostDocument ? '' : null,
                       },
                     ],
@@ -1082,6 +1248,13 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                 + Adaugă linie
               </button>
             </div>
+            {(fields.vehicle_transaction === 'purchase' || isVehicleCostDocument) && (
+              <p className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                {fields.vehicle_transaction === 'purchase'
+                  ? 'Regulă SAGA: numai mașina se înregistrează pe 371; transportul pe 624; orice serviciu sau taxă asociată pe 628.'
+                  : 'Regulă SAGA: transportul se înregistrează pe 624; document handling, taxe, înmatriculare, reparații și orice alt cost pe 628. Contul 371 este rezervat mașinii.'}
+              </p>
+            )}
             <div className="mt-2 space-y-2">
               {lineItems.map((item: any, index: number) => {
                 const low = Number(item?._confidence) < 0.7;
@@ -1205,13 +1378,24 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                           value={explicitCostCategory || automaticCostCategory}
                           options={COST_CATEGORY_OPTIONS}
                           disabled={doc.reviewStatus === 'APPROVED'}
-                          onSave={(value) =>
-                            correct({
+                          onSave={(value) => {
+                            const expectedAccount = vehicleCostAccountForCategory(value);
+                            return correct({
                               id,
-                              field: `line_items[${index}].vehicle_cost_category`,
-                              newValue: value,
-                            }).unwrap()
-                          }
+                              field: 'line_items',
+                              newValue: lineItems.map((line: any, lineIndex: number) =>
+                                lineIndex === index
+                                  ? {
+                                      ...line,
+                                      vehicle_cost_category: value,
+                                      ...(expectedAccount
+                                        ? { account_code: expectedAccount }
+                                        : {}),
+                                    }
+                                  : line,
+                              ),
+                            }).unwrap();
+                          }}
                         />
                       )}
                     </div>
@@ -1479,6 +1663,7 @@ function displayExtractedFieldValue(field: string, value: unknown): string {
 }
 
 function humanField(field: string): string {
+  if (EXTRACTED_FIELD_LABELS[field]) return EXTRACTED_FIELD_LABELS[field];
   return String(field)
     .replace(/\[(\d+)\]/g, ' #$1')
     .replace(/[._]/g, ' ')

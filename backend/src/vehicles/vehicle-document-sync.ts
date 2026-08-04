@@ -54,16 +54,10 @@ export function isVehiclePurchaseDocument(
 }
 
 /**
- * Pre-fills the vehicle line of a purchase invoice before it reaches review:
- * the description becomes the make/model identity, its article code is bound to
- * the complete VIN, and – when the tenant keeps a separate management
- * (gestiune) per brand – the line is routed to the matching management.
- * Freight-in on the same invoice (transport that brings the purchased vehicle
- * to us) is capitalized into the vehicle's stock account: the line is re-posted
- * from 624 to 371 on the same gestiune, matching how OMFP 1802/2014 folds
- * directly attributable transport into the acquisition cost. Applied once at
- * extraction time so the result is visible in the review UI. Returns whether
- * any line was changed.
+ * Pre-fills a vehicle purchase invoice before it reaches review. The vehicle
+ * itself is the only stock line (371), is bound to the complete VIN article and
+ * may use the brand management. Transport is always posted to 624, while every
+ * other ancillary service or tax is posted to 628 and is not a stock article.
  */
 export function applyVehiclePurchaseInvoiceDefaults(
   extractedFields: unknown,
@@ -91,6 +85,11 @@ export function applyVehiclePurchaseInvoiceDefaults(
   let changed = false;
   for (const line of vehicleLines) {
     if (!line || typeof line !== 'object') continue;
+    if (!/^371(?:\.|$)/.test(text(line.account_code ?? line.accountCode))) {
+      line.account_code = '371';
+      if ('accountCode' in line) line.accountCode = '371';
+      changed = true;
+    }
     if (description && text(line.name ?? line.description) !== description) {
       line.name = description;
       if ('description' in line) line.description = description;
@@ -110,20 +109,27 @@ export function applyVehiclePurchaseInvoiceDefaults(
     }
   }
 
-  // Freight-in that accompanies the purchase is directly attributable to
-  // acquiring this vehicle, so capitalize it into the stock account (371) on the
-  // same brand gestiune rather than expensing it to 624. Left as its own line so
-  // the transport stays auditable; the user can still override it in review.
+  const vehicleLineSet = new Set(vehicleLines);
   for (const line of lines) {
-    if (!line || typeof line !== 'object' || !isFreightInLine(line)) continue;
+    if (!line || typeof line !== 'object' || vehicleLineSet.has(line)) continue;
+    const expectedAccount = isFreightInLine(line) ? '624' : '628';
     const account = text(line.account_code ?? line.accountCode);
-    if (!/^371/.test(account)) {
-      line.account_code = '371';
-      if ('accountCode' in line) line.accountCode = '371';
+    if (!new RegExp(`^${expectedAccount}(?:\\.|$)`).test(account)) {
+      line.account_code = expectedAccount;
+      if ('accountCode' in line) line.accountCode = expectedAccount;
       changed = true;
     }
-    if (managementCode && text(line.management) !== managementCode) {
-      line.management = managementCode;
+    if (text(line.articleCode ?? line.article_code) !== '') {
+      line.articleCode = '';
+      if ('article_code' in line) line.article_code = '';
+      changed = true;
+    }
+    if (line.isNew !== false) {
+      line.isNew = false;
+      changed = true;
+    }
+    if (text(line.management) !== '') {
+      line.management = null;
       changed = true;
     }
   }
@@ -132,34 +138,95 @@ export function applyVehiclePurchaseInvoiceDefaults(
 }
 
 function selectVehiclePurchaseLines(lines: any[]): any[] {
-  const matched = lines.filter(
-    (line) => !isFreightInLine(line) && isVehicleStockLine(line),
+  const semanticMatches = lines.filter(
+    (line) => !isAncillaryVehicleCostLine(line) && hasVehicleLineDescription(line),
   );
-  if (matched.length > 0) return matched;
+  if (semanticMatches.length > 0) return semanticMatches;
+
+  const stockMatches = lines.filter(
+    (line) =>
+      !isAncillaryVehicleCostLine(line) &&
+      /^371(?:\.|$)/.test(text(line?.account_code ?? line?.accountCode)),
+  );
+  if (stockMatches.length > 0) return stockMatches;
+
   const [single] = lines;
-  return lines.length === 1 && !isFreightInLine(single) ? [single] : [];
+  return lines.length === 1 && !isAncillaryVehicleCostLine(single) ? [single] : [];
 }
 
-function isVehicleStockLine(line: any): boolean {
-  const account = text(line?.account_code ?? line?.accountCode);
+function hasVehicleLineDescription(line: any): boolean {
   const name = text(line?.name ?? line?.description);
-  return (
-    /^371/.test(account) ||
-    /\b(auto|autoturism|vehicle|vehicul|fahrzeug)\b/i.test(name)
-  );
+  return /\b(auto|autoturism|automobil|vehicle|vehicul|fahrzeug|pkw)\b/i.test(name);
 }
 
 function isFreightInLine(line: any): boolean {
   if (!line || typeof line !== 'object') return false;
-  const account = text(line.account_code ?? line.accountCode);
-  if (/^624/.test(account)) return true;
   const name = text(line.name ?? line.description)
     .toLowerCase()
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '');
-  return /transport|freight|fracht|platform|tractare|remorcare|\btow\b/.test(
+  return /transport|freight|fracht|delivery|livrare|platform|tractare|remorcare|\btow\b/.test(
     name,
   );
+}
+
+function isAncillaryVehicleCostLine(line: any): boolean {
+  if (isFreightInLine(line)) return true;
+  const name = text(line?.name ?? line?.description)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '');
+  return /\b(document|handling|procesare|pregatire|taxa|fee|customs|vama|tva|vat|itp|inspection|inspectie|registration|inmatriculare|rar|service|repair|reparatie|refurb|recondition|piese|parts)\b/.test(
+    name,
+  );
+}
+
+/** Applies the client's SAGA account convention to extracted vehicle costs. */
+export function applyVehicleCostAccountDefaults(
+  documentType: string | null | undefined,
+  extractedFields: unknown,
+  tenantCui?: string | null,
+): boolean {
+  if (documentType !== 'Invoice' && documentType !== 'Receipt') return false;
+  const fields = unwrapExtractedFields(extractedFields);
+  const lines = Array.isArray(fields.line_items) ? fields.line_items : [];
+  if (lines.length === 0) return false;
+
+  const canonical = normalizeAccountingDocument(documentType, fields, tenantCui);
+  if (!isVehicleCostDocument(canonical)) return false;
+
+  let changed = false;
+  for (const line of lines) {
+    if (!line || typeof line !== 'object') continue;
+    const explicitCategory = text(line.vehicle_cost_category).toUpperCase();
+    const isTransport =
+      explicitCategory === CostCategory.TRANSPORT ||
+      (explicitCategory === '' && isFreightInLine(line));
+    const expectedAccount = isTransport ? '624' : '628';
+    if (
+      !new RegExp(`^${expectedAccount}(?:\\.|$)`).test(
+        text(line.account_code ?? line.accountCode),
+      )
+    ) {
+      line.account_code = expectedAccount;
+      if ('accountCode' in line) line.accountCode = expectedAccount;
+      changed = true;
+    }
+    if (text(line.articleCode ?? line.article_code) !== '') {
+      line.articleCode = '';
+      if ('article_code' in line) line.article_code = '';
+      changed = true;
+    }
+    if (line.isNew !== false) {
+      line.isNew = false;
+      changed = true;
+    }
+    if (text(line.management) !== '') {
+      line.management = null;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function vehicleModelDescription(fields: Record<string, any>): string {
@@ -251,6 +318,21 @@ export function vehicleCostReviewErrors(
     );
   }
 
+  canonical.lineItems.forEach((line, index) => {
+    const explicitCategory = text(line.raw.vehicle_cost_category).toUpperCase();
+    const category = isCostCategory(explicitCategory)
+      ? explicitCategory
+      : defaultVehicleCostCategoryForAccount(line.accountCode);
+    if (!category) return;
+    const expectedAccount =
+      category === CostCategory.TRANSPORT ? '624' : '628';
+    if (!new RegExp(`^${expectedAccount}(?:\\.|$)`).test(line.accountCode)) {
+      errors.push(
+        `Linia ${index + 1} „${line.name}” trebuie să folosească contul ${expectedAccount}`,
+      );
+    }
+  });
+
   const hasAmbiguousAccounts = canonical.lineItems.some(
     (line) => !defaultVehicleCostCategoryForAccount(line.accountCode),
   );
@@ -260,6 +342,50 @@ export function vehicleCostReviewErrors(
   ) {
     errors.push('Confirmă categoriile de cost înainte de aprobare');
   }
+  return errors;
+}
+
+export function vehicleAccountingReviewErrors(
+  canonical: CanonicalAccountingDocument,
+  vehicleId?: number | null,
+): string[] {
+  const errors = vehiclePurchaseAccountReviewErrors(canonical);
+  errors.push(...vehicleCostReviewErrors(canonical, vehicleId));
+  return errors;
+}
+
+function vehiclePurchaseAccountReviewErrors(
+  canonical: CanonicalAccountingDocument,
+): string[] {
+  if (!isVehiclePurchaseDocument(canonical) || canonical.documentType !== 'Invoice') {
+    return [];
+  }
+
+  const rawLines = canonical.lineItems.map((line) => line.raw);
+  const vehicleLines = new Set(selectVehiclePurchaseLines(rawLines));
+  if (vehicleLines.size === 0) {
+    return ['Identifică linia mașinii; numai aceasta poate folosi contul 371'];
+  }
+
+  const errors: string[] = [];
+  canonical.lineItems.forEach((line, index) => {
+    const expectedAccount = vehicleLines.has(line.raw)
+      ? '371'
+      : isFreightInLine(line.raw)
+        ? '624'
+        : '628';
+    if (!new RegExp(`^${expectedAccount}(?:\\.|$)`).test(line.accountCode)) {
+      const reason =
+        expectedAccount === '371'
+          ? 'doar mașina'
+          : expectedAccount === '624'
+            ? 'transport'
+            : 'servicii și taxe asociate';
+      errors.push(
+        `Linia ${index + 1} „${line.name}” trebuie să folosească contul ${expectedAccount} (${reason})`,
+      );
+    }
+  });
   return errors;
 }
 
@@ -715,7 +841,6 @@ export function defaultVehicleCostCategoryForAccount(
 ): CostCategory | undefined {
   const account = text(accountCode);
   if (/^624/.test(account)) return CostCategory.TRANSPORT;
-  if (/^(611|6024)/.test(account)) return CostCategory.REFURB;
   return undefined;
 }
 

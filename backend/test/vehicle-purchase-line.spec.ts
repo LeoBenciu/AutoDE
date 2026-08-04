@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { normalizeAccountingDocument } from '../src/accounting/accounting-normalizer';
 import {
+  applyVehicleCostAccountDefaults,
   applyVehiclePurchaseInvoiceDefaults,
   defaultVehicleCostCategoryForAccount,
+  vehicleAccountingReviewErrors,
   vehicleCostReviewErrors,
 } from '../src/vehicles/vehicle-document-sync';
 
@@ -93,36 +95,37 @@ function purchaseInvoiceFields() {
   assert.equal(fields.line_items[0].management, 'X');
 }
 
-// 5. Freight-in on the purchase invoice is capitalized into 371 on the car's
-//    gestiune, while the stock line is enriched with the model identity.
+// 5. Only the car stays on 371. Transport uses 624 and every other ancillary
+//    service or tax uses 628, without a stock article or gestiune.
 {
   const fields = purchaseInvoiceFields();
   fields.line_items = [
     { name: 'Autoturism', account_code: '371', total: 20000, management: '' },
-    { name: 'Transport', account_code: '624', total: 500, management: '' },
+    { name: 'Transport', account_code: '371', total: 500, management: 'G-BMW' },
+    { name: 'Document handling fee', account_code: '371', total: 100, management: 'G-BMW' },
   ];
-  fields.total_amount = 20500;
+  fields.total_amount = 20600;
   const changed = applyVehiclePurchaseInvoiceDefaults(fields, [
     { code: 'G-BMW', name: 'BMW' },
   ]);
   assert.equal(changed, true);
   assert.equal(fields.line_items[0].name, 'BMW Seria 3 320d');
   assert.equal(fields.line_items[0].management, 'G-BMW');
-  // Freight-in line: re-posted to 371 on the same gestiune, name left intact.
   assert.equal(fields.line_items[1].name, 'Transport');
-  assert.equal(fields.line_items[1].account_code, '371');
-  assert.equal(fields.line_items[1].management, 'G-BMW');
+  assert.equal(fields.line_items[1].account_code, '624');
+  assert.equal(fields.line_items[1].management, null);
+  assert.equal(fields.line_items[2].account_code, '628');
+  assert.equal(fields.line_items[2].management, null);
 }
 
-// 6. A German "Fahrzeugtransport" freight line is captured even with no brand
-//    gestiune; the account flips to 371 but the management is left untouched.
+// 6. A German "Fahrzeugtransport" line is recognized and kept out of 371.
 {
   const fields = purchaseInvoiceFields();
   fields.line_items = [
     { name: 'BMW 320d', account_code: '371', total: 20000, management: '' },
     {
       name: 'Fahrzeugtransport Seddiner See - Bacau',
-      account_code: '624',
+      account_code: '371',
       total: 665,
       management: '',
     },
@@ -132,7 +135,7 @@ function purchaseInvoiceFields() {
     { code: 'DEPOZIT', name: 'Depozit central' },
   ]);
   assert.equal(changed, true);
-  assert.equal(fields.line_items[1].account_code, '371');
+  assert.equal(fields.line_items[1].account_code, '624');
   assert.equal(fields.line_items[1].name, 'Fahrzeugtransport Seddiner See - Bacau');
   assert.equal(fields.line_items[1].management, '');
 }
@@ -150,14 +153,40 @@ function purchaseInvoiceFields() {
   assert.equal(applyVehiclePurchaseInvoiceDefaults(fields, managements), false);
 }
 
-// 8. Deterministic vehicle-cost accounts receive defaults, while ambiguous
-//    accounts still require an explicit category.
+// 8. Vehicle-cost extraction enforces 624 for transport and 628 for all other
+//    categories. Only 624 has an unambiguous automatic category.
 {
   assert.equal(defaultVehicleCostCategoryForAccount('624'), 'TRANSPORT');
   assert.equal(defaultVehicleCostCategoryForAccount('624.01'), 'TRANSPORT');
-  assert.equal(defaultVehicleCostCategoryForAccount('611'), 'REFURB');
-  assert.equal(defaultVehicleCostCategoryForAccount('6024'), 'REFURB');
+  assert.equal(defaultVehicleCostCategoryForAccount('611'), undefined);
+  assert.equal(defaultVehicleCostCategoryForAccount('6024'), undefined);
   assert.equal(defaultVehicleCostCategoryForAccount('628'), undefined);
+
+  const costFields = {
+    direction: 'incoming',
+    vehicle_transaction: 'cost',
+    line_items: [
+      {
+        name: 'Reparație',
+        account_code: '611',
+        vehicle_cost_category: 'REFURB',
+        articleCode: 'SERVICE-1',
+        isNew: true,
+        management: 'G-BMW',
+      },
+      {
+        name: 'Transport platformă',
+        account_code: '371',
+        vehicle_cost_category: 'TRANSPORT',
+      },
+    ],
+  } as Record<string, any>;
+  assert.equal(applyVehicleCostAccountDefaults('Invoice', costFields), true);
+  assert.equal(costFields.line_items[0].account_code, '628');
+  assert.equal(costFields.line_items[0].articleCode, '');
+  assert.equal(costFields.line_items[0].isNew, false);
+  assert.equal(costFields.line_items[0].management, null);
+  assert.equal(costFields.line_items[1].account_code, '624');
 
   const reviewErrors = (
     accountCode: string,
@@ -191,19 +220,52 @@ function purchaseInvoiceFields() {
   };
 
   assert.deepEqual(reviewErrors('624'), []);
-  assert.deepEqual(reviewErrors('611'), []);
-  assert.deepEqual(reviewErrors('6024'), []);
+  assert.deepEqual(reviewErrors('611'), [
+    'Selectează categoria de cost pentru linia 1',
+  ]);
+  assert.deepEqual(reviewErrors('6024'), [
+    'Selectează categoria de cost pentru linia 1',
+  ]);
   assert.deepEqual(reviewErrors('628'), [
     'Selectează categoria de cost pentru linia 1',
   ]);
   assert.deepEqual(reviewErrors('624', undefined, false), []);
-  assert.deepEqual(reviewErrors('624', 'OTHER', false), []);
+  assert.deepEqual(reviewErrors('624', 'OTHER', false), [
+    'Linia 1 „Cost vehicul” trebuie să folosească contul 628',
+  ]);
   assert.deepEqual(reviewErrors('628', 'ITP', false), [
     'Confirmă categoriile de cost înainte de aprobare',
   ]);
+  assert.deepEqual(reviewErrors('628', 'ITP'), []);
+  assert.deepEqual(reviewErrors('611', 'ITP'), [
+    'Linia 1 „Cost vehicul” trebuie să folosească contul 628',
+  ]);
 }
 
-// 9. Posting normalization enforces the full-VIN article even if extraction or
+// 9. Approval rejects a purchase invoice if transport or an ancillary service
+//    is placed on the car's 371 account.
+{
+  const fields = purchaseInvoiceFields();
+  fields.line_items = [
+    { name: 'Autoturism BMW', account_code: '371', total: 20000 },
+    { name: 'Transport', account_code: '371', total: 500 },
+    { name: 'Document handling fee', account_code: '371', total: 100 },
+  ];
+  const errors = vehicleAccountingReviewErrors(
+    normalizeAccountingDocument('Invoice', fields),
+  );
+  assert.deepEqual(errors, [
+    'Linia 2 „Transport” trebuie să folosească contul 624 (transport)',
+    'Linia 3 „Document handling fee” trebuie să folosească contul 628 (servicii și taxe asociate)',
+  ]);
+  applyVehiclePurchaseInvoiceDefaults(fields, []);
+  assert.deepEqual(
+    vehicleAccountingReviewErrors(normalizeAccountingDocument('Invoice', fields)),
+    [],
+  );
+}
+
+// 10. Posting normalization enforces the full-VIN article even if extraction or
 //    a correction supplies an existing generic article code.
 {
   const first = purchaseInvoiceFields();

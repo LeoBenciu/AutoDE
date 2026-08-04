@@ -223,12 +223,21 @@ class InvoiceData(StrictBase):
 
 class ReceiptData(StrictBase):
     document_type: Literal["Receipt"]
+    direction: Optional[Direction]
     receipt_type: ReceiptType
     receipt_number: str
     vendor: str
     vendor_ein: str
+    vendor_country: Optional[str]
+    vendor_address: Optional[str]
+    vendor_city: Optional[str]
+    vendor_county: Optional[str]
     buyer: str
     buyer_ein: str
+    buyer_country: Optional[str]
+    buyer_address: Optional[str]
+    buyer_city: Optional[str]
+    buyer_county: Optional[str]
     total_amount: float
     document_date: str
     payment_method: PaymentMethod

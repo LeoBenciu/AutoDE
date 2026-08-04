@@ -12,7 +12,10 @@ import {
   ExtractionService,
   Phase0Result,
 } from '../extraction/extraction.service';
-import { applyVehiclePurchaseInvoiceDefaults } from '../vehicles/vehicle-document-sync';
+import {
+  applyVehicleCostAccountDefaults,
+  applyVehiclePurchaseInvoiceDefaults,
+} from '../vehicles/vehicle-document-sync';
 
 const STUCK_PROCESSING_MINUTES = 10;
 const CLAIM_BATCH_SIZE = 5;
@@ -210,6 +213,17 @@ export class DocumentsProcessor {
           );
         }
       }
+      if (
+        applyVehicleCostAccountDefaults(
+          result.document_type,
+          fields,
+          context.tenantCui,
+        )
+      ) {
+        this.logger.log(
+          `upload ${row.id}: applied vehicle-cost accounts (624 transport / 628 other costs)`,
+        );
+      }
       let document = await this.prisma.document.findFirst({
         where: { tenantId: row.tenantId, s3Key: row.s3Key, deletedAt: null },
         select: { id: true, vehicleId: true },
@@ -255,6 +269,54 @@ export class DocumentsProcessor {
           },
           select: { id: true, vehicleId: true },
         });
+      } else {
+        await this.prisma.$transaction([
+          this.prisma.document.update({
+            where: { id: document.id },
+            data: {
+              type: result.document_type,
+              processingStatus: 'COMPLETED',
+              needsReview: true,
+              reviewStatus: 'PENDING_APPROVAL',
+              postingStatus: 'NONE',
+              postingError: null,
+              processingStartedAt: row.processingStartedAt,
+              processingCompletedAt: phase1CompletedAt,
+              phase0StartedAt: row.processingStartedAt,
+              phase0CompletedAt: phase1StartedAt,
+              phase0Duration: millisecondsBetween(
+                row.processingStartedAt,
+                phase1StartedAt,
+              ),
+              phase1StartedAt,
+              phase1CompletedAt,
+              phase1Duration:
+                phase1CompletedAt.getTime() - phase1StartedAt.getTime(),
+              processingDuration: millisecondsBetween(
+                row.processingStartedAt,
+                phase1CompletedAt,
+              ),
+            },
+          }),
+          this.prisma.processedData.upsert({
+            where: { documentId: document.id },
+            create: {
+              documentId: document.id,
+              documentType: result.document_type,
+              typeConfidence: result.type_confidence,
+              extractedFields: fields as any,
+              fieldConfidence: (result.field_confidence ?? {}) as any,
+              validationIssues: (result.validation_issues ?? []) as any,
+            },
+            update: {
+              documentType: result.document_type,
+              typeConfidence: result.type_confidence,
+              extractedFields: fields as any,
+              fieldConfidence: (result.field_confidence ?? {}) as any,
+              validationIssues: (result.validation_issues ?? []) as any,
+            },
+          }),
+        ]);
       }
 
       await this.prisma.pendingUpload.updateMany({

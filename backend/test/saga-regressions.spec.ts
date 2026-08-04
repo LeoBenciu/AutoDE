@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { normalizeAccountingDocument } from '../src/accounting/accounting-normalizer';
-import { sagaInvoiceFileName } from '../src/saga/saga.service';
+import { sagaInvoicesFileName } from '../src/saga/saga.service';
 import { buildFacturiXml, SagaCompany } from '../src/saga/saga-xml';
 
 const company: SagaCompany = {
@@ -119,10 +119,14 @@ assert.equal(contract.vendorAddress, 'Str. Exemplului 10');
 assert.equal(contract.vendorCity, 'Bacău');
 assert.equal(contract.vendorPhone, '+40 700 111 222');
 assert.equal(contract.vendorEmail, 'andrei@example.test');
+assert.match(
+  buildFacturiXml([{ id: 13, type: 'Contract', data: contract }], company, []),
+  /<FacturaTip>R<\/FacturaTip>/,
+);
 
 assert.equal(
-  sagaInvoiceFileName(reverseCharge, company.cui),
-  'F_DE286118911_10026010798614_2026-07-23.xml',
+  sagaInvoicesFileName(company.cui, '2026-07-23'),
+  'F_31194616_2026-07-23.xml',
 );
 
 const outgoing = {
