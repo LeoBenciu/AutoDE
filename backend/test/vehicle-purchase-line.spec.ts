@@ -4,6 +4,7 @@ import {
   applyVehicleCostAccountDefaults,
   applyVehiclePurchaseInvoiceDefaults,
   defaultVehicleCostCategoryForAccount,
+  isVehicleCostDocument,
   vehicleAccountingReviewErrors,
   vehicleCostReviewErrors,
 } from '../src/vehicles/vehicle-document-sync';
@@ -283,6 +284,37 @@ function purchaseInvoiceFields() {
     normalizeAccountingDocument('Invoice', second).lineItems[0].articleCode,
     'AUTO-WVWZZZ1JZ78901234',
   );
+}
+
+// 11. A normal receipt is not forced into the vehicle-cost workflow merely
+//     because extraction guessed a vehicle category. Explicit user association
+//     is the only thing that turns it into a vehicle cost.
+{
+  const fields = {
+    direction: 'incoming',
+    receipt_type: 'independent_receipt',
+    total_amount: 49.91,
+    vat_amount: 8.66,
+    line_items: [
+      {
+        name: 'Benzina Standard 95',
+        quantity: 5.3898,
+        unit_price: 7.653,
+        total: 41.25,
+        vat_amount: 8.66,
+        account_code: '6022',
+        vehicle_cost_category: 'OTHER',
+      },
+    ],
+  } as Record<string, any>;
+  const canonical = normalizeAccountingDocument('Receipt', fields);
+
+  assert.equal(isVehicleCostDocument(canonical), false);
+  assert.deepEqual(vehicleCostReviewErrors(canonical), []);
+  assert.equal(applyVehicleCostAccountDefaults('Receipt', fields), false);
+  assert.equal(fields.line_items[0].account_code, '6022');
+
+  assert.equal(isVehicleCostDocument(canonical, 1), true);
 }
 
 console.log('vehicle-purchase-line.spec.ts passed');

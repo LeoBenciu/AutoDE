@@ -279,6 +279,17 @@ export function isVehicleCostDocument(
   ) {
     return false;
   }
+
+  // A fiscal receipt is an ordinary accounting document by default. Fuel,
+  // maintenance and similar descriptions do not prove that the expense belongs
+  // to a stock vehicle: they can just as well be general company expenses. Only
+  // an explicit association made by the user turns a receipt into a vehicle cost.
+  // This also prevents an extracted/hallucinated cost category from rewriting a
+  // perfectly valid account (for example fuel 6022) to 628.
+  if (canonical.documentType === 'Receipt') {
+    return vehicleId != null;
+  }
+
   const hasExplicitCostCategory = canonical.lineItems.some((line) =>
     isCostCategory(text(line.raw.vehicle_cost_category).toUpperCase()),
   );
