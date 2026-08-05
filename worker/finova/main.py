@@ -2356,7 +2356,7 @@ def process_with_direct_extraction(crew_instance, inputs: dict, max_retries: int
                 # known and both party EINs were extracted, so direction is decidable
                 # without trusting the model — correct it when the EINs disagree with
                 # the model's (or phase-0's) call. Free; fixes the top cascade error.
-                if doc_type == 'Invoice':
+                if doc_type in ('Invoice', 'Receipt'):
                     try:
                         inferred = _validators.infer_direction(
                             combined_data.get('vendor_ein'),
@@ -3014,6 +3014,23 @@ def process_single_document(doc_path: str, client_company_ein: str, existing_doc
                 _validators.reconcile_fuel_quantity_unit_swap(combined_data)
             except Exception as _ne:
                 print(f"⚠️  line-item net normalization failed (non-fatal): {_ne}", file=sys.stderr)
+
+        if (processing_phase != 0 and
+                str(combined_data.get('document_type') or '').lower() == 'receipt'):
+            try:
+                try:
+                    import validators as _validators
+                except ImportError:
+                    from . import validators as _validators
+                _validators.enforce_receipt_line_accounts(combined_data)
+                receipt_text = ''
+                if cached_text_file and os.path.exists(cached_text_file):
+                    with open(cached_text_file, 'r', encoding='utf-8') as receipt_cache:
+                        receipt_text = receipt_cache.read()
+                _validators.reconcile_receipt_party_eins(
+                    combined_data, receipt_text, client_company_ein)
+            except Exception as _re:
+                print(f"⚠️  receipt normalization failed (non-fatal): {_re}", file=sys.stderr)
 
         if not success:
             print("Processing completed with fallback response", file=sys.stderr)

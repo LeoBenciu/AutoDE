@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 import direct_extraction
+import validators
 
 
 class ReceiptClassificationTests(unittest.TestCase):
@@ -52,6 +53,59 @@ class ReceiptClassificationTests(unittest.TestCase):
         user_content = captured["messages"][1]["content"]
         self.assertTrue(any(part.get("type") == "image_url" for part in user_content))
         self.assertIn("vision", captured["label"])
+
+    def test_receipt_party_cuis_follow_header_and_client_labels(self):
+        data = {
+            "vendor_ein": "RO31194616",
+            "buyer_ein": "RO31194616",
+            "direction": "incoming",
+        }
+        text = """S.C. OMV PETROM MARKETING S.R.L.
+STR. SIBIU, NR. 5A, SECTOR 6, BUCURESTI
+C.I.F.: RO11201891
+
+BON FISCAL
+C.I.F.: RO31194616
+Client C.U.I./C.I.F.: RO31194616
+Nume Client: B.R.T COMPANY GROUP SRL
+"""
+
+        validators.reconcile_receipt_party_eins(data, text, "31194616")
+
+        self.assertEqual(data["vendor_ein"], "11201891")
+        self.assertEqual(data["buyer_ein"], "31194616")
+        self.assertEqual(data["direction"], "incoming")
+
+    def test_fuel_receipt_is_always_6022_without_inferred_vehicle_cost(self):
+        data = {
+            "line_items": [
+                {
+                    "name": "Benzina Standard 95",
+                    "account_code": "628",
+                    "vat_deductibility": "FULL",
+                    "vehicle_cost_category": "OTHER",
+                }
+            ]
+        }
+
+        validators.enforce_receipt_line_accounts(data)
+
+        item = data["line_items"][0]
+        self.assertEqual(item["account_code"], "6022")
+        self.assertEqual(item["vat_deductibility"], "PARTIAL_50")
+        self.assertIsNone(item["vehicle_cost_category"])
+
+    def test_duplicate_vendor_and_buyer_cui_fails_validation(self):
+        result = validators.validate_extraction(
+            "Receipt",
+            {"vendor_ein": "31194616", "buyer_ein": "31194616"},
+        )
+
+        failed_rules = {
+            check["rule"] for check in result["checks"] if not check["passed"]
+        }
+        self.assertIn("vendor CUI differs from buyer CUI", failed_rules)
+        self.assertIn("buyer CUI differs from vendor CUI", failed_rules)
 
 
 if __name__ == "__main__":

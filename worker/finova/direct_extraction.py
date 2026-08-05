@@ -1869,6 +1869,23 @@ def extract_document(
                 meta_v["escalated"] = True
                 data, meta = data_v, meta_v
 
+    # Receipt party CUIs are layout-sensitive: the issuer CIF is in the header,
+    # while a later "Client CUI/CIF" belongs to the buyer. Resolve that before
+    # validation/repair so two checksum-valid but duplicated CUIs cannot pass as a
+    # confident extraction.
+    if document_type == "Receipt":
+        try:
+            try:
+                import validators as _validators
+            except ImportError:
+                from . import validators as _validators  # type: ignore
+            _validators.reconcile_receipt_party_eins(
+                data, text, inputs.get("client_company_ein")
+            )
+        except Exception as e:
+            print(f"⚠️  receipt party reconciliation skipped ({type(e).__name__}: {e})",
+                  file=sys.stderr)
+
     # Chunk a bank statement ONLY when the base pass genuinely lost rows: it
     # truncated, OR chunking is enabled AND the base pass doesn't already reconcile.
     # A complete one-shot extraction (a long-context model that read every row)
@@ -2145,6 +2162,19 @@ def extract_document(
             _validators.reconcile_fuel_quantity_unit_swap(data)
         except Exception as e:
             print(f"⚠️  net-normalization skipped ({type(e).__name__}: {e})", file=sys.stderr)
+
+    # Keep receipt account classification independent of VAT normalization: even
+    # a malformed amount must never turn an unmistakable fuel line into 628.
+    if document_type == "Receipt":
+        try:
+            try:
+                import validators as _validators
+            except ImportError:
+                from . import validators as _validators  # type: ignore
+            _validators.enforce_receipt_line_accounts(data)
+        except Exception as e:
+            print(f"⚠️  receipt account normalization skipped ({type(e).__name__}: {e})",
+                  file=sys.stderr)
 
     #  • Reverse charge (taxare inversă): set the boolean the downstream 4426=4427
     #    self-assessment posting reads. Explicit text/VAT-key evidence overrides the model.

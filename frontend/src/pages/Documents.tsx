@@ -644,9 +644,11 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
     ['Invoice', 'Receipt'].includes(effectiveDocumentType) &&
     fields.receipt_type !== 'payment_receipt' &&
     fields.vehicle_transaction !== 'purchase' &&
-    (fields.vehicle_transaction === 'cost' ||
-      hasExtractedVehicleCostCategory ||
-      doc.vehicleId != null);
+    (effectiveDocumentType === 'Receipt'
+      ? doc.vehicleId != null
+      : fields.vehicle_transaction === 'cost' ||
+        hasExtractedVehicleCostCategory ||
+        doc.vehicleId != null);
   const hasAmbiguousVehicleCostAccounts = lineItems.some(
     (line: any) =>
       defaultVehicleCostCategoryForAccount(line?.account_code) === '',

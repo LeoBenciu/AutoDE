@@ -324,6 +324,127 @@ def reconcile_fuel_quantity_unit_swap(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
+def enforce_receipt_line_accounts(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply accounting facts that are unambiguous on ordinary fiscal receipts.
+
+    Fuel is account 6022 regardless of whether the model guessed that it might be
+    related to a vehicle. Vehicle ownership is business context that cannot be
+    inferred from the receipt itself and is selected separately by the user, so an
+    extractor-produced vehicle category must not turn a general expense into a
+    landed-cost document.
+
+    Mutates and returns ``data``.
+    """
+    items = data.get("line_items")
+    if not isinstance(items, list):
+        return data
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        # Extraction cannot know which stock vehicle (if any) incurred a receipt.
+        # Association and landed-cost categorization are explicit UI decisions.
+        it["vehicle_cost_category"] = None
+        if not _looks_like_fuel(it):
+            continue
+        it["account_code"] = "6022"
+        it["vat_deductibility"] = "PARTIAL_50"
+    return data
+
+
+def _receipt_cui_candidates(document_text: str) -> List[tuple[int, str]]:
+    """Return checksum-valid Romanian CUIs with their positions in receipt OCR."""
+    text = document_text or ""
+    patterns = (
+        # Normal printed form: RO11201891 (OCR may mistake O for zero).
+        re.compile(r"\bR[O0]\s*[:.]?\s*((?:\d[ .]*){2,10})", re.IGNORECASE),
+        # Prefix occasionally disappears in OCR, but the CIF/CUI label survives.
+        re.compile(
+            r"\b(?:C\s*\.?\s*I\s*\.?\s*F\s*\.?|C\s*\.?\s*U\s*\.?\s*I\.?)"
+            r"\s*:?\s*(?:R[O0]\s*)?((?:\d[ .]*){2,10})",
+            re.IGNORECASE,
+        ),
+    )
+    found: List[tuple[int, str]] = []
+    seen = set()
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            digits = "".join(ch for ch in match.group(1) if ch.isdigit())
+            key = (match.start(), digits)
+            if key in seen or valid_cui(digits) is not True:
+                continue
+            seen.add(key)
+            found.append(key)
+    return sorted(found)
+
+
+def reconcile_receipt_party_eins(
+    data: Dict[str, Any],
+    document_text: str,
+    client_ein: Any = None,
+) -> Dict[str, Any]:
+    """Recover receipt vendor/buyer CUIs from their printed semantic positions.
+
+    On Romanian fiscal receipts, the issuer is printed in the company header above
+    ``BON FISCAL``. A later ``Client CUI/CIF`` identifies the buyer. Vision models
+    often copy that larger/lower client value into both fields even though both
+    numbers pass the Romanian checksum. Use the layout plus the tenant CUI to undo
+    that semantic error deterministically; leave ambiguous documents untouched.
+    """
+    if not isinstance(data, dict) or not document_text:
+        return data
+    candidates = _receipt_cui_candidates(document_text)
+    if not candidates:
+        return data
+
+    heading = re.search(
+        r"\b(?:BON\s+FISCAL|CHITAN(?:T|Ț|Ţ)(?:A|Ă))\b",
+        document_text,
+        re.IGNORECASE,
+    )
+    heading_pos = heading.start() if heading else None
+    header_candidates = (
+        [(pos, cui) for pos, cui in candidates if pos < heading_pos]
+        if heading_pos is not None
+        else []
+    )
+    client = _norm_ein_compare(client_ein)
+
+    vendor = header_candidates[0][1] if header_candidates else ""
+    if not vendor:
+        # Safe fallback for OCR without a readable heading: when the model copied
+        # the known client into both parties and the text has exactly one other
+        # valid CUI, that other company is necessarily the receipt issuer.
+        current_vendor = _norm_ein_compare(data.get("vendor_ein"))
+        current_buyer = _norm_ein_compare(data.get("buyer_ein"))
+        alternatives = list(dict.fromkeys(
+            cui for _, cui in candidates if cui != client
+        ))
+        if client and current_vendor == client and current_buyer == client and len(alternatives) == 1:
+            vendor = alternatives[0]
+
+    if vendor:
+        data["vendor_ein"] = vendor
+
+    after_heading = (
+        [cui for pos, cui in candidates if pos > heading_pos]
+        if heading_pos is not None
+        else [cui for _, cui in candidates]
+    )
+    if client and client in after_heading and vendor != client:
+        data["buyer_ein"] = client
+    elif vendor == client:
+        other_buyers = [cui for cui in after_heading if cui != vendor]
+        if other_buyers:
+            data["buyer_ein"] = other_buyers[0]
+
+    inferred = infer_direction(
+        data.get("vendor_ein"), data.get("buyer_ein"), client_ein
+    )
+    if inferred:
+        data["direction"] = inferred
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Normalize line totals to NET (VAT-exclusive)
 # ---------------------------------------------------------------------------
@@ -547,6 +668,14 @@ def validate_extraction(
         if ein_field in data:
             add(ein_field, "RO CUI checksum", valid_cui(data.get(ein_field)),
                 f"value={data.get(ein_field)!r}")
+    if document_type in ("Invoice", "Receipt"):
+        vendor_ein = _norm_ein_compare(data.get("vendor_ein"))
+        buyer_ein = _norm_ein_compare(data.get("buyer_ein"))
+        if vendor_ein and buyer_ein:
+            parties_differ = vendor_ein != buyer_ein
+            detail = f"vendor={vendor_ein!r}, buyer={buyer_ein!r}"
+            add("vendor_ein", "vendor CUI differs from buyer CUI", parties_differ, detail)
+            add("buyer_ein", "buyer CUI differs from vendor CUI", parties_differ, detail)
     for party in data.get("parties", []) or []:
         if isinstance(party, dict) and party.get("ein"):
             add("parties.ein", "RO CUI checksum", valid_cui(party.get("ein")), f"value={party.get('ein')!r}")
