@@ -6,11 +6,13 @@ import { PrismaService } from '../common/prisma.service';
 import { S3Service } from '../common/s3.service';
 import { AuditService } from '../common/audit.service';
 import {
-  isVehiclePurchaseContract,
   normalizeAccountingDocument,
 } from '../accounting/accounting-normalizer';
 import { AnafClient } from './anaf-client';
 import { resolveCurrentBnrRate } from './bnr-rate';
+import { ExtractionService } from '../extraction/extraction.service';
+import { isVehiclePurchaseDocument } from '../vehicles/vehicle-document-sync';
+import { DriveVehicleDataService } from './drive-vehicle-data.service';
 import {
   buildETransportXml,
   DeclarationData,
@@ -78,6 +80,31 @@ function dateInRomania(date = new Date()): string {
   }).format(date);
 }
 
+export function selectUitPurchaseSource(
+  documents: Array<{
+    id: number;
+    type?: string | null;
+    processedData?: { extractedFields?: unknown } | null;
+  }>,
+  tenantCui?: string | null,
+) {
+  const sources = documents
+    .filter((document) => document.processedData)
+    .map((document) => ({
+      document,
+      canonical: normalizeAccountingDocument(
+        document.type,
+        document.processedData?.extractedFields,
+        tenantCui,
+      ),
+    }))
+    .filter(({ canonical }) => isVehiclePurchaseDocument(canonical));
+  return (
+    sources.find(({ document }) => document.type === 'Invoice') ??
+    sources.find(({ document }) => document.type === 'Contract')
+  );
+}
+
 @Injectable()
 export class EtransportService {
   private readonly logger = new Logger(EtransportService.name);
@@ -87,7 +114,36 @@ export class EtransportService {
     private readonly anaf: AnafClient,
     private readonly audit: AuditService,
     private readonly s3: S3Service,
+    private readonly extraction: ExtractionService,
+    private readonly driveVehicleData: DriveVehicleDataService,
   ) {}
+
+  driveStatus(refresh = false) {
+    return this.driveVehicleData.status(refresh);
+  }
+
+  async parseTransportMessage(message: unknown) {
+    const source = textValue(message);
+    if (!source) throw new BadRequestException('Lipește mesajul primit de la transportator');
+    try {
+      const fields = await this.extraction.parseTransportMessage(source);
+      const foundFields = Object.entries(fields)
+        .filter(([, value]) => textValue(value) != null)
+        .map(([field]) => field);
+      if (foundFields.length === 0) {
+        throw new BadRequestException(
+          'Nu am identificat date logistice în mesaj. Verifică textul sau completează câmpurile manual.',
+        );
+      }
+      return { fields, foundFields };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      this.logger.warn(`transport message extraction failed: ${(error as Error).message}`);
+      throw new BadRequestException(
+        'Mesajul nu a putut fi analizat acum. Completează câmpurile manual sau încearcă din nou.',
+      );
+    }
+  }
 
   list(tenantId: number, vehicleId?: number) {
     return this.prisma.eTransportDeclaration.findMany({
@@ -106,10 +162,7 @@ export class EtransportService {
     return decl;
   }
 
-  /**
-   * Pre-fill a declaration form from the vehicle's extracted CMR and private
-   * purchase contract, so the user only confirms/edits.
-   */
+  /** Pre-fill invoice/contract data already attached to the selected vehicle. */
   async prefill(tenantId: number, vehicleId: number) {
     const vehicle = await this.prisma.vehicle.findFirst({
       where: { id: vehicleId, tenantId },
@@ -119,7 +172,7 @@ export class EtransportService {
         documents: {
           where: {
             deletedAt: null,
-            type: { in: ['CMR', 'Contract', 'Vehicle Registration Certificate'] },
+            type: { in: ['Invoice', 'Contract'] },
           },
           include: { processedData: true },
           orderBy: { uploadedAt: 'desc' },
@@ -128,94 +181,145 @@ export class EtransportService {
     });
     if (!vehicle) throw new NotFoundException('Vehiculul nu a fost găsit');
 
-    const cmr = vehicle.documents.find((d) => d.type === 'CMR')?.processedData?.extractedFields as
-      | Record<string, any>
-      | undefined;
-    const purchaseContract = vehicle.documents.find((document) => {
-      if (document.type !== 'Contract' || !document.processedData) return false;
-      return isVehiclePurchaseContract(
-        normalizeAccountingDocument(
-          document.type,
-          document.processedData.extractedFields,
-          vehicle.tenant.cui,
-        ),
-      );
-    });
-    const contract = purchaseContract?.processedData?.extractedFields as
-      | Record<string, any>
-      | undefined;
-    const canonicalContract = contract
-      ? normalizeAccountingDocument('Contract', contract, vehicle.tenant.cui)
-      : undefined;
-
-    const registration = vehicle.documents.find((d) => d.type === 'Vehicle Registration Certificate')
-      ?.processedData?.extractedFields as Record<string, any> | undefined;
+    // A supplier invoice is the operational source used by the company. A
+    // private purchase contract remains the fallback for acquisitions from an
+    // individual, where no invoice exists.
+    const purchaseSource = selectUitPurchaseSource(
+      vehicle.documents,
+      vehicle.tenant.cui,
+    );
+    const canonicalSource = purchaseSource?.canonical;
+    const sourceFields = canonicalSource?.raw;
 
     const originCountry = (
-      textValue(canonicalContract?.vendorCountry ?? vehicle.seller?.country ?? vehicle.originCountry) ?? ''
+      textValue(canonicalSource?.vendorCountry ?? vehicle.seller?.country ?? vehicle.originCountry) ?? ''
     ).toUpperCase();
     const operationType = originCountry === 'RO' ? 'TTN' : EU_COUNTRY_CODES.has(originCountry) ? 'AIC' : 'IMP';
     const tariffCode = textValue(
-      cmr?.tariff_code ??
-        contract?.tariff_code,
+      sourceFields?.tariff_code ??
+        canonicalSource?.lineItems.find((line) => textValue(line.raw.tariff_code))?.raw.tariff_code,
     );
-    const weightKg = numberValue(cmr?.gross_weight_kg ?? registration?.mass_kg);
-    // A private purchase contract has no VAT component: its total value is the
-    // declaration's source amount, not any invoice that happens to be attached.
+    // Weight and unloading place come from the company's live VIN table, not
+    // late-arriving CMR/registration documents.
+    const warnings: string[] = [];
+    let driveRow:
+      | {
+          weightKg?: number;
+          unloadingCity?: string;
+          rowNumber: number;
+        }
+      | undefined;
+    let driveSource:
+      | {
+          fileName: string;
+          sheetName: string;
+          modifiedTime?: string;
+          loadedAt: string;
+        }
+      | undefined;
+    let driveDuplicateVin = false;
+    try {
+      const lookup = await this.driveVehicleData.lookup(vehicle.vin);
+      if (!lookup.configured) {
+        warnings.push(
+          'Tabelul logistic Google Drive nu este conectat; completează manual MASA și LOCATIE.',
+        );
+      } else if (!lookup.match) {
+        driveSource = lookup.source;
+        warnings.push(
+          `VIN ${vehicle.vin} nu a fost găsit în tabelul logistic Google Drive.`,
+        );
+      } else {
+        driveRow = lookup.match;
+        driveSource = lookup.source;
+        driveDuplicateVin = Boolean(lookup.duplicateVin);
+        if (driveDuplicateVin) {
+          warnings.push(
+            `VIN ${vehicle.vin} apare de mai multe ori în tabel; s-a folosit primul rând și trebuie verificat.`,
+          );
+        }
+        if (!driveRow.weightKg) {
+          warnings.push(`Coloana MASA este goală sau invalidă pentru VIN ${vehicle.vin}.`);
+        }
+        if (!driveRow.unloadingCity) {
+          warnings.push(`Coloana LOCATIE este goală pentru VIN ${vehicle.vin}.`);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Drive VIN lookup failed for ${vehicle.vin}: ${(error as Error).message}`);
+      warnings.push(
+        'Tabelul logistic Google Drive nu a putut fi citit; completează manual MASA și LOCATIE.',
+      );
+    }
+    const weightKg = driveRow?.weightKg;
     const valueWithoutVat =
-      numberValue(canonicalContract?.totalAmount) ?? Number(vehicle.purchasePrice);
+      numberValue(
+        canonicalSource?.documentType === 'Invoice'
+          ? canonicalSource.netAmount
+          : canonicalSource?.totalAmount,
+      ) ?? Number(vehicle.purchasePrice);
     const currency = (
-      textValue(canonicalContract?.currency ?? vehicle.purchaseCurrency) ?? 'RON'
+      textValue(canonicalSource?.currency ?? vehicle.purchaseCurrency) ?? 'RON'
     ).toUpperCase();
     const goodsDescription =
-      textValue(cmr?.goods_description) ??
       `Autoturism ${vehicle.make} ${vehicle.model}, VIN ${vehicle.vin}`;
-    const transportDate = isoDate(cmr?.loading_date);
+    const transportDate = undefined;
     const goods = await this.enrichGoodsValues(
       [{ description: goodsDescription, tariffCode, weightKg, valueWithoutVat, currency }],
       false,
     );
 
-    const warnings: string[] = [];
-    if (!tariffCode) warnings.push('Codul NC/tarifar nu a fost găsit în documentele extrase.');
-    if (!weightKg) warnings.push('Greutatea nu a fost găsită în CMR sau certificatul de înmatriculare.');
-    if (!transportDate) warnings.push('Data transportului nu a fost găsită în CMR.');
+    if (!tariffCode) warnings.push('Codul NC/tarifar nu a fost găsit în factura/contractul de achiziție.');
+    warnings.push('Lipește mesajul transportatorului pentru dată, transportator, numere și locul de încărcare.');
     if (!goods[0].valueRon) warnings.push('Valoarea RON nu a putut fi calculată din cursul oficial BNR.');
 
     return {
       vehicleId,
       operationType,
       transporter: {
-        name: cmr?.carrier_name ?? '',
-        taxId: cmr?.carrier_tax_id ?? '',
-        country: cmr?.carrier_country ?? originCountry,
+        name: '',
+        taxId: '',
+        country: originCountry,
       },
-      vehiclePlate: cmr?.vehicle_plate ?? '',
-      trailerPlate: cmr?.trailer_plate ?? '',
+      vehiclePlate: '',
+      trailerPlate: '',
       loadingPlace: {
         country: originCountry,
-        city: cmr?.place_of_loading ?? '',
+        city: '',
         address: '',
       },
-      unloadingPlace: { country: 'RO', county: '', city: cmr?.place_of_delivery ?? '', address: '' },
+      unloadingPlace: {
+        country: 'RO',
+        county: '',
+        city: driveRow?.unloadingCity ?? '',
+        address: '',
+      },
       transportDate,
       goods,
       warnings,
       fieldSources: {
         operationType: originCountry ? `țara partenerului/originii (${originCountry})` : null,
-        tariffCode: tariffCode ? 'document transport/contract' : null,
-        weightKg: cmr?.gross_weight_kg != null ? 'CMR' : registration?.mass_kg != null ? 'certificat înmatriculare' : null,
-        value: contract ? 'contract privat de achiziție' : 'preț achiziție vehicul',
+        tariffCode: tariffCode ? `${purchaseSource?.document.type === 'Invoice' ? 'factură' : 'contract'} achiziție` : null,
+        weightKg: driveRow?.weightKg ? 'Google Drive · MASA' : null,
+        unloadingPlace: driveRow?.unloadingCity ? 'Google Drive · LOCATIE' : null,
+        value: purchaseSource?.document.type === 'Invoice' ? 'factură achiziție' : purchaseSource ? 'contract privat de achiziție' : 'preț achiziție vehicul',
         exchangeRate: goods[0].exchangeRateDate ? `BNR ${goods[0].exchangeRateDate}` : null,
       },
-      sourceDocumentId: purchaseContract?.id,
+      drive: {
+        configured: this.driveVehicleData.configured,
+        matched: Boolean(driveRow),
+        rowNumber: driveRow?.rowNumber ?? null,
+        duplicateVin: driveDuplicateVin,
+        source: driveSource ?? null,
+      },
+      sourceDocumentId: purchaseSource?.document.id,
     };
   }
 
   async create(tenantId: number, input: CreateDeclarationInput) {
     const normalized = await this.normalizeInput(input, false);
     const xml = await this.buildXml(tenantId, normalized);
-    const invoiceDocumentId = await this.findPurchaseContractDocument(tenantId, normalized.vehicleId);
+    const invoiceDocumentId = await this.findPurchaseSourceDocument(tenantId, normalized.vehicleId);
 
     return this.prisma.eTransportDeclaration.create({
       data: {
@@ -249,7 +353,7 @@ export class EtransportService {
     }
     const normalized = await this.normalizeInput(input, false);
     const xml = await this.buildXml(tenantId, normalized);
-    const invoiceDocumentId = await this.findPurchaseContractDocument(
+    const invoiceDocumentId = await this.findPurchaseSourceDocument(
       tenantId,
       normalized.vehicleId ?? decl.vehicleId ?? undefined,
     );
@@ -368,8 +472,8 @@ export class EtransportService {
     );
   }
 
-  /** Latest private purchase contract; the database keeps its legacy column name. */
-  private async findPurchaseContractDocument(
+  /** Latest purchase invoice, with private contract fallback. */
+  private async findPurchaseSourceDocument(
     tenantId: number,
     vehicleId?: number,
   ): Promise<number | null> {
@@ -383,7 +487,7 @@ export class EtransportService {
         where: {
           tenantId,
           vehicleId,
-          type: 'Contract',
+          type: { in: ['Invoice', 'Contract'] },
           deletedAt: null,
           processedData: { isNot: null },
         },
@@ -391,16 +495,7 @@ export class EtransportService {
         orderBy: { uploadedAt: 'desc' },
       }),
     ]);
-    const contract = contracts.find((document) =>
-      isVehiclePurchaseContract(
-        normalizeAccountingDocument(
-          document.type,
-          document.processedData?.extractedFields,
-          tenant?.cui,
-        ),
-      ),
-    );
-    return contract?.id ?? null;
+    return selectUitPurchaseSource(contracts, tenant?.cui)?.document.id ?? null;
   }
 
   async submit(tenantId: number, userId: number, id: number) {

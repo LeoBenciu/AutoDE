@@ -213,6 +213,13 @@ export const api = createApi({
     etransportPrefill: build.query<any, number>({
       query: (vehicleId) => `/etransport/prefill/${vehicleId}`,
     }),
+    parseEtransportMessage: build.mutation<any, string>({
+      query: (message) => ({
+        url: '/etransport/parse-message',
+        method: 'POST',
+        body: { message },
+      }),
+    }),
     createEtransport: build.mutation<any, any>({
       query: (body) => ({ url: '/etransport', method: 'POST', body }),
       invalidatesTags: ['ETransport', 'Vehicle'],
@@ -401,6 +408,7 @@ export const {
   useLazyDownloadUrlQuery,
   useEtransportQuery,
   useLazyEtransportPrefillQuery,
+  useParseEtransportMessageMutation,
   useCreateEtransportMutation,
   useUpdateEtransportMutation,
   useSubmitEtransportMutation,

@@ -508,6 +508,23 @@ class OtherDocumentData(StrictBase):
 
 
 # ---------------------------------------------------------------------------
+# e-Transport: logistics copied from a WhatsApp/email message
+# ---------------------------------------------------------------------------
+
+class TransportMessageData(StrictBase):
+    transporter_name: Optional[str]
+    transporter_tax_id: Optional[str]
+    transporter_country: Optional[str]  # ISO alpha-2 when identifiable
+    vehicle_plate: Optional[str]
+    trailer_plate: Optional[str]
+    loading_city: Optional[str]
+    loading_country: Optional[str]  # ISO alpha-2 when identifiable
+    unloading_city: Optional[str]
+    unloading_county: Optional[str]
+    transport_date: Optional[str]  # YYYY-MM-DD
+
+
+# ---------------------------------------------------------------------------
 # Schema registry — keyed by the document_type string the categorizer emits
 # ---------------------------------------------------------------------------
 

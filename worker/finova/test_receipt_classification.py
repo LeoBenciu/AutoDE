@@ -76,6 +76,23 @@ Nume Client: B.R.T COMPANY GROUP SRL
         self.assertEqual(data["buyer_ein"], "31194616")
         self.assertEqual(data["direction"], "incoming")
 
+    def test_receipt_party_cui_recovers_common_thermal_ocr_glyphs(self):
+        data = {
+            "vendor_ein": "31194616",
+            "buyer_ein": "31194616",
+        }
+        text = """S.C. OMV PETROM MARKETING S.R.L.
+C.I.F.: R0112O189I
+BON FISCAL
+Client C.U.I./C.I.F.: RO31194616
+"""
+
+        validators.reconcile_receipt_party_eins(data, text, "31194616")
+
+        self.assertEqual(data["vendor_ein"], "11201891")
+        self.assertEqual(data["buyer_ein"], "31194616")
+        self.assertEqual(data["direction"], "incoming")
+
     def test_fuel_receipt_is_always_6022_without_inferred_vehicle_cost(self):
         data = {
             "line_items": [
@@ -106,6 +123,54 @@ Nume Client: B.R.T COMPANY GROUP SRL
         }
         self.assertIn("vendor CUI differs from buyer CUI", failed_rules)
         self.assertIn("buyer CUI differs from vendor CUI", failed_rules)
+
+    def test_duplicate_party_rules_trigger_scoped_visual_repair(self):
+        scoped = direct_extraction._scoped_failed(
+            [
+                {"rule": "vendor CUI differs from buyer CUI"},
+                {"rule": "buyer CUI differs from vendor CUI"},
+            ]
+        )
+
+        self.assertEqual(len(scoped), 2)
+
+    def test_duplicate_party_repair_forces_vision_and_changes_only_identity(self):
+        original = {
+            "vendor": "OMV PETROM MARKETING SRL",
+            "vendor_ein": "31194616",
+            "buyer": "B.R.T COMPANY GROUP SRL",
+            "buyer_ein": "31194616",
+            "direction": "incoming",
+            "document_date": "30-07-2026",
+            "total_amount": 49.91,
+        }
+        model_repair = {
+            **original,
+            "vendor_ein": "11201891",
+            "total_amount": 999.99,
+        }
+        with patch.object(
+            direct_extraction,
+            "_run_repair",
+            return_value=(model_repair, {"model": "test"}),
+        ) as repair_call:
+            repaired, meta = direct_extraction._maybe_repair(
+                "/tmp/bon.jpeg",
+                "Receipt",
+                "prompt",
+                "",
+                "bon.jpeg",
+                original,
+                {"vision": False},
+                None,
+                "31194616",
+            )
+
+        self.assertTrue(repair_call.call_args.kwargs["use_vision"])
+        self.assertEqual(repaired["vendor_ein"], "11201891")
+        self.assertEqual(repaired["buyer_ein"], "31194616")
+        self.assertEqual(repaired["total_amount"], 49.91)
+        self.assertTrue(meta["receipt_parties_repaired"])
 
 
 if __name__ == "__main__":

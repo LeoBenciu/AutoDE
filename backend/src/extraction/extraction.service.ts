@@ -46,6 +46,19 @@ export interface SegmentationResult {
   }>;
 }
 
+export interface TransportMessageResult {
+  transporter_name?: string | null;
+  transporter_tax_id?: string | null;
+  transporter_country?: string | null;
+  vehicle_plate?: string | null;
+  trailer_plate?: string | null;
+  loading_city?: string | null;
+  loading_country?: string | null;
+  unloading_city?: string | null;
+  unloading_county?: string | null;
+  transport_date?: string | null;
+}
+
 interface FinovaContext {
   tenantId: number;
   tenantCui?: string | null;
@@ -166,6 +179,39 @@ export class ExtractionService {
       return { ok: false, error: (error as Error).message };
     } finally {
       this.release(1);
+    }
+  }
+
+  async parseTransportMessage(message: string): Promise<TransportMessageResult> {
+    const source = String(message ?? '').trim();
+    if (source.length < 3) throw new Error('Mesajul transportatorului este gol');
+    if (source.length > 20_000) {
+      throw new Error('Mesajul transportatorului depășește 20.000 de caractere');
+    }
+
+    await this.acquire(0);
+    const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoimport-uit-message-'));
+    const sourceFile = path.join(runDir, 'message.json');
+    try {
+      const currentDate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/Bucharest',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+      await fs.writeFile(
+        sourceFile,
+        JSON.stringify({ message: source, current_date: currentDate }),
+        'utf8',
+      );
+      const raw = await this.spawnJson(
+        ['transport-message', sourceFile],
+        Math.min(this.phase1TimeoutMs, 90_000),
+      );
+      return unwrapData(raw) as TransportMessageResult;
+    } finally {
+      this.release(0);
+      await fs.rm(runDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
