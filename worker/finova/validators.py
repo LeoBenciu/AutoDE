@@ -354,21 +354,31 @@ def enforce_receipt_line_accounts(data: Dict[str, Any]) -> Dict[str, Any]:
 def _receipt_cui_candidates(document_text: str) -> List[tuple[int, str]]:
     """Return checksum-valid Romanian CUIs with their positions in receipt OCR."""
     text = document_text or ""
+    # Thermal-print OCR routinely confuses 0/O, 1/I/L, 5/S and 8/B. Accept those
+    # glyphs in a CUI-shaped token, normalize them, then let the Romanian checksum
+    # decide whether the result is real. This recovers e.g. R0112O189I → 11201891
+    # without weakening validation.
+    cui_chars = r"[0-9OILSB]"
     patterns = (
         # Normal printed form: RO11201891 (OCR may mistake O for zero).
-        re.compile(r"\bR[O0]\s*[:.]?\s*((?:\d[ .]*){2,10})", re.IGNORECASE),
+        re.compile(
+            rf"\bR[O0]\s*[:.]?\s*((?:{cui_chars}[ .]*){{2,10}})",
+            re.IGNORECASE,
+        ),
         # Prefix occasionally disappears in OCR, but the CIF/CUI label survives.
         re.compile(
             r"\b(?:C\s*\.?\s*I\s*\.?\s*F\s*\.?|C\s*\.?\s*U\s*\.?\s*I\.?)"
-            r"\s*:?\s*(?:R[O0]\s*)?((?:\d[ .]*){2,10})",
+            rf"\s*:?\s*(?:R[O0]\s*)?((?:{cui_chars}[ .]*){{2,10}})",
             re.IGNORECASE,
         ),
     )
+    glyph_to_digit = str.maketrans({"O": "0", "I": "1", "L": "1", "S": "5", "B": "8"})
     found: List[tuple[int, str]] = []
     seen = set()
     for pattern in patterns:
         for match in pattern.finditer(text):
-            digits = "".join(ch for ch in match.group(1) if ch.isdigit())
+            normalized = match.group(1).upper().translate(glyph_to_digit)
+            digits = "".join(ch for ch in normalized if ch.isdigit())
             key = (match.start(), digits)
             if key in seen or valid_cui(digits) is not True:
                 continue

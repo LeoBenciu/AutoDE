@@ -19,6 +19,24 @@ export class EtransportController {
     return this.etransport.prefill(user.tenantId, vehicleId);
   }
 
+  @Post('parse-message')
+  @Roles('ACCOUNTANT')
+  parseMessage(@Body() dto: { message?: string }) {
+    return this.etransport.parseTransportMessage(dto?.message);
+  }
+
+  @Get('drive/status')
+  @Roles('ACCOUNTANT')
+  driveStatus() {
+    return this.etransport.driveStatus();
+  }
+
+  @Post('drive/refresh')
+  @Roles('ACCOUNTANT')
+  refreshDrive() {
+    return this.etransport.driveStatus(true);
+  }
+
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.etransport.get(user.tenantId, id);

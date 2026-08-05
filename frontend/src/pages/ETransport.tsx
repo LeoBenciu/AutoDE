@@ -1,8 +1,9 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 import {
   useCreateEtransportMutation,
   useEtransportQuery,
   useLazyEtransportPrefillQuery,
+  useParseEtransportMessageMutation,
   useSubmitEtransportMutation,
   useUpdateEtransportMutation,
   useVehiclesQuery,
@@ -174,9 +175,14 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
   const [prefill] = useLazyEtransportPrefillQuery();
   const [create, { isLoading: creating }] = useCreateEtransportMutation();
   const [update, { isLoading: updating }] = useUpdateEtransportMutation();
+  const [parseMessage, { isLoading: parsingMessage }] = useParseEtransportMessageMutation();
   const isLoading = creating || updating;
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [driveInfo, setDriveInfo] = useState<any | null>(null);
+  const prefillRequest = useRef(0);
+  const [transportMessage, setTransportMessage] = useState('');
+  const [messageResult, setMessageResult] = useState('');
   const [form, setForm] = useState(() =>
     declaration
       ? {
@@ -233,12 +239,24 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
   );
 
   const onVehicleChange = async (vehicleId: string) => {
+    const requestId = ++prefillRequest.current;
     setForm((f) => ({ ...f, vehicleId }));
-    if (!vehicleId) return;
-    // Pre-fill from extracted CMR / private purchase-contract data.
+    setError('');
+    setDriveInfo(null);
+    if (!vehicleId) {
+      setWarnings([]);
+      return;
+    }
+    // Pre-fill the purchase data already extracted from the invoice/contract.
     try {
       const p = await prefill(Number(vehicleId)).unwrap();
+      if (requestId !== prefillRequest.current) return;
       setWarnings(p.warnings ?? []);
+      setDriveInfo({
+        ...p.drive,
+        weightKg: p.goods?.[0]?.weightKg ?? null,
+        unloadingCity: p.unloadingPlace?.city ?? null,
+      });
       setForm((f) => ({
         ...f,
         vehicleId,
@@ -262,8 +280,61 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
         exchangeRateDate: p.goods?.[0]?.exchangeRateDate ?? '',
         dataVerified: false,
       }));
-    } catch {
-      /* prefill is best-effort */
+    } catch (err: any) {
+      if (requestId !== prefillRequest.current) return;
+      setError(err?.data?.message ?? 'Datele vehiculului nu au putut fi precompletate');
+    }
+  };
+
+  const fillFromTransportMessage = async () => {
+    setError('');
+    setMessageResult('');
+    try {
+      const result = await parseMessage(transportMessage).unwrap();
+      const parsed = result?.fields ?? {};
+      const values: Record<string, unknown> = {
+        transporterName: parsed.transporter_name,
+        transporterTaxId: parsed.transporter_tax_id,
+        transporterCountry: parsed.transporter_country,
+        vehiclePlate: parsed.vehicle_plate,
+        trailerPlate: parsed.trailer_plate,
+        loadingCity: parsed.loading_city,
+        loadingCountry: parsed.loading_country,
+        // LOCATIE from the VIN table is authoritative when a row was found.
+        unloadingCity: driveInfo?.matched ? undefined : parsed.unloading_city,
+        unloadingCounty: parsed.unloading_county,
+        transportDate: parsed.transport_date,
+      };
+      setForm((current) => {
+        const next = { ...current, dataVerified: false };
+        Object.entries(values).forEach(([fieldName, value]) => {
+          if (value != null && String(value).trim() !== '') {
+            (next as any)[fieldName] = String(value).trim();
+          }
+        });
+        return next;
+      });
+      const labels: Record<string, string> = {
+        transporter_name: 'transportator',
+        transporter_tax_id: 'cod fiscal',
+        transporter_country: 'țară transportator',
+        vehicle_plate: 'număr camion',
+        trailer_plate: 'număr remorcă',
+        loading_city: 'oraș încărcare',
+        loading_country: 'țară încărcare',
+        unloading_city: 'oraș descărcare',
+        unloading_county: 'județ descărcare',
+        transport_date: 'data transportului',
+      };
+      const filled = (result?.foundFields ?? [])
+        .map((fieldName: string) => labels[fieldName] ?? fieldName)
+        .join(', ');
+      setMessageResult(`Completat din mesaj: ${filled}. Verifică valorile înainte de salvare.`);
+      setWarnings((current) =>
+        current.filter((warning) => !warning.startsWith('Lipește mesajul transportatorului')),
+      );
+    } catch (err: any) {
+      setError(err?.data?.message ?? 'Mesajul transportatorului nu a putut fi analizat');
     }
   };
 
@@ -325,17 +396,71 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
             ? declaration.uit
               ? `Atenție: modificarea invalidează codul UIT ${declaration.uit} — după salvare declarația revine în ciornă și trebuie retrimisă la ANAF pentru un cod nou.`
               : 'După salvare, declarația revine în ciornă și poate fi retrimisă la ANAF.'
-            : 'Datele se pre-completează din CMR-ul și contractul privat de achiziție extrase pentru vehiculul ales.'}
+            : 'Datele se combină din factura/contractul vehiculului, mesajul transportatorului și tabelul logistic intern indexat după VIN.'}
         </p>
         <form onSubmit={submit} className="mt-4 space-y-3">
-          <select className={field} value={form.vehicleId} onChange={(e) => onVehicleChange(e.target.value)}>
-            <option value="">Vehicul (opțional, pentru pre-completare)…</option>
+          <select className={field} value={form.vehicleId} onChange={(e) => onVehicleChange(e.target.value)} required>
+            <option value="">Selectează vehiculul / VIN-ul…</option>
             {vehicles.map((v: any) => (
               <option key={v.id} value={v.id}>
                 {v.make} {v.model} · {v.vin}
               </option>
             ))}
           </select>
+          {driveInfo?.matched && (
+            <div className="rounded-control border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              <p className="font-semibold">Vehicul găsit în tabelul logistic Google Drive</p>
+              <p className="mt-0.5">
+                MASA: {driveInfo.weightKg ?? '—'} kg · LOCATIE: {driveInfo.unloadingCity || '—'}
+              </p>
+              {driveInfo.source?.fileName && (
+                <p className="mt-0.5 text-emerald-700">
+                  {driveInfo.source.fileName} · foaia {driveInfo.source.sheetName} · rândul {driveInfo.rowNumber}
+                </p>
+              )}
+            </div>
+          )}
+          {driveInfo?.configured && !driveInfo.matched && driveInfo.source?.fileName && (
+            <p className="rounded-control border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Tabelul {driveInfo.source.fileName} este conectat, dar VIN-ul selectat nu a fost găsit.
+            </p>
+          )}
+          {driveInfo && !driveInfo.configured && (
+            <p className="rounded-control border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Tabelul logistic Google Drive nu este conectat încă. MASA și LOCATIE pot fi completate manual până la configurare.
+            </p>
+          )}
+          <div className="rounded-control border border-line-strong bg-canvas p-3">
+            <label className="text-xs font-semibold text-ink-soft" htmlFor="transport-message">
+              Mesaj primit de la transportator (WhatsApp / email)
+            </label>
+            <p className="mt-1 text-xs text-muted">
+              Lipește mesajul complet. Aplicația completează numai datele logistice identificate explicit; factura rămâne sursa pentru vehicul și valoare.
+            </p>
+            <textarea
+              id="transport-message"
+              className={`${field} mt-2 min-h-28 resize-y bg-white`}
+              value={transportMessage}
+              onChange={(event) => {
+                setTransportMessage(event.target.value);
+                setMessageResult('');
+              }}
+              maxLength={20_000}
+              placeholder={'Exemplu: Transportator..., camion..., remorcă..., încărcare..., data...'}
+            />
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="text-[11px] text-muted">{transportMessage.length.toLocaleString('ro-RO')} / 20.000 caractere</span>
+              <button
+                type="button"
+                disabled={parsingMessage || transportMessage.trim().length < 3}
+                onClick={fillFromTransportMessage}
+                className="rounded-control bg-sidebar px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {parsingMessage ? 'Analizez mesajul…' : 'Extrage și completează'}
+              </button>
+            </div>
+            {messageResult && <p className="mt-2 text-xs text-emerald-700">{messageResult}</p>}
+          </div>
           <div className="grid grid-cols-2 gap-2.5">
             <select className={field} value={form.operationType} onChange={set('operationType')} required>
               <option value="">Tip operațiune verificat…</option>
@@ -413,7 +538,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
               required
             />
             <span>
-              Am verificat tipul operațiunii, codul NC/tarifar, greutatea reală, valoarea fără TVA și moneda în documentele transportului.
+              Am verificat datele din factură/contract, mesajul transportatorului și tabelul logistic intern: tipul operațiunii, codul NC/tarifar, greutatea reală, traseul, valoarea fără TVA și moneda.
               Pentru valută, aplicația va folosi cursul BNR valabil la declarare.
             </span>
           </label>

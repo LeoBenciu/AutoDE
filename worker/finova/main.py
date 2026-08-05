@@ -3238,6 +3238,25 @@ def read_base64_from_file(file_path: str) -> str:
 def main():
     """Main function with comprehensive error handling and memory management."""
 
+    # UIT logistics message: `python main.py transport-message <json_file>`.
+    # The JSON contains the pasted WhatsApp/email text and today's Romania date.
+    if len(sys.argv) >= 3 and sys.argv[1] == 'transport-message':
+        try:
+            with open(sys.argv[2], 'r', encoding='utf-8') as source_file:
+                payload = json.load(source_file)
+            try:
+                from direct_extraction import extract_transport_message
+            except ImportError:
+                from .direct_extraction import extract_transport_message  # type: ignore
+            result = extract_transport_message(
+                payload.get('message', ''), payload.get('current_date'))
+            print(json.dumps({"data": result}, ensure_ascii=False), flush=True)
+            sys.exit(0)
+        except Exception as e:
+            print(f"ERROR: transport-message mode failed: {e}", file=sys.stderr)
+            print(json.dumps({"error": str(e)}, ensure_ascii=False), flush=True)
+            sys.exit(1)
+
     # Batch-scan segmentation: `python main.py segment <base64_file>` — detects
     # logical document boundaries in a multi-page PDF (see segmentation.py).
     # Fail-open: segment_document itself never raises (falls back to a

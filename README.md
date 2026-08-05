@@ -57,9 +57,11 @@ document management, LLM document extraction, contract generation, and RO e-Tran
   a generated car line. Încasări/Plăți come from approved receipts and cash/payment
   dispositions in the journal—never from bank reconciliation. Empty selected files are
   omitted. The old invoice/partner endpoints remain temporary compatibility wrappers.
-- **e-Transport**: declaration pre-filled from extracted CMR/invoice, XML build,
-  ANAF OAuth2 (logincert) client with proactive token refresh, status polling → UIT,
-  printable UIT sheet. *Validate the XML against the current ANAF XSD before production.*
+- **e-Transport**: declaration pre-filled from the acquisition invoice/contract, a pasted
+  WhatsApp/email transport message, and the company's Drive table matched by VIN. The table
+  supplies `MASA` and unloading `LOCATIE`; CMR and registration documents are not required
+  for UIT. Includes XML build, ANAF OAuth2 (logincert), status polling → UIT and a printable
+  UIT sheet. *Validate the XML against the current ANAF XSD before production.*
 - **Cross-cutting**: JWT access+refresh, roles, tenant scoping on every query,
   audit log (e-Transport/contracts/deletes), graceful degradation when
   ANAF/LLM credentials are missing.
@@ -72,8 +74,10 @@ document management, LLM document extraction, contract generation, and RO e-Tran
    lines, and correct any flagged value.
 3. Approve the document. The system confirms/updates the vehicle by VIN, posts the accounting
    entry, and makes the approved document eligible for SAGA.
-4. Upload CMR and registration papers; they attach to the same VIN and enrich the vehicle
-   file. Create and confirm e-Transport/UIT when that flow applies.
+4. For UIT, select the vehicle. The app combines its invoice/contract with the logistics row
+   whose `SERIE SASIU` matches the VIN, then the user pastes the transporter WhatsApp/email
+   message and verifies the completed declaration. CMR and registration papers may still be
+   archived later, but they are not inputs to UIT.
 5. Upload transport, registration, ITP, refurbishment and other supplier invoices/receipts,
    assign a vehicle if the VIN is not printed, select a document-wide cost category or one
    category per line, and explicitly confirm the category review before approval. Their
@@ -161,6 +165,16 @@ instructions are in
   uses `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_REGION`.
 - **ANAF**: needs a qualified certificate enrolled in SPV; set `ANAF_CLIENT_ID/SECRET`
   and complete the OAuth2 flow per tenant. Defaults point at the ANAF **test** endpoint.
+- **e-Transport Drive table**: enable the Google Drive API, create a service account and share
+  the XLSX or native Google Sheet with its `client_email` as **Viewer**. Set
+  `ETRANSPORT_DRIVE_FILE_ID` (a full Drive URL is also accepted) and put the one-line JSON key
+  or its base64 representation in `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON`. If the workbook has
+  several sheets, set `ETRANSPORT_DRIVE_SHEET_NAME`; otherwise the first sheet is used. The
+  header row must contain `SERIE SASIU`, `MASA` and `LOCATIE`; `COD INTERN` is ignored because
+  it is not part of the UIT declaration. `MASA` is interpreted as kilograms and `LOCATIE` as
+  the Romanian unloading city. Data is cached for five minutes by default. An ACCOUNTANT can
+  test or force refresh through `GET /api/etransport/drive/status` and
+  `POST /api/etransport/drive/refresh`; responses never include credentials or the file ID.
 - **Accuracy**: the deterministic Finova SAGA golden fixture protects XML parity.
   Add reviewed real documents to the live extraction acceptance corpus as beneficiary
   examples become available.
