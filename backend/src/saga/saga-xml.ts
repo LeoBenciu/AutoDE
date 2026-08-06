@@ -148,6 +148,96 @@ const ARTICLE_TYPE_MAP: Record<string, string> = {
   TAXA_VERDE: 'TV',
 };
 
+/**
+ * Canonical SAGA county (județ) mnemonics, keyed by the county name after
+ * diacritics are stripped, lower-cased and reduced to letters only. Values are
+ * the official auto-registration codes SAGA expects on import (Bacău → BC,
+ * București → B, Cluj → CJ, …).
+ */
+const JUDET_MNEMONIC_BY_NAME: Record<string, string> = {
+  alba: 'AB',
+  arad: 'AR',
+  arges: 'AG',
+  bacau: 'BC',
+  bihor: 'BH',
+  bistritanasaud: 'BN',
+  botosani: 'BT',
+  brasov: 'BV',
+  braila: 'BR',
+  buzau: 'BZ',
+  carasseverin: 'CS',
+  calarasi: 'CL',
+  cluj: 'CJ',
+  constanta: 'CT',
+  covasna: 'CV',
+  dambovita: 'DB',
+  dimbovita: 'DB', // pre-1993 spelling
+  dolj: 'DJ',
+  galati: 'GL',
+  giurgiu: 'GR',
+  gorj: 'GJ',
+  harghita: 'HR',
+  hunedoara: 'HD',
+  ialomita: 'IL',
+  iasi: 'IS',
+  ilfov: 'IF',
+  maramures: 'MM',
+  mehedinti: 'MH',
+  mures: 'MS',
+  neamt: 'NT',
+  olt: 'OT',
+  prahova: 'PH',
+  satumare: 'SM',
+  salaj: 'SJ',
+  sibiu: 'SB',
+  suceava: 'SV',
+  teleorman: 'TR',
+  timis: 'TM',
+  tulcea: 'TL',
+  vaslui: 'VS',
+  valcea: 'VL',
+  vilcea: 'VL', // pre-1993 spelling
+  vrancea: 'VN',
+  bucuresti: 'B',
+};
+
+/** Valid mnemonics, for pass-through of values that are already codes. */
+const JUDET_MNEMONICS = new Set(Object.values(JUDET_MNEMONIC_BY_NAME));
+
+/**
+ * Normalize a Romanian county to the 1–2 letter mnemonic SAGA expects in the
+ * FurnizorJudet / ClientJudet / Judet fields. Extraction and nomenclature data
+ * often carry the full name ("București", "Cluj") or a diacritics-free variant
+ * ("Bucuresti"), but SAGA's import rejects anything that is not the official
+ * code. Tolerates diacritics, casing, "Județul/Jud./Municipiul" prefixes and
+ * any București sector spelling. A value already a valid code passes through;
+ * an unrecognized value is returned trimmed as-is (better than blanking it).
+ */
+function sagaJudet(value: unknown): string {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (!raw) return '';
+
+  // Already a valid mnemonic (any casing / stray spaces)?
+  const asCode = raw.toUpperCase().replace(/\s+/g, '');
+  if (JUDET_MNEMONICS.has(asCode)) return asCode;
+
+  // Reduce to a comparable key: strip diacritics, lower-case, letters only.
+  let key = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z]/g, '');
+
+  // Drop common administrative prefixes ("judetul", "jud", "municipiul", "mun").
+  key = key.replace(/^(judetul|judet|jud|municipiul|mun)/, '');
+
+  // Any București variant (sectors, "Municipiul București", etc.) → "B".
+  if (key.includes('bucuresti')) return 'B';
+
+  return JUDET_MNEMONIC_BY_NAME[key] || raw;
+}
+
 export function buildFacturiXml(
   invoices: SagaInvoiceRecord[],
   company: SagaCompany,
@@ -181,7 +271,9 @@ export function buildPartnersXml(
           ? [xmlTag('Reg_com', partner.registration, 4)]
           : []),
         xmlTag('Tara', partner.country || 'RO', 4),
-        ...(kind === 'Clienti' ? [xmlTag('Judet', partner.county, 4)] : []),
+        ...(kind === 'Clienti'
+          ? [xmlTag('Judet', sagaJudet(partner.county), 4)]
+          : []),
         xmlTag('Localitate', partner.city, 4),
         xmlTag('Adresa', partner.address, 4),
         xmlTag('Cont_banca', partner.iban, 4),
@@ -266,7 +358,7 @@ function buildFactura(
     ),
     xmlTag(
       'FurnizorJudet',
-      data.vendorCounty || (companyIsVendor ? company.county : ''),
+      sagaJudet(data.vendorCounty || (companyIsVendor ? company.county : '')),
     ),
     xmlTag(
       'FurnizorAdresa',
@@ -300,7 +392,7 @@ function buildFactura(
     ),
     xmlTag(
       'ClientJudet',
-      data.buyerCounty || (companyIsBuyer ? company.county : ''),
+      sagaJudet(data.buyerCounty || (companyIsBuyer ? company.county : '')),
     ),
     xmlTag(
       'ClientTara',
@@ -411,7 +503,7 @@ function buildFactura(
           <LinieNrCrt>${index + 1}</LinieNrCrt>
           <Gestiune>${esc(line.management)}</Gestiune>
           <Activitate>${esc(line.raw.activity ?? line.raw.activitate)}</Activitate>
-          <Descriere>${esc(line.name)}</Descriere>
+          <Descriere>${esc(vehicleLineDescription(line, data) ?? line.name)}</Descriere>
           <CodArticolFurnizor>${esc(analytic)}</CodArticolFurnizor>
           <CodArticolClient>${esc(analytic)}</CodArticolClient>
           <GUID_cod_articol>${esc(line.raw.guid_article_code ?? line.raw.guid_cod_articol)}</GUID_cod_articol>
@@ -543,6 +635,33 @@ function finovaScalar(value: unknown): string {
 
 function firstTruthy(...values: unknown[]): unknown {
   return values.find(Boolean) ?? '';
+}
+
+/**
+ * Vehicle stock lines export with a "<VIN> <model>" description so the car is
+ * identifiable in SAGA by chassis number rather than a generic "Autoturism …"
+ * label. Such lines carry the canonical AUTO-<VIN> article code (see
+ * vehicleArticleCode); the model is taken from the line's raw vehicle fields,
+ * falling back to the document-level vehicle data. Returns null for any line
+ * that is not a vehicle, so the caller keeps the normal name.
+ */
+function vehicleLineDescription(
+  line: CanonicalLineItem,
+  data: CanonicalAccountingDocument,
+): string | null {
+  const match = /^AUTO-(.+)$/i.exec(line.articleCode ?? '');
+  if (!match) return null;
+  const vin = match[1].trim().toUpperCase();
+  if (!vin) return null;
+  const model = finovaScalar(
+    firstTruthy(
+      line.raw.vehicle_model,
+      line.raw.model,
+      data.raw.vehicle_model,
+      data.raw.model,
+    ),
+  ).trim();
+  return [vin, model].filter(Boolean).join(' ');
 }
 
 function findFinovaArticle(
