@@ -1639,12 +1639,27 @@ function CsvImport({
         <p className="text-xs text-muted">{hint}</p>
       </div>
       {result && (
-        <p className="mt-2 text-xs text-emerald-700">
-          Import finalizat: {result.created} adăugate, {result.updated} actualizate din {result.total} rânduri.
-          {(result.identifiersFilled ?? 0) > 0 &&
-            ` ${result.identifiersFilled} numere de identificare completate.`}
-          {result.errors.length > 0 && ` ${result.errors.length} rânduri ignorate.`}
-        </p>
+        <div className="mt-2 space-y-1 text-xs">
+          <p className="text-emerald-700">
+            Import finalizat: {result.created} adăugate, {result.updated} actualizate din {result.total} rânduri.
+            {(result.identifiersFilled ?? 0) > 0 &&
+              ` ${result.identifiersFilled} numere de identificare completate.`}
+            {result.errors.length > 0 && ` ${result.errors.length} rânduri ignorate.`}
+          </p>
+          {result.identificationNumbersRead != null && (
+            <p
+              className={
+                (result.rowsWithoutIdentification ?? 0) > 0
+                  ? 'text-amber-700'
+                  : 'text-emerald-700'
+              }
+            >
+              Numere de identificare citite din fișier: {result.identificationNumbersRead}/{result.total}.
+              {(result.rowsWithoutIdentification ?? 0) > 0 &&
+                ' Verifică rândurile fără identificator din fișier.'}
+            </p>
+          )}
+        </div>
       )}
       {result && result.errors.length > 0 && (
         <ul className="mt-1 max-h-24 list-disc overflow-y-auto pl-5 text-xs text-amber-700">
