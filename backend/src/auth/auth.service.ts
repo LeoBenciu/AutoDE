@@ -1,9 +1,10 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../common/prisma.service';
+import { AuditService } from '../common/audit.service';
 import { LoginDto, RegisterDto } from './dto';
 
 export interface JwtPayload {
@@ -20,6 +21,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly audit: AuditService,
     config: ConfigService,
   ) {
     this.refreshTtlDays = Number(config.get('JWT_REFRESH_TTL_DAYS', 30));
@@ -62,6 +64,57 @@ export class AuthService {
     }
     await this.prisma.refreshToken.update({ where: { id: row.id }, data: { revokedAt: new Date() } });
     return this.issueTokens(row.user.id, row.user.tenantId, row.user.role, row.user.email, row.user.name);
+  }
+
+  async changePassword(
+    userId: number,
+    currentPassword: string,
+    newPassword: string,
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (
+      !user ||
+      !user.active ||
+      !(await bcrypt.compare(currentPassword, user.passwordHash))
+    ) {
+      throw new UnauthorizedException('Parola curentă este incorectă');
+    }
+    if (Buffer.byteLength(newPassword, 'utf8') > 72) {
+      throw new BadRequestException('Parola nouă este prea lungă');
+    }
+    if (await bcrypt.compare(newPassword, user.passwordHash)) {
+      throw new BadRequestException('Parola nouă trebuie să fie diferită de parola curentă');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+    await this.audit.log({
+      tenantId: user.tenantId,
+      userId: user.id,
+      action: 'user.password_changed',
+      entity: 'User',
+      entityId: user.id,
+      details: { selfService: true },
+    });
+
+    // All previous refresh sessions are revoked; issue a fresh pair for the
+    // current browser so changing a password does not force an extra login.
+    return this.issueTokens(
+      user.id,
+      user.tenantId,
+      user.role,
+      user.email,
+      user.name,
+    );
   }
 
   private async issueTokens(userId: number, tenantId: number, role: string, email: string, name: string) {

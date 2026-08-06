@@ -58,13 +58,13 @@ const EXTRACTED_FIELD_LABELS: Record<string, string> = {
   document_date: 'Data emiterii',
   due_date: 'Data scadenței',
   vendor: 'Furnizor',
-  vendor_ein: 'CUI furnizor',
+  vendor_ein: 'Număr identificare furnizor',
   vendor_country: 'Țară furnizor',
   vendor_address: 'Adresă furnizor',
   vendor_city: 'Localitate furnizor',
   vendor_county: 'Județ furnizor',
   buyer: 'Cumpărător',
-  buyer_ein: 'CUI cumpărător',
+  buyer_ein: 'Număr identificare cumpărător',
   buyer_country: 'Țară cumpărător',
   buyer_address: 'Adresă cumpărător',
   buyer_city: 'Localitate cumpărător',
@@ -170,26 +170,6 @@ const EXTRACTED_FIELD_OPTIONS: Record<string, SelectOption[]> = {
     ['INDIVIDUAL', 'Persoană fizică'],
     ['COMPANY', 'Companie'],
   ],
-  vendor_identifier_type: [
-    ['CUI', 'CUI'],
-    ['CNP', 'CNP'],
-    ['FOREIGN_ID', 'Identificator extern'],
-  ],
-  supplier_identifier_type: [
-    ['CUI', 'CUI'],
-    ['CNP', 'CNP'],
-    ['FOREIGN_ID', 'Identificator extern'],
-  ],
-  buyer_identifier_type: [
-    ['CUI', 'CUI'],
-    ['CNP', 'CNP'],
-    ['FOREIGN_ID', 'Identificator extern'],
-  ],
-  customer_identifier_type: [
-    ['CUI', 'CUI'],
-    ['CNP', 'CNP'],
-    ['FOREIGN_ID', 'Identificator extern'],
-  ],
   operation_type: [
     ['payment', 'Plată'],
     ['collection', 'Încasare'],
@@ -227,6 +207,10 @@ const INTERNAL_EXTRACTED_FIELDS = new Set([
   'document_hash',
   'documentHash',
   'vehicle_transaction',
+  'vendor_identifier_type',
+  'supplier_identifier_type',
+  'buyer_identifier_type',
+  'customer_identifier_type',
   // Legacy document-level fallback; vehicle cost categories now live on lines.
   'vehicle_cost_category',
 ]);
@@ -571,14 +555,6 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   const vendorCountry = String(
     fields.vendor_country ?? contractVendor?.country ?? 'RO',
   ).toUpperCase();
-  const vendorIdentifierType =
-    fields.vendor_identifier_type ??
-    contractVendor?.identifier_type ??
-    (vendorKind === 'COMPANY'
-      ? 'CUI'
-      : vendorCountry === 'RO'
-        ? 'CNP'
-        : 'FOREIGN_ID');
   const isPurchaseContract =
     effectiveDocumentType === 'Contract' &&
     (fields.vehicle_transaction === 'purchase' ||
@@ -619,12 +595,14 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   });
   const visibleEntries = hideAccepted ? entries.filter(([key]) => !isAccepted(key)) : entries;
   const acceptedCount = entries.filter(([key]) => isAccepted(key)).length;
-  const reviewFields = new Set([
-    ...Array.from(issueFields),
-    ...Object.entries(confidence)
-      .filter(([, value]) => Number(value) < 0.7)
-      .map(([key]) => key),
-  ]);
+  const reviewFields = new Set(
+    [
+      ...Array.from(issueFields),
+      ...Object.entries(confidence)
+        .filter(([, value]) => Number(value) < 0.7)
+        .map(([key]) => key),
+    ].filter((key) => !INTERNAL_EXTRACTED_FIELDS.has(key)),
+  );
   const confidenceValues = Object.values(confidence).filter(Number.isFinite);
   const globalConfidence =
     confidenceValues.length > 0
@@ -942,30 +920,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                   }
                 />
                 <LineField
-                  label="Tip identificator"
-                  value={vendorIdentifierType}
-                  options={[
-                    ['CNP', 'CNP'],
-                    ['FOREIGN_ID', 'Identificator extern'],
-                    ['CUI', 'CUI'],
-                  ]}
-                  disabled={doc.reviewStatus === 'APPROVED'}
-                  onSave={(value) =>
-                    correct({
-                      id,
-                      field: 'vendor_identifier_type',
-                      newValue: value,
-                    }).unwrap()
-                  }
-                />
-                <LineField
-                  label={
-                    vendorKind === 'INDIVIDUAL'
-                      ? vendorCountry === 'RO'
-                        ? 'CNP vânzător'
-                        : 'Identificator extern vânzător'
-                      : 'CUI vânzător'
-                  }
+                  label="Număr de identificare vânzător"
                   value={
                     fields.vendor_ein ??
                     contractVendor?.ein ??

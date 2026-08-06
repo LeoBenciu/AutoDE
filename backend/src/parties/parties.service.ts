@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { normalizeEin } from '../accounting/accounting-normalizer';
-import { parseCsv, pick } from '../common/csv';
+import { normalizeCsvHeader, parseCsv, pick } from '../common/csv';
 import { CreatePartyDto, UpdatePartyDto } from './dto';
 import {
+  PartyIdentifierTypeValue,
+  PartyKindValue,
   normalizeIdentifierType,
   normalizePartyCountry,
   privateSellerIdentityErrors,
@@ -49,11 +51,7 @@ export class PartiesService {
     const kind = ((dto.kind as 'INDIVIDUAL' | 'COMPANY' | undefined) ??
       inferPartyKind(taxId));
     const country = normalizePartyCountry(dto.country);
-    const identifierType = normalizeIdentifierType(
-      dto.identifierType,
-      kind,
-      country,
-    );
+    const identifierType = normalizeIdentifierType(undefined, kind, country);
     if (taxId) {
       const existing = await this.prisma.party.findFirst({
         where: { tenantId, taxId },
@@ -65,7 +63,7 @@ export class PartiesService {
           ? normalizePartyCountry(dto.country)
           : existing.country;
         const resultingIdentifierType = normalizeIdentifierType(
-          dto.identifierType ?? existing.identifierType,
+          undefined,
           resultingKind,
           resultingCountry,
         );
@@ -137,96 +135,264 @@ export class PartiesService {
   }
 
   async import(tenantId: number, role: PartyRole, file?: UploadedCsv) {
-    if (!file?.buffer?.length) throw new BadRequestException('Fișier CSV gol sau lipsă');
-    const rows = parseCsv(file.buffer);
-    if (rows.length === 0) throw new BadRequestException('Fișierul CSV nu conține date');
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Fișier CSV/XML gol sau lipsă');
+    }
+    const rows = parsePartyImportRows(file);
+    if (rows.length === 0) {
+      throw new BadRequestException('Fișierul CSV/XML nu conține parteneri');
+    }
+
+    const storedParties = await this.prisma.party.findMany({ where: { tenantId } });
+    const parties: WorkingParty[] = storedParties.map((party) => ({
+      ...party,
+      kind: party.kind as PartyKindValue,
+      identifierType: party.identifierType as PartyIdentifierTypeValue | null,
+    }));
+    const taxIdIndex = new Map<string, Set<WorkingParty>>();
+    const supplierCodeIndex = new Map<string, Set<WorkingParty>>();
+    const clientCodeIndex = new Map<string, Set<WorkingParty>>();
+    const nameCountryIndex = new Map<string, Set<WorkingParty>>();
+    for (const party of parties) indexParty(party, {
+      taxIdIndex,
+      supplierCodeIndex,
+      clientCodeIndex,
+      nameCountryIndex,
+    });
 
     let created = 0;
     let updated = 0;
+    let identifiersFilled = 0;
+    let identifierTypesCorrected = 0;
     const errors: string[] = [];
+    const changed = new Set<WorkingParty>();
+    const initiallyMissingIdentifiers = new Set(
+      parties.filter((party) => !party.taxId).map((party) => party.id),
+    );
+    const correctedIdentifierTypes = new Set<number>();
 
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
-      const name = pick(row, 'name', 'denumire', 'nume', 'partener');
+      const name = pick(
+        row,
+        'name',
+        'denumire',
+        'nume',
+        'partener',
+        role === 'supplier' ? 'furnizor' : 'client',
+        role === 'supplier' ? 'denumire furnizor' : 'denumire client',
+        role === 'supplier' ? 'nume furnizor' : 'nume client',
+      );
       if (!name) {
         errors.push(`Rândul ${index + 2}: lipsește denumirea`);
         continue;
       }
-      const rawTaxId = pick(row, 'taxid', 'cui', 'cif', 'ein', 'cod fiscal', 'cnp');
-      const taxId = rawTaxId ? normalizeEin(rawTaxId) : undefined;
-      const code = pick(row, 'code', 'cod', 'cod partener');
-      const analytic = pick(row, 'analytic', 'analitic', 'cont analitic');
-
-      const shared = {
-        kind: importedPartyKind(pick(row, 'kind', 'tip', 'tip partener'), taxId),
-        name,
-        registration: pick(row, 'registration', 'regcom', 'reg com', 'nr reg com') ?? undefined,
-        country: (pick(row, 'country', 'tara') ?? 'RO').toUpperCase(),
-        county: pick(row, 'county', 'judet') ?? undefined,
-        city: pick(row, 'city', 'localitate', 'oras') ?? undefined,
-        address: pick(row, 'address', 'adresa') ?? undefined,
-        iban: pick(row, 'iban', 'cont bancar', 'contbancar') ?? undefined,
-        bankName: pick(row, 'bankname', 'banca') ?? undefined,
-        email: pick(row, 'email', 'e-mail') ?? undefined,
-        phone: pick(row, 'phone', 'telefon', 'tel') ?? undefined,
-        discount: pick(row, 'discount', 'reducere') ?? undefined,
-      };
-      const identifierType = normalizeIdentifierType(
-        pick(row, 'identifiertype', 'identifier type', 'tip identificator'),
-        shared.kind,
-        shared.country,
+      const rawTaxId = pick(
+        row,
+        'taxid',
+        'cui',
+        'cif',
+        'ein',
+        'cod fiscal',
+        'cod_fiscal',
+        'cnp',
+        'cui cnp',
+        'cnp cui',
+        'cui cnp id extern',
+        'cif cnp',
+        'cod fiscal cnp',
+        'identificator',
+        'id extern',
+        'numar identificare',
+        'număr identificare',
+        'identification number',
+        'vat number',
       );
+      const normalizedTaxId = rawTaxId ? normalizeEin(rawTaxId) : '';
+      const taxId = normalizedTaxId || undefined;
+      const code = pick(
+        row,
+        'code',
+        'cod',
+        'cod partener',
+        'nr',
+        role === 'supplier' ? 'cod furnizor' : 'cod client',
+      );
+      const analytic = pick(row, 'analytic', 'analitic', 'cont analitic');
+      const importedCountry = pick(row, 'country', 'tara');
+      let country = normalizePartyCountry(importedCountry);
+      const codeMatches = indexedMatches(
+        role === 'supplier' ? supplierCodeIndex : clientCodeIndex,
+        code,
+      );
+      const taxIdMatches = indexedMatches(taxIdIndex, taxId);
+      if (taxIdMatches.length > 1) {
+        errors.push(
+          `Rândul ${index + 2}: numărul de identificare ${rawTaxId} există la mai mulți parteneri; completează manual înregistrările duplicate`,
+        );
+        continue;
+      }
+      if (codeMatches.length > 1) {
+        errors.push(
+          `Rândul ${index + 2}: codul ${code} există la mai mulți ${role === 'supplier' ? 'furnizori' : 'clienți'}`,
+        );
+        continue;
+      }
+      if (
+        taxIdMatches[0] &&
+        codeMatches[0] &&
+        taxIdMatches[0] !== codeMatches[0]
+      ) {
+        errors.push(
+          `Rândul ${index + 2}: numărul de identificare și codul SAGA indică parteneri diferiți`,
+        );
+        continue;
+      }
+
+      let existing = taxIdMatches[0] ?? codeMatches[0];
+      if (!existing) {
+        const nameMatches = indexedMatches(
+          nameCountryIndex,
+          partyNameCountryKey(name, country),
+        );
+        if (nameMatches.length === 1) {
+          const candidate = nameMatches[0];
+          if (!taxId || !candidate.taxId || candidate.taxId === taxId) {
+            existing = candidate;
+          }
+        }
+      }
+      country = normalizePartyCountry(importedCountry ?? existing?.country);
+      if (existing?.taxId && taxId && existing.taxId !== taxId) {
+        errors.push(
+          `Rândul ${index + 2}: ${existing.name} are deja numărul de identificare ${existing.taxId}; valoarea ${rawTaxId} nu a fost suprascrisă`,
+        );
+        continue;
+      }
+
+      const kind = importedPartyKind(
+        pick(row, 'kind', 'tip', 'tip partener'),
+        taxId ?? existing?.taxId ?? undefined,
+        country,
+        existing?.kind,
+      );
+      const identifierType = normalizeIdentifierType(undefined, kind, country);
       const identityErrors =
         role === 'supplier'
           ? privateSellerIdentityErrors({
-              kind: shared.kind,
-              country: shared.country,
+              kind,
+              country,
               identifierType,
-              taxId,
+              taxId: taxId ?? existing?.taxId,
             })
           : [];
-      if (shared.kind === 'INDIVIDUAL' && identityErrors.length > 0) {
+      if (kind === 'INDIVIDUAL' && identityErrors.length > 0) {
         errors.push(`Rândul ${index + 2}: ${identityErrors.join('; ')}`);
         continue;
       }
-      const roleData =
-        role === 'supplier'
-          ? { isSupplier: true, supplierCode: code, supplierAnalytic: analytic }
-          : { isClient: true, clientCode: code, clientAnalytic: analytic };
-
-      // Match an existing partner by tax id, then by role-specific code.
-      const existing = await this.prisma.party.findFirst({
-        where: {
-          tenantId,
-          ...(taxId
-            ? { taxId }
-            : code
-              ? role === 'supplier'
-                ? { supplierCode: code }
-                : { clientCode: code }
-              : { id: -1 }),
-        },
-      });
 
       if (existing) {
-        await this.prisma.party.update({
-          where: { id: existing.id },
-          data: {
-            ...shared,
-            ...roleData,
-            identifierType,
-            taxId: taxId ?? existing.taxId,
-          },
+        const priorIdentifierType = existing.identifierType;
+        if (
+          taxId &&
+          !existing.taxId &&
+          existing.id != null &&
+          initiallyMissingIdentifiers.has(existing.id)
+        ) {
+          identifiersFilled += 1;
+          initiallyMissingIdentifiers.delete(existing.id);
+        }
+        mergeImportedParty(existing, {
+          role,
+          kind,
+          identifierType,
+          name,
+          taxId,
+          code,
+          analytic,
+          country,
+          registration: pick(row, 'registration', 'regcom', 'reg com', 'nr reg com'),
+          county: pick(row, 'county', 'judet'),
+          city: pick(row, 'city', 'localitate', 'oras'),
+          address: pick(row, 'address', 'adresa'),
+          iban: pick(row, 'iban', 'cont bancar', 'contbancar', 'cont banca'),
+          bankName: pick(row, 'bankname', 'banca'),
+          email: pick(row, 'email', 'e-mail'),
+          phone: pick(row, 'phone', 'telefon', 'tel'),
+          discount: pick(row, 'discount', 'reducere'),
         });
+        if (
+          existing.id != null &&
+          priorIdentifierType !== existing.identifierType &&
+          !correctedIdentifierTypes.has(existing.id)
+        ) {
+          identifierTypesCorrected += 1;
+          correctedIdentifierTypes.add(existing.id);
+        }
+        indexParty(existing, {
+          taxIdIndex,
+          supplierCodeIndex,
+          clientCodeIndex,
+          nameCountryIndex,
+        });
+        changed.add(existing);
         updated += 1;
       } else {
-        await this.prisma.party.create({
-          data: { tenantId, taxId, identifierType, ...shared, ...roleData },
+        const party = newWorkingParty({
+          tenantId,
+          role,
+          kind,
+          identifierType,
+          name,
+          taxId,
+          code,
+          analytic,
+          country,
+          registration: pick(row, 'registration', 'regcom', 'reg com', 'nr reg com'),
+          county: pick(row, 'county', 'judet'),
+          city: pick(row, 'city', 'localitate', 'oras'),
+          address: pick(row, 'address', 'adresa'),
+          iban: pick(row, 'iban', 'cont bancar', 'contbancar', 'cont banca'),
+          bankName: pick(row, 'bankname', 'banca'),
+          email: pick(row, 'email', 'e-mail'),
+          phone: pick(row, 'phone', 'telefon', 'tel'),
+          discount: pick(row, 'discount', 'reducere'),
+        });
+        parties.push(party);
+        changed.add(party);
+        indexParty(party, {
+          taxIdIndex,
+          supplierCodeIndex,
+          clientCodeIndex,
+          nameCountryIndex,
         });
         created += 1;
       }
     }
-    return { created, updated, total: rows.length, errors };
+
+    const writes = [...changed].map((party) =>
+      party.id == null
+        ? () => this.prisma.party.create({ data: persistedPartyData(party) })
+        : () =>
+            this.prisma.party.update({
+              where: { id: party.id! },
+              data: persistedPartyData(party),
+            }),
+    );
+    for (let index = 0; index < writes.length; index += 100) {
+      await this.prisma.$transaction(
+        writes.slice(index, index + 100).map((write) => write()),
+      );
+    }
+    return {
+      created,
+      updated,
+      total: rows.length,
+      identifiersFilled,
+      identifierTypesCorrected,
+      duplicatesAvoided: updated,
+      errors,
+    };
   }
 
   async update(tenantId: number, id: number, dto: UpdatePartyDto) {
@@ -240,11 +406,7 @@ export class PartiesService {
     const kind =
       (dto.kind as 'INDIVIDUAL' | 'COMPANY' | undefined) ?? existing.kind;
     const country = normalizePartyCountry(dto.country ?? existing.country);
-    const identifierType = normalizeIdentifierType(
-      dto.identifierType ?? existing.identifierType,
-      kind,
-      country,
-    );
+    const identifierType = normalizeIdentifierType(undefined, kind, country);
     assertPrivateSupplierIdentity({
       kind,
       country,
@@ -284,6 +446,8 @@ function inferPartyKind(taxId?: string): 'INDIVIDUAL' | 'COMPANY' {
 function importedPartyKind(
   value: string | undefined,
   taxId?: string,
+  country?: string,
+  existingKind?: PartyKindValue,
 ): 'INDIVIDUAL' | 'COMPANY' {
   const normalized = value?.trim().toUpperCase();
   if (
@@ -292,5 +456,246 @@ function importedPartyKind(
   ) {
     return 'INDIVIDUAL';
   }
-  return inferPartyKind(taxId);
+  if (
+    normalized &&
+    ['COMPANY', 'COMPANIE', 'PERSOANA JURIDICA', 'PERSOANĂ JURIDICĂ', 'PJ'].includes(
+      normalized,
+    )
+  ) {
+    return 'COMPANY';
+  }
+  if (
+    normalizePartyCountry(country) === 'RO' &&
+    taxId &&
+    /^\d{13}$/.test(taxId)
+  ) {
+    return 'INDIVIDUAL';
+  }
+  return existingKind ?? 'COMPANY';
+}
+
+interface WorkingParty {
+  id: number | null;
+  tenantId: number;
+  kind: PartyKindValue;
+  identifierType: PartyIdentifierTypeValue | null;
+  name: string;
+  taxId: string | null;
+  isSupplier: boolean;
+  isClient: boolean;
+  supplierCode: string | null;
+  clientCode: string | null;
+  supplierAnalytic: string | null;
+  clientAnalytic: string | null;
+  registration: string | null;
+  country: string;
+  county: string | null;
+  city: string | null;
+  address: string | null;
+  iban: string | null;
+  bankName: string | null;
+  email: string | null;
+  phone: string | null;
+  discount: string | null;
+}
+
+interface PartyIndexes {
+  taxIdIndex: Map<string, Set<WorkingParty>>;
+  supplierCodeIndex: Map<string, Set<WorkingParty>>;
+  clientCodeIndex: Map<string, Set<WorkingParty>>;
+  nameCountryIndex: Map<string, Set<WorkingParty>>;
+}
+
+interface ImportedPartyValues {
+  role: PartyRole;
+  kind: PartyKindValue;
+  identifierType: PartyIdentifierTypeValue;
+  name: string;
+  taxId?: string;
+  code?: string;
+  analytic?: string;
+  country: string;
+  registration?: string;
+  county?: string;
+  city?: string;
+  address?: string;
+  iban?: string;
+  bankName?: string;
+  email?: string;
+  phone?: string;
+  discount?: string;
+}
+
+function parsePartyImportRows(file: UploadedCsv): Record<string, string>[] {
+  const text = file.buffer.toString('utf8').replace(/^\uFEFF/, '').trim();
+  const isXml =
+    text.startsWith('<') ||
+    file.originalname.toLowerCase().endsWith('.xml') ||
+    /xml/i.test(file.mimetype);
+  return isXml ? parseSagaPartyXml(text) : parseCsv(text);
+}
+
+function parseSagaPartyXml(xml: string): Record<string, string>[] {
+  if (/<!DOCTYPE|<!ENTITY/i.test(xml)) {
+    throw new BadRequestException('Fișierul XML conține declarații nepermise');
+  }
+  const rows: Record<string, string>[] = [];
+  for (const line of xml.matchAll(/<Linie\b[^>]*>([\s\S]*?)<\/Linie>/gi)) {
+    const row: Record<string, string> = {};
+    for (const field of line[1].matchAll(
+      /<([A-Za-z_][\w.-]*)\b[^>]*>([\s\S]*?)<\/\1>/g,
+    )) {
+      row[normalizeCsvHeader(field[1])] = decodeXmlText(
+        field[2].replace(/<[^>]+>/g, ''),
+      ).trim();
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code) =>
+      String.fromCodePoint(Number.parseInt(code, 16)),
+    )
+    .replace(/&#(\d+);/g, (_match, code) =>
+      String.fromCodePoint(Number.parseInt(code, 10)),
+    )
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function indexedMatches(
+  index: Map<string, Set<WorkingParty>>,
+  value?: string,
+): WorkingParty[] {
+  const key = normalizedIndexKey(value);
+  return key ? [...(index.get(key) ?? [])] : [];
+}
+
+function addToIndex(
+  index: Map<string, Set<WorkingParty>>,
+  value: string | null | undefined,
+  party: WorkingParty,
+) {
+  const key = normalizedIndexKey(value);
+  if (!key) return;
+  const matches = index.get(key) ?? new Set<WorkingParty>();
+  matches.add(party);
+  index.set(key, matches);
+}
+
+function indexParty(party: WorkingParty, indexes: PartyIndexes) {
+  addToIndex(indexes.taxIdIndex, party.taxId, party);
+  addToIndex(indexes.supplierCodeIndex, party.supplierCode, party);
+  addToIndex(indexes.clientCodeIndex, party.clientCode, party);
+  addToIndex(
+    indexes.nameCountryIndex,
+    partyNameCountryKey(party.name, party.country),
+    party,
+  );
+}
+
+function normalizedIndexKey(value?: string | null): string {
+  return String(value ?? '').trim().toUpperCase();
+}
+
+function partyNameCountryKey(name: string, country: string): string {
+  const normalizedName = name
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim();
+  return `${normalizedName}|${normalizePartyCountry(country)}`;
+}
+
+function mergeImportedParty(
+  party: WorkingParty,
+  values: ImportedPartyValues,
+) {
+  party.kind = values.kind;
+  party.identifierType = values.identifierType;
+  party.name = values.name;
+  party.taxId = values.taxId ?? party.taxId;
+  party.country = values.country;
+  party.registration = values.registration ?? party.registration;
+  party.county = values.county ?? party.county;
+  party.city = values.city ?? party.city;
+  party.address = values.address ?? party.address;
+  party.iban = values.iban ?? party.iban;
+  party.bankName = values.bankName ?? party.bankName;
+  party.email = values.email ?? party.email;
+  party.phone = values.phone ?? party.phone;
+  party.discount = values.discount ?? party.discount;
+  if (values.role === 'supplier') {
+    party.isSupplier = true;
+    party.supplierCode = values.code ?? party.supplierCode;
+    party.supplierAnalytic = values.analytic ?? party.supplierAnalytic;
+  } else {
+    party.isClient = true;
+    party.clientCode = values.code ?? party.clientCode;
+    party.clientAnalytic = values.analytic ?? party.clientAnalytic;
+  }
+}
+
+function newWorkingParty(
+  values: ImportedPartyValues & { tenantId: number },
+): WorkingParty {
+  const party: WorkingParty = {
+    id: null,
+    tenantId: values.tenantId,
+    kind: values.kind,
+    identifierType: values.identifierType,
+    name: values.name,
+    taxId: values.taxId ?? null,
+    isSupplier: false,
+    isClient: false,
+    supplierCode: null,
+    clientCode: null,
+    supplierAnalytic: null,
+    clientAnalytic: null,
+    registration: values.registration ?? null,
+    country: values.country,
+    county: values.county ?? null,
+    city: values.city ?? null,
+    address: values.address ?? null,
+    iban: values.iban ?? null,
+    bankName: values.bankName ?? null,
+    email: values.email ?? null,
+    phone: values.phone ?? null,
+    discount: values.discount ?? null,
+  };
+  mergeImportedParty(party, values);
+  return party;
+}
+
+function persistedPartyData(party: WorkingParty) {
+  return {
+    tenantId: party.tenantId,
+    kind: party.kind,
+    identifierType: party.identifierType,
+    name: party.name,
+    taxId: party.taxId,
+    isSupplier: party.isSupplier,
+    isClient: party.isClient,
+    supplierCode: party.supplierCode,
+    clientCode: party.clientCode,
+    supplierAnalytic: party.supplierAnalytic,
+    clientAnalytic: party.clientAnalytic,
+    registration: party.registration,
+    country: party.country,
+    county: party.county,
+    city: party.city,
+    address: party.address,
+    iban: party.iban,
+    bankName: party.bankName,
+    email: party.email,
+    phone: party.phone,
+    discount: party.discount,
+  };
 }

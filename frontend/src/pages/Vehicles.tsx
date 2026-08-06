@@ -293,7 +293,7 @@ function NewVehicleModal({ onClose }: { onClose: () => void }) {
                 <option value="">Alege partenerul…</option>
                 {parties.map((party: any) => (
                   <option key={party.id} value={party.id}>
-                    {party.name} · {party.identifierType === 'FOREIGN_ID' ? 'ID extern' : party.identifierType || (party.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI')} {party.taxId || '—'}
+                    {party.name} · Nr. identificare {party.taxId || '—'}
                   </option>
                 ))}
               </select>
@@ -318,9 +318,9 @@ function NewVehicleModal({ onClose }: { onClose: () => void }) {
                   required
                 />
                 <input
-                  aria-label={seller.kind === 'INDIVIDUAL' ? (seller.country === 'RO' ? 'CNP vânzător' : 'Identificator extern vânzător') : 'CUI vânzător'}
+                  aria-label="Număr de identificare vânzător"
                   className={field}
-                  placeholder={seller.kind === 'INDIVIDUAL' ? (seller.country === 'RO' ? 'CNP' : 'Identificator extern') : 'CUI / CIF'}
+                  placeholder="CUI / CNP / ID extern"
                   value={seller.taxId}
                   onChange={(event) => setSeller({ ...seller, taxId: event.target.value })}
                   required
