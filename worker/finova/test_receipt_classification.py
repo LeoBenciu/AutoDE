@@ -134,6 +134,20 @@ C.I.F.: RO31194616
         self.assertEqual(data["buyer_ein"], "12345674")
         self.assertEqual(data["direction"], "incoming")
 
+    def test_duplicate_seller_cui_fixed_without_any_usable_ocr_text(self):
+        # Skewed photo → OCR yields no readable CUI. The model still duplicated the
+        # seller CUI into both fields. With only the tenant CUI known, the buyer is
+        # recovered as the tenant (incoming) — no dependence on the OCR text.
+        data = {
+            "vendor_ein": "RO31194616",
+            "buyer_ein": "RO31194616",
+        }
+
+        validators.reconcile_receipt_party_eins(data, "", "12345674")
+
+        self.assertEqual(data["buyer_ein"], "12345674")
+        self.assertEqual(data["direction"], "incoming")
+
     def test_fuel_receipt_is_always_6022_without_inferred_vehicle_cost(self):
         data = {
             "line_items": [

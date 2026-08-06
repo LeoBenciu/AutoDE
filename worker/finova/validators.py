@@ -412,60 +412,73 @@ def reconcile_receipt_party_eins(
     Leaves genuinely ambiguous documents (no tenant CUI, or several rival seller
     CUIs and no header) untouched.
     """
-    if not isinstance(data, dict) or not document_text:
+    if not isinstance(data, dict):
         return data
-    candidates = _receipt_cui_candidates(document_text)
-    if not candidates:
-        return data
-
-    heading = re.search(
-        r"\b(?:BON\s+FISCAL|CHITAN(?:T|Ț|Ţ)(?:A|Ă))\b",
-        document_text,
-        re.IGNORECASE,
-    )
-    heading_pos = heading.start() if heading else None
-    header_candidates = (
-        [(pos, cui) for pos, cui in candidates if pos < heading_pos]
-        if heading_pos is not None
-        else []
-    )
     client = _norm_ein_compare(client_ein)
+    # `document_text` may be empty/garbled for a skewed photo — don't bail, the
+    # OCR-independent guard below still fixes a duplicated CUI from the tenant alone.
+    candidates = _receipt_cui_candidates(document_text or "")
 
-    # --- Vendor: the receipt issuer ---
-    vendor = header_candidates[0][1] if header_candidates else ""
-    if not vendor:
-        # No readable header CIF (small thermal print, or OCR dropped it). The
-        # issuer is the printed CUI that isn't the tenant; when exactly one such
-        # seller CUI exists it is unambiguously the vendor. Covers both the "model
-        # duplicated the seller CUI into both fields" case and the "only the seller
-        # CUI is legible" fuel-receipt case.
-        alternatives = list(dict.fromkeys(
-            cui for _, cui in candidates if cui != client
-        ))
-        if len(alternatives) == 1:
-            vendor = alternatives[0]
+    if candidates:
+        heading = re.search(
+            r"\b(?:BON\s+FISCAL|CHITAN(?:T|Ț|Ţ)(?:A|Ă))\b",
+            document_text,
+            re.IGNORECASE,
+        )
+        heading_pos = heading.start() if heading else None
+        header_candidates = (
+            [(pos, cui) for pos, cui in candidates if pos < heading_pos]
+            if heading_pos is not None
+            else []
+        )
 
-    if vendor:
-        data["vendor_ein"] = vendor
+        # --- Vendor: the receipt issuer ---
+        vendor = header_candidates[0][1] if header_candidates else ""
+        if not vendor:
+            # No readable header CIF (small thermal print, or OCR dropped it). The
+            # issuer is the printed CUI that isn't the tenant; when exactly one such
+            # seller CUI exists it is unambiguously the vendor. Covers both the "model
+            # duplicated the seller CUI into both fields" case and the "only the seller
+            # CUI is legible" fuel-receipt case.
+            alternatives = list(dict.fromkeys(
+                cui for _, cui in candidates if cui != client
+            ))
+            if len(alternatives) == 1:
+                vendor = alternatives[0]
 
-    after_heading = (
-        [cui for pos, cui in candidates if pos > heading_pos]
-        if heading_pos is not None
-        else [cui for _, cui in candidates]
-    )
+        if vendor:
+            data["vendor_ein"] = vendor
 
-    # --- Buyer: the tenant, unless the tenant is the issuer ---
-    # The receipt belongs to the tenant, so the tenant is one of the two parties.
-    if vendor and vendor == client:
-        # Outgoing: the tenant issued the receipt; the buyer is the other party.
-        other_buyers = [cui for cui in after_heading if cui != vendor]
-        if other_buyers:
-            data["buyer_ein"] = other_buyers[0]
-    elif client and vendor and vendor != client:
-        # Incoming purchase: the buyer is the tenant. A fuel/retail bon fiscal
-        # doesn't print the buyer's CUI, so the model's duplicated seller CUI in
-        # buyer_ein is wrong — the tenant CUI is the only correct value. (When a
-        # "Client CUI" line IS printed it equals the tenant, so this is consistent.)
+        after_heading = (
+            [cui for pos, cui in candidates if pos > heading_pos]
+            if heading_pos is not None
+            else [cui for _, cui in candidates]
+        )
+
+        # --- Buyer: the tenant, unless the tenant is the issuer ---
+        # The receipt belongs to the tenant, so the tenant is one of the two parties.
+        if vendor and vendor == client:
+            # Outgoing: the tenant issued the receipt; the buyer is the other party.
+            other_buyers = [cui for cui in after_heading if cui != vendor]
+            if other_buyers:
+                data["buyer_ein"] = other_buyers[0]
+        elif client and vendor and vendor != client:
+            # Incoming purchase: the buyer is the tenant. A fuel/retail bon fiscal
+            # doesn't print the buyer's CUI, so the model's duplicated seller CUI in
+            # buyer_ein is wrong — the tenant CUI is the only correct value. (When a
+            # "Client CUI" line IS printed it equals the tenant, so this is consistent.)
+            data["buyer_ein"] = client
+
+    # OCR-independent identity guard (fires even when OCR yielded no readable CUIs):
+    # a receipt has two distinct parties, so vendor_ein == buyer_ein is always a
+    # duplication. When that duplicated CUI is the SELLER (not the tenant), the tenant
+    # is necessarily the buyer of an incoming purchase — its CUI is never printed on a
+    # fuel/retail bon fiscal — so recover it from the known tenant CUI. (If the tenant
+    # were the seller it would BE the vendor, contradicting vendor != client, so this
+    # never mislabels an outgoing receipt.)
+    vendor_norm = _norm_ein_compare(data.get("vendor_ein"))
+    buyer_norm = _norm_ein_compare(data.get("buyer_ein"))
+    if client and vendor_norm and vendor_norm == buyer_norm and vendor_norm != client:
         data["buyer_ein"] = client
 
     inferred = infer_direction(
