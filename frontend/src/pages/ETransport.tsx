@@ -406,6 +406,9 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
           weightKg: form.weightKg ? Number(form.weightKg) : undefined,
           valueWithoutVat: form.valueWithoutVat ? Number(form.valueWithoutVat) : undefined,
           currency: form.currency,
+          valueRon: form.valueRon ? Number(form.valueRon) : undefined,
+          exchangeRate: form.exchangeRate ? Number(form.exchangeRate) : undefined,
+          exchangeRateDate: form.exchangeRateDate || undefined,
         },
       ],
     };
@@ -576,13 +579,32 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
               required
             />
           </div>
+          {form.currency !== 'RON' && (
+            <input
+              className={field}
+              type="number"
+              min="0"
+              step="0.0001"
+              placeholder="Curs BNR (auto din factură; completează manual dacă lipsește)"
+              value={form.exchangeRate}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  exchangeRate: e.target.value,
+                  exchangeRateDate: e.target.value
+                    ? form.exchangeRateDate || new Date().toISOString().slice(0, 10)
+                    : '',
+                })
+              }
+            />
+          )}
           {currentRonValue != null && Number.isFinite(currentRonValue) && (
             <p className="rounded-control bg-canvas px-3 py-2 text-xs text-muted">
               Valoare declarată: <b className="text-ink">{currentRonValue.toFixed(2)} RON</b>
               {form.currency !== 'RON' && form.exchangeRate && (
                 <> · curs BNR {Number(form.exchangeRate).toFixed(6)} din {form.exchangeRateDate}</>
               )}
-              {form.currency !== 'RON' && <> · cursul va fi actualizat automat în ziua trimiterii</>}
+              {form.currency !== 'RON' && !form.exchangeRate && <> · completează cursul BNR mai sus</>}
             </p>
           )}
           {warnings.length > 0 && (
@@ -600,7 +622,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
             />
             <span>
               Am verificat datele din factură/contract, mesajul transportatorului și tabelul logistic intern: tipul operațiunii, codul NC/tarifar, greutatea reală, traseul, valoarea fără TVA și moneda.
-              Pentru valută, aplicația va folosi cursul BNR valabil la declarare.
+              Pentru valută, cursul se preia din documentul de achiziție (sau îl completezi manual dacă lipsește).
             </span>
           </label>
           {error && <p className="text-sm text-red-600">{error}</p>}

@@ -267,11 +267,20 @@ export class EtransportService {
     const goods = await this.enrichGoodsValues(
       [{ description: goodsDescription, tariffCode, weightKg, valueWithoutVat, currency }],
       false,
+      {
+        exchangeRate: numberValue(canonicalSource?.exchangeRate),
+        currency: textValue(canonicalSource?.currency)?.toUpperCase(),
+        date: textValue(canonicalSource?.documentDate),
+      },
     );
 
     if (!tariffCode) warnings.push('Codul NC/tarifar nu a fost găsit în factura/contractul de achiziție.');
     warnings.push('Lipește mesajul transportatorului pentru dată, transportator, numere și locul de încărcare.');
-    if (!goods[0].valueRon) warnings.push('Valoarea RON nu a putut fi calculată din cursul oficial BNR.');
+    if (!goods[0].valueRon) {
+      warnings.push(
+        'Cursul nu a fost găsit în documentul de achiziție și BNR nu a răspuns; introdu manual cursul BNR (sau valoarea în RON) în formular.',
+      );
+    }
 
     return {
       vehicleId,
@@ -435,11 +444,28 @@ export class EtransportService {
     };
   }
 
-  private async enrichGoodsValues(goods: ETransportGood[], strict: boolean): Promise<ETransportGood[]> {
+  /**
+   * Resolve each good's RON value through a fallback chain so the declaration
+   * never dead-ends on the BNR feed (which is WAF-blocked from datacenters like
+   * Render): a rate already on the good (entered manually or carried from an
+   * earlier save/prefill) wins, then the rate printed on the acquisition
+   * document, and only last a best-effort live BNR call. When strict (on send)
+   * and nothing yields a rate, we ask for a manual curs instead of silently
+   * blocking.
+   */
+  private async enrichGoodsValues(
+    goods: ETransportGood[],
+    strict: boolean,
+    source?: { exchangeRate?: number; currency?: string; date?: string },
+  ): Promise<ETransportGood[]> {
+    const round2 = (value: number) => Math.round(value * 100) / 100;
+    const round4 = (value: number) => Math.round(value * 10000) / 10000;
     return Promise.all(
       goods.map(async (good) => {
         const currency = textValue(good.currency)?.toUpperCase();
         const valueWithoutVat = numberValue(good.valueWithoutVat);
+        const manualValueRon = numberValue(good.valueRon);
+        const manualRate = numberValue(good.exchangeRate);
         const normalized: ETransportGood = {
           ...good,
           description: textValue(good.description) ?? '',
@@ -447,23 +473,71 @@ export class EtransportService {
           weightKg: numberValue(good.weightKg),
           valueWithoutVat,
           currency,
-          valueRon: numberValue(good.valueRon),
+          valueRon: manualValueRon,
+          exchangeRate: manualRate,
+          exchangeRateDate: textValue(good.exchangeRateDate) ?? undefined,
         };
 
         if (valueWithoutVat == null || !currency) return normalized;
 
+        // RON needs no conversion.
+        if (currency === 'RON') {
+          return {
+            ...normalized,
+            valueRon: manualValueRon ?? valueWithoutVat,
+            exchangeRate: undefined,
+            exchangeRateDate: undefined,
+          };
+        }
+
+        // 1. A rate already on the good wins (manual entry or carried forward).
+        if (manualRate && manualRate > 0) {
+          return {
+            ...normalized,
+            valueRon:
+              manualValueRon && manualValueRon > 0
+                ? manualValueRon
+                : round2(valueWithoutVat * manualRate),
+            exchangeRate: manualRate,
+            exchangeRateDate: normalized.exchangeRateDate ?? source?.date ?? dateInRomania(),
+          };
+        }
+        // 2. Only a RON value was supplied — back out the implied rate.
+        if (manualValueRon && manualValueRon > 0) {
+          return {
+            ...normalized,
+            valueRon: manualValueRon,
+            exchangeRate: round4(manualValueRon / valueWithoutVat),
+            exchangeRateDate: normalized.exchangeRateDate ?? source?.date ?? dateInRomania(),
+          };
+        }
+        // 3. Rate printed on the acquisition document (curs_valutar): the
+        //    official rate for this purchase, always reachable.
+        if (
+          source?.exchangeRate &&
+          source.exchangeRate > 0 &&
+          (!source.currency || source.currency === currency)
+        ) {
+          return {
+            ...normalized,
+            valueRon: round2(valueWithoutVat * source.exchangeRate),
+            exchangeRate: source.exchangeRate,
+            exchangeRateDate: source.date ?? dateInRomania(),
+          };
+        }
+        // 4. Live BNR feed — best-effort; degrades instead of hard-blocking.
         try {
           const bnr = await resolveCurrentBnrRate(currency);
           return {
             ...normalized,
-            valueRon: Math.round(valueWithoutVat * bnr.rate * 100) / 100,
+            valueRon: round2(valueWithoutVat * bnr.rate),
             exchangeRate: bnr.rate,
             exchangeRateDate: bnr.rateDate,
           };
         } catch (error) {
           if (strict) {
             throw new BadRequestException(
-              `Nu s-a putut obține cursul oficial BNR ${currency}/RON: ${(error as Error).message}. Declarația nu a fost trimisă.`,
+              `Nu s-a putut obține automat cursul ${currency}/RON (nici din documentul de achiziție, nici de la BNR: ${(error as Error).message}). Introdu manual cursul BNR în formular și retrimite.`,
             );
           }
           return { ...normalized, valueRon: undefined, exchangeRate: undefined, exchangeRateDate: undefined };

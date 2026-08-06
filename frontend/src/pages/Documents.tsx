@@ -77,8 +77,24 @@ const EXTRACTED_FIELD_LABELS: Record<string, string> = {
   invoice_reference: 'Factură asociată',
   referenced_numbers: 'Referințe documente',
   vin: 'VIN',
+  vehicle_make: 'Marcă',
+  vehicle_model: 'Model',
+  vehicle_year: 'An fabricație',
   summary: 'Rezumat',
 };
+
+// Vehicle identity a purchase contract must carry for accounting/posting. Each
+// entry lists the field key the review UI writes plus the aliases the backend
+// accepts, so a field only counts as missing when none of its aliases is set.
+const REQUIRED_CONTRACT_VEHICLE_FIELDS: { key: string; aliases: string[] }[] = [
+  { key: 'vin', aliases: ['vin'] },
+  { key: 'vehicle_make', aliases: ['vehicle_make', 'make'] },
+  { key: 'vehicle_model', aliases: ['vehicle_model', 'model'] },
+  {
+    key: 'vehicle_year',
+    aliases: ['vehicle_year', 'year', 'first_registration_date'],
+  },
+];
 
 const EXTRACTED_FIELD_ORDER = [
   'document_type',
@@ -107,6 +123,9 @@ const EXTRACTED_FIELD_ORDER = [
   'payment_method',
   'invoice_reference',
   'vin',
+  'vehicle_make',
+  'vehicle_model',
+  'vehicle_year',
 ];
 
 type SelectOption = [string, string];
@@ -578,8 +597,28 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
       value != null &&
       typeof value !== 'object',
   );
+  // The extractor returns null for vehicle fields it can't read, and null values
+  // are dropped above—so a purchase contract missing e.g. the year renders no row
+  // to correct, yet posting rejects it. Surface the required fields as empty,
+  // editable rows the user can fill in.
+  const missingRequiredFields = new Set<string>();
+  if (isPurchaseContract) {
+    for (const { key, aliases } of REQUIRED_CONTRACT_VEHICLE_FIELDS) {
+      const present = aliases.some((alias) => {
+        const value = fields[alias];
+        return value != null && String(value).trim() !== '';
+      });
+      if (present) continue;
+      missingRequiredFields.add(key);
+      if (!entries.some(([existing]) => existing === key)) {
+        entries.push([key, '']);
+      }
+    }
+  }
   const isFlagged = (key: string) =>
-    issueFields.has(key) || (confidence[key] != null && confidence[key] < 0.7);
+    missingRequiredFields.has(key) ||
+    issueFields.has(key) ||
+    (confidence[key] != null && confidence[key] < 0.7);
   const isAccepted = (key: string) =>
     !issueFields.has(key) && confidence[key] != null && confidence[key] >= 0.9;
   // Finova review order: flagged → neutral → high-confidence/auto-accepted.
@@ -1162,7 +1201,9 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                   </form>
                 ) : (
                   <p className="text-sm font-medium text-ink">
-                    {displayExtractedFieldValue(key, value)}
+                    {displayExtractedFieldValue(key, value) || (
+                      <span className="font-normal text-muted-2">Necompletat</span>
+                    )}
                   </p>
                 )}
               </div>
