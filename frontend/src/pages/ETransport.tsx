@@ -39,6 +39,10 @@ const OPERATION_TYPES = [
   ['DIE', 'Depozitare ieșire'],
 ] as const;
 
+// Every transport in this app is a passenger car (NC heading 8703), so the
+// NC/tariff field defaults to 87035000 — the user can still override it.
+const DEFAULT_TARIFF_CODE = '87035000';
+
 function TruckTile() {
   return (
     <div
@@ -199,7 +203,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
           unloadingCity: declaration.unloadingPlace?.city ?? '',
           unloadingCounty: declaration.unloadingPlace?.county ?? '',
           goodsDescription: declaration.goods?.[0]?.description ?? '',
-          tariffCode: declaration.goods?.[0]?.tariffCode ?? '',
+          tariffCode: declaration.goods?.[0]?.tariffCode || DEFAULT_TARIFF_CODE,
           weightKg: declaration.goods?.[0]?.weightKg != null ? String(declaration.goods[0].weightKg) : '',
           valueWithoutVat:
             declaration.goods?.[0]?.valueWithoutVat != null
@@ -227,7 +231,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
           unloadingCity: '',
           unloadingCounty: '',
           goodsDescription: '',
-          tariffCode: '',
+          tariffCode: DEFAULT_TARIFF_CODE,
           weightKg: '',
           valueWithoutVat: '',
           currency: 'EUR',
@@ -271,7 +275,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
         loadingCountry: p.loadingPlace?.country ?? f.loadingCountry,
         unloadingCity: p.unloadingPlace?.city ?? f.unloadingCity,
         goodsDescription: p.goods?.[0]?.description ?? f.goodsDescription,
-        tariffCode: p.goods?.[0]?.tariffCode ?? '',
+        tariffCode: p.goods?.[0]?.tariffCode || DEFAULT_TARIFF_CODE,
         weightKg: p.goods?.[0]?.weightKg != null ? String(p.goods[0].weightKg) : '',
         valueWithoutVat: p.goods?.[0]?.valueWithoutVat != null ? String(p.goods[0].valueWithoutVat) : '',
         currency: p.goods?.[0]?.currency ?? f.currency,
