@@ -58,6 +58,10 @@ export class UsersService {
     const user = await this.prisma.user.findFirst({ where: { id, tenantId } });
     if (!user) throw new NotFoundException('Utilizatorul nu a fost găsit');
 
+    if (dto.password && Buffer.byteLength(dto.password, 'utf8') > 72) {
+      throw new BadRequestException('Parola nouă este prea lungă');
+    }
+
     if (id === actorId && (dto.role !== undefined || dto.active === false)) {
       throw new BadRequestException('Nu îți poți schimba propriul rol și nu te poți dezactiva singur');
     }
@@ -76,15 +80,27 @@ export class UsersService {
       }
     }
 
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data: {
-        name: dto.name,
-        role: dto.role as any,
-        active: dto.active,
-        passwordHash: dto.password ? await bcrypt.hash(dto.password, 10) : undefined,
-      },
-      select: SAFE_SELECT,
+    const passwordHash = dto.password
+      ? await bcrypt.hash(dto.password, 10)
+      : undefined;
+    const updated = await this.prisma.$transaction(async (transaction) => {
+      const result = await transaction.user.update({
+        where: { id },
+        data: {
+          name: dto.name,
+          role: dto.role as any,
+          active: dto.active,
+          passwordHash,
+        },
+        select: SAFE_SELECT,
+      });
+      if (passwordHash) {
+        await transaction.refreshToken.updateMany({
+          where: { userId: id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+      return result;
     });
     await this.audit.log({
       tenantId,

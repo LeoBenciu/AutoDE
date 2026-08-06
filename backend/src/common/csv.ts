@@ -3,8 +3,9 @@
  * (parteneri / articole / gestiuni). Handles UTF-8 BOM, `,` / `;` / tab
  * delimiter auto-detection, quoted fields with escaped quotes and CRLF/LF.
  *
- * Returns one object per data row keyed by the lower-cased, trimmed header,
- * so downstream mappers can match column names case-insensitively.
+ * Returns one object per data row keyed by a canonical header. Spaces,
+ * punctuation, underscores and Romanian diacritics are ignored, so exports
+ * such as `Cod fiscal`, `Cod_fiscal` and `COD-FISCAL` map identically.
  */
 export function parseCsv(input: string | Buffer): Record<string, string>[] {
   const text = (typeof input === 'string' ? input : input.toString('utf8')).replace(/^﻿/, '');
@@ -16,7 +17,7 @@ export function parseCsv(input: string | Buffer): Record<string, string>[] {
   );
   if (rows.length === 0) return [];
 
-  const headers = rows[0].map((header) => header.trim().toLowerCase());
+  const headers = rows[0].map(normalizeCsvHeader);
   return rows.slice(1).map((row) => {
     const record: Record<string, string> = {};
     headers.forEach((header, index) => {
@@ -94,8 +95,16 @@ function tokenize(text: string, delimiter: string): string[][] {
  */
 export function pick(row: Record<string, string>, ...names: string[]): string | undefined {
   for (const name of names) {
-    const value = row[name.toLowerCase()];
+    const value = row[normalizeCsvHeader(name)];
     if (value != null && value.trim() !== '') return value.trim();
   }
   return undefined;
+}
+
+export function normalizeCsvHeader(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
 }

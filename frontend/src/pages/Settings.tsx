@@ -1,9 +1,10 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import {
   useArticlesQuery,
   useCompanyQuery,
   useContractTemplatesQuery,
+  useChangePasswordMutation,
   useCreateArticleMutation,
   useCreateManagementMutation,
   useCreatePartyMutation,
@@ -23,6 +24,7 @@ import {
 } from '../store/api';
 import type { ImportResult } from '../store/api';
 import { apiUrl } from '../store/apiBase';
+import { setCredentials } from '../store/authSlice';
 import type { RootState } from '../store/store';
 
 const ROLES = ['ACCOUNTANT', 'SALES', 'VIEWER'];
@@ -47,9 +49,12 @@ export default function Settings() {
     useUsersQuery(undefined, { skip: !canManageUsers });
   const [updateUser] = useUpdateUserMutation();
   const [message, setMessage] = useState('');
+  const [notice, setNotice] = useState('');
+  const [passwordUser, setPasswordUser] = useState<any | null>(null);
 
   const act = async (fn: () => Promise<any>) => {
     setMessage('');
+    setNotice('');
     try {
       await fn();
     } catch (error: any) {
@@ -68,6 +73,13 @@ export default function Settings() {
           {message}
         </p>
       )}
+      {notice && (
+        <p className="mt-3 rounded-control bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
+          {notice}
+        </p>
+      )}
+
+      <OwnPasswordForm />
 
       <AccountingSettings
         onMessage={setMessage}
@@ -102,7 +114,7 @@ export default function Settings() {
                   </p>
                   <p className="truncate text-xs text-muted">{user.email}</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {canManageUsers && user.id !== me?.id ? (
                     <>
                       <select
@@ -123,6 +135,16 @@ export default function Settings() {
                           </option>
                         ))}
                       </select>
+                      <button
+                        onClick={() => {
+                          setMessage('');
+                          setNotice('');
+                          setPasswordUser(user);
+                        }}
+                        className="rounded-control border border-line-strong px-3.5 py-2 text-sm font-semibold text-ink-soft"
+                      >
+                        Schimbă parola
+                      </button>
                       <button
                         onClick={() =>
                           act(() =>
@@ -158,6 +180,17 @@ export default function Settings() {
           </div>
           {canManageUsers && <NewUserForm onError={setMessage} />}
         </section>
+      )}
+      {passwordUser && (
+        <AdminPasswordModal
+          user={passwordUser}
+          onClose={() => setPasswordUser(null)}
+          onSuccess={() => {
+            setPasswordUser(null);
+            setMessage('');
+            setNotice(`Parola utilizatorului ${passwordUser.name} a fost schimbată.`);
+          }}
+        />
       )}
     </div>
   );
@@ -1272,7 +1305,6 @@ function PartnersCatalogue({
   const [importParties] = useImportPartiesMutation();
   const empty = {
     kind: 'COMPANY',
-    identifierType: 'CUI',
     name: '',
     taxId: '',
     country: 'RO',
@@ -1295,14 +1327,14 @@ function PartnersCatalogue({
     <div className="p-5">
       <div className="grid gap-3 sm:grid-cols-2">
         <CsvImport
-          label="Importă furnizori (CSV)"
-          hint="Coloane: cod, denumire, cui/cnp, tip, analitic, adresa, iban…"
+          label="Importă furnizori (CSV/XML SAGA)"
+          hint="Reimportul completează numărul de identificare după codul SAGA, fără duplicate."
           onImport={(file) => importParties({ file, role: 'supplier' }).unwrap()}
           onMessage={onMessage}
         />
         <CsvImport
-          label="Importă clienți (CSV)"
-          hint="Coloane: cod, denumire, cui, analitic, adresa, iban…"
+          label="Importă clienți (CSV/XML SAGA)"
+          hint="Coloane: cod, denumire, număr de identificare, analitic, adresă, IBAN…"
           onImport={(file) => importParties({ file, role: 'client' }).unwrap()}
           onMessage={onMessage}
         />
@@ -1312,28 +1344,16 @@ function PartnersCatalogue({
           aria-label="Tip partener"
           className={fieldClass}
           value={form.kind}
-          onChange={(event) => {
-            const kind = event.target.value;
-            setForm({
-              ...form,
-              kind,
-              identifierType:
-                kind === 'COMPANY'
-                  ? 'CUI'
-                  : form.country === 'RO'
-                    ? 'CNP'
-                    : 'FOREIGN_ID',
-            });
-          }}
+          onChange={(event) => setForm({ ...form, kind: event.target.value })}
         >
           <option value="COMPANY">Companie</option>
           <option value="INDIVIDUAL">Persoană fizică</option>
         </select>
         <input className={fieldClass} placeholder="Denumire partener" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
         <input
-          aria-label={form.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI / CIF'}
+          aria-label="Număr de identificare"
           className={fieldClass}
-          placeholder={form.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI / CIF'}
+          placeholder="CUI / CNP / ID extern"
           required={form.kind === 'INDIVIDUAL' && form.isSupplier}
           value={form.taxId}
           onChange={(event) => setForm({ ...form, taxId: event.target.value })}
@@ -1345,32 +1365,10 @@ function PartnersCatalogue({
           maxLength={2}
           required
           value={form.country}
-          onChange={(event) => {
-            const country = event.target.value.toUpperCase();
-            setForm({
-              ...form,
-              country,
-              identifierType:
-                form.kind === 'COMPANY'
-                  ? 'CUI'
-                  : country === 'RO'
-                    ? 'CNP'
-                    : 'FOREIGN_ID',
-            });
-          }}
-        />
-        <select
-          aria-label="Tip identificator"
-          className={fieldClass}
-          value={form.identifierType}
           onChange={(event) =>
-            setForm({ ...form, identifierType: event.target.value })
+            setForm({ ...form, country: event.target.value.toUpperCase() })
           }
-        >
-          <option value="CUI">CUI</option>
-          <option value="CNP">CNP</option>
-          <option value="FOREIGN_ID">Identificator extern</option>
-        </select>
+        />
         <input className={fieldClass} placeholder="Analitic furnizor (401.x)" value={form.supplierAnalytic} onChange={(event) => setForm({ ...form, supplierAnalytic: event.target.value })} />
         <input className={fieldClass} placeholder="Analitic client (411.x)" value={form.clientAnalytic} onChange={(event) => setForm({ ...form, clientAnalytic: event.target.value })} />
         <div className="flex items-center gap-4 sm:col-span-2">
@@ -1408,13 +1406,6 @@ function PartyRow({
 }) {
   const [draft, setDraft] = useState({
     kind: party.kind ?? 'COMPANY',
-    identifierType:
-      party.identifierType ??
-      (party.kind === 'INDIVIDUAL'
-        ? party.country === 'RO'
-          ? 'CNP'
-          : 'FOREIGN_ID'
-        : 'CUI'),
     taxId: party.taxId ?? '',
     country: party.country ?? 'RO',
     isSupplier: party.isSupplier,
@@ -1429,29 +1420,14 @@ function PartyRow({
         <p className="text-sm font-semibold text-ink">{party.name}</p>
         <p className="text-xs text-muted">
           {party.kind === 'INDIVIDUAL' ? 'Persoană fizică' : 'Companie'} ·{' '}
-          {party.identifierType === 'FOREIGN_ID'
-            ? 'Identificator extern'
-            : party.identifierType || (party.kind === 'INDIVIDUAL' ? 'CNP' : 'CUI')}
-          : {party.taxId || 'Lipsă'}
+          Nr. identificare: {party.taxId || 'Lipsă'}
         </p>
       </div>
       <select
         aria-label={`Tip partener ${party.name}`}
         className={`${fieldClass} w-36`}
         value={draft.kind}
-        onChange={(event) => {
-          const kind = event.target.value;
-          setDraft({
-            ...draft,
-            kind,
-            identifierType:
-              kind === 'COMPANY'
-                ? 'CUI'
-                : draft.country === 'RO'
-                  ? 'CNP'
-                  : 'FOREIGN_ID',
-          });
-        }}
+        onChange={(event) => setDraft({ ...draft, kind: event.target.value })}
       >
         <option value="COMPANY">Companie</option>
         <option value="INDIVIDUAL">Persoană fizică</option>
@@ -1461,38 +1437,14 @@ function PartyRow({
         className={`${fieldClass} w-20`}
         maxLength={2}
         value={draft.country}
-        onChange={(event) => {
-          const country = event.target.value.toUpperCase();
-          setDraft({
-            ...draft,
-            country,
-            identifierType:
-              draft.kind === 'COMPANY'
-                ? 'CUI'
-                : country === 'RO'
-                  ? 'CNP'
-                  : 'FOREIGN_ID',
-          });
-        }}
-      />
-      <select
-        aria-label={`Tip identificator ${party.name}`}
-        className={`${fieldClass} w-40`}
-        value={draft.identifierType}
         onChange={(event) =>
-          setDraft({ ...draft, identifierType: event.target.value })
+          setDraft({ ...draft, country: event.target.value.toUpperCase() })
         }
-      >
-        <option value="CUI">CUI</option>
-        <option value="CNP">CNP</option>
-        <option value="FOREIGN_ID">ID extern</option>
-      </select>
+      />
       <input
-        aria-label={`Identificator ${party.name}`}
+        aria-label={`Număr de identificare ${party.name}`}
         className={`${fieldClass} w-40`}
-        placeholder={
-          draft.identifierType === 'FOREIGN_ID' ? 'Identificator extern' : draft.identifierType
-        }
+        placeholder="CUI / CNP / ID extern"
         value={draft.taxId}
         onChange={(event) => setDraft({ ...draft, taxId: event.target.value })}
       />
@@ -1672,7 +1624,7 @@ function CsvImport({
         <input
           ref={inputRef}
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,.tsv,.xml,text/csv,text/tab-separated-values,application/xml,text/xml"
           className="hidden"
           onChange={(event) => handle(event.target.files?.[0])}
         />
@@ -1689,6 +1641,8 @@ function CsvImport({
       {result && (
         <p className="mt-2 text-xs text-emerald-700">
           Import finalizat: {result.created} adăugate, {result.updated} actualizate din {result.total} rânduri.
+          {(result.identifiersFilled ?? 0) > 0 &&
+            ` ${result.identifiersFilled} numere de identificare completate.`}
           {result.errors.length > 0 && ` ${result.errors.length} rânduri ignorate.`}
         </p>
       )}
@@ -1755,6 +1709,201 @@ function Field({
         className={`mt-1 block w-full ${fieldClass}`}
       />
     </label>
+  );
+}
+
+function OwnPasswordForm() {
+  const dispatch = useDispatch();
+  const [changePassword, { isLoading }] = useChangePasswordMutation();
+  const [form, setForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmation: '',
+  });
+  const [error, setError] = useState('');
+  const [ok, setOk] = useState('');
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError('');
+    setOk('');
+    if (form.newPassword !== form.confirmation) {
+      setError('Confirmarea nu coincide cu parola nouă.');
+      return;
+    }
+    try {
+      const credentials = await changePassword({
+        currentPassword: form.currentPassword,
+        newPassword: form.newPassword,
+      }).unwrap();
+      dispatch(setCredentials(credentials));
+      setForm({ currentPassword: '', newPassword: '', confirmation: '' });
+      setOk('Parola a fost schimbată, iar sesiunile vechi nu mai pot fi reînnoite.');
+    } catch (changeError: any) {
+      setError(apiError(changeError));
+    }
+  };
+
+  return (
+    <section className="mt-5 rounded-card border border-line bg-white p-5">
+      <h2 className="text-lg font-bold text-ink">Securitate</h2>
+      <p className="mt-1 text-sm text-muted">
+        Schimbă parola contului autentificat. Parola curentă este necesară.
+      </p>
+      <form onSubmit={submit} className="mt-4 grid gap-2.5 sm:grid-cols-3">
+        <input
+          className={fieldClass}
+          type="password"
+          autoComplete="current-password"
+          placeholder="Parola curentă"
+          value={form.currentPassword}
+          onChange={(event) =>
+            setForm({ ...form, currentPassword: event.target.value })
+          }
+          required
+        />
+        <input
+          className={fieldClass}
+          type="password"
+          autoComplete="new-password"
+          placeholder="Parola nouă (min. 8)"
+          minLength={8}
+          maxLength={72}
+          value={form.newPassword}
+          onChange={(event) =>
+            setForm({ ...form, newPassword: event.target.value })
+          }
+          required
+        />
+        <input
+          className={fieldClass}
+          type="password"
+          autoComplete="new-password"
+          placeholder="Confirmă parola nouă"
+          minLength={8}
+          maxLength={72}
+          value={form.confirmation}
+          onChange={(event) =>
+            setForm({ ...form, confirmation: event.target.value })
+          }
+          required
+        />
+        <div className="sm:col-span-3">
+          <button
+            disabled={isLoading}
+            className="rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-50"
+          >
+            {isLoading ? 'Se schimbă…' : 'Schimbă parola mea'}
+          </button>
+        </div>
+      </form>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {ok && <p className="mt-2 text-sm text-emerald-700">{ok}</p>}
+    </section>
+  );
+}
+
+function AdminPasswordModal({
+  user,
+  onClose,
+  onSuccess,
+}: {
+  user: any;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [updateUser, { isLoading }] = useUpdateUserMutation();
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError('');
+    if (password !== confirmation) {
+      setError('Confirmarea nu coincide cu parola nouă.');
+      return;
+    }
+    try {
+      await updateUser({ id: user.id, body: { password } }).unwrap();
+      onSuccess();
+    } catch (updateError: any) {
+      setError(apiError(updateError));
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-[rgba(15,15,25,0.5)] sm:items-center sm:p-5"
+      onClick={onClose}
+    >
+      <form
+        onSubmit={submit}
+        className="w-full max-w-md rounded-t-2xl bg-white p-6 shadow-[0_20px_60px_-15px_rgba(20,20,40,0.4)] sm:rounded-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-bold text-ink">Schimbă parola</h2>
+            <p className="mt-1 text-sm text-muted">
+              {user.name} · {user.email}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 text-lg leading-none text-muted hover:text-ink"
+            aria-label="Închide"
+          >
+            ✕
+          </button>
+        </div>
+        <p className="mt-3 text-xs text-muted">
+          Tokenurile de reînnoire existente ale utilizatorului vor fi revocate.
+        </p>
+        <div className="mt-4 space-y-2.5">
+          <input
+            className={`w-full ${fieldClass}`}
+            type="password"
+            autoComplete="new-password"
+            placeholder="Parola nouă (min. 8)"
+            minLength={8}
+            maxLength={72}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+            autoFocus
+          />
+          <input
+            className={`w-full ${fieldClass}`}
+            type="password"
+            autoComplete="new-password"
+            placeholder="Confirmă parola nouă"
+            minLength={8}
+            maxLength={72}
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            required
+          />
+        </div>
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+        <div className="mt-5 flex gap-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 rounded-control border border-line-strong py-2.5 text-sm font-semibold text-ink-soft"
+          >
+            Anulează
+          </button>
+          <button
+            disabled={isLoading}
+            className="flex-1 rounded-control bg-brand py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {isLoading ? 'Se salvează…' : 'Salvează parola'}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

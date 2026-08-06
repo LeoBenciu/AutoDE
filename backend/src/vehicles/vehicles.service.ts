@@ -227,7 +227,7 @@ export class VehiclesService {
     }
     const country = normalizePartyCountry(seller.country);
     const identifierType = normalizeIdentifierType(
-      seller.identifierType,
+      undefined,
       seller.kind,
       country,
     );

@@ -263,9 +263,7 @@ export function normalizeAccountingDocument(
     vendorCountry,
     vendorKind,
     vendorIdentifierType: normalizeIdentifierType(
-      raw.vendor_identifier_type ??
-        raw.supplier_identifier_type ??
-        contractVendor?.identifier_type,
+      undefined,
       vendorKind,
       vendorCountry,
     ),
@@ -299,9 +297,7 @@ export function normalizeAccountingDocument(
     buyerCountry,
     buyerKind,
     buyerIdentifierType: normalizeIdentifierType(
-      raw.buyer_identifier_type ??
-        raw.customer_identifier_type ??
-        contractBuyer?.identifier_type,
+      undefined,
       buyerKind,
       buyerCountry,
     ),

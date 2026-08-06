@@ -12,6 +12,9 @@ export interface ImportResult {
   created: number;
   updated: number;
   total: number;
+  identifiersFilled?: number;
+  identifierTypesCorrected?: number;
+  duplicatesAvoided?: number;
   errors: string[];
 }
 
@@ -87,6 +90,12 @@ export const api = createApi({
     }),
     register: build.mutation<any, { companyName: string; name: string; email: string; password: string }>({
       query: (body) => ({ url: '/auth/register', method: 'POST', body }),
+    }),
+    changePassword: build.mutation<
+      any,
+      { currentPassword: string; newPassword: string }
+    >({
+      query: (body) => ({ url: '/auth/password', method: 'PATCH', body }),
     }),
 
     vehicles: build.query<any[], { status?: string; search?: string } | void>({
@@ -384,6 +393,7 @@ export const api = createApi({
 export const {
   useLoginMutation,
   useRegisterMutation,
+  useChangePasswordMutation,
   useVehiclesQuery,
   useVehicleQuery,
   useCreateVehicleMutation,
