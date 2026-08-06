@@ -392,13 +392,25 @@ def reconcile_receipt_party_eins(
     document_text: str,
     client_ein: Any = None,
 ) -> Dict[str, Any]:
-    """Recover receipt vendor/buyer CUIs from their printed semantic positions.
+    """Recover receipt vendor/buyer CUIs from the printed layout and the tenant CUI.
 
-    On Romanian fiscal receipts, the issuer is printed in the company header above
-    ``BON FISCAL``. A later ``Client CUI/CIF`` identifies the buyer. Vision models
-    often copy that larger/lower client value into both fields even though both
-    numbers pass the Romanian checksum. Use the layout plus the tenant CUI to undo
-    that semantic error deterministically; leave ambiguous documents untouched.
+    A Romanian fiscal receipt (``bon fiscal``) prints only the SELLER's CUI(s): the
+    issuer in the company header above ``BON FISCAL`` and sometimes a second entity
+    CUI below it. The buyer's CUI is almost never printed, so vision models copy the
+    one seller CUI they can read into BOTH ``vendor_ein`` and ``buyer_ein`` even
+    though it passes the Romanian checksum.
+
+    The uploaded document belongs to the tenant, so the tenant is necessarily one of
+    the two parties. Resolve the identities deterministically:
+
+      * ``vendor_ein`` ← the receipt issuer (header CUI, or the sole printed CUI that
+        isn't the tenant when the header didn't OCR cleanly).
+      * ``buyer_ein`` ← the tenant's own CUI whenever the tenant isn't the issuer
+        (an incoming purchase), since the buyer's CUI isn't on the paper. When the
+        tenant IS the issuer (outgoing), the buyer is the other printed CUI.
+
+    Leaves genuinely ambiguous documents (no tenant CUI, or several rival seller
+    CUIs and no header) untouched.
     """
     if not isinstance(data, dict) or not document_text:
         return data
@@ -419,17 +431,18 @@ def reconcile_receipt_party_eins(
     )
     client = _norm_ein_compare(client_ein)
 
+    # --- Vendor: the receipt issuer ---
     vendor = header_candidates[0][1] if header_candidates else ""
     if not vendor:
-        # Safe fallback for OCR without a readable heading: when the model copied
-        # the known client into both parties and the text has exactly one other
-        # valid CUI, that other company is necessarily the receipt issuer.
-        current_vendor = _norm_ein_compare(data.get("vendor_ein"))
-        current_buyer = _norm_ein_compare(data.get("buyer_ein"))
+        # No readable header CIF (small thermal print, or OCR dropped it). The
+        # issuer is the printed CUI that isn't the tenant; when exactly one such
+        # seller CUI exists it is unambiguously the vendor. Covers both the "model
+        # duplicated the seller CUI into both fields" case and the "only the seller
+        # CUI is legible" fuel-receipt case.
         alternatives = list(dict.fromkeys(
             cui for _, cui in candidates if cui != client
         ))
-        if client and current_vendor == client and current_buyer == client and len(alternatives) == 1:
+        if len(alternatives) == 1:
             vendor = alternatives[0]
 
     if vendor:
@@ -440,12 +453,20 @@ def reconcile_receipt_party_eins(
         if heading_pos is not None
         else [cui for _, cui in candidates]
     )
-    if client and client in after_heading and vendor != client:
-        data["buyer_ein"] = client
-    elif vendor == client:
+
+    # --- Buyer: the tenant, unless the tenant is the issuer ---
+    # The receipt belongs to the tenant, so the tenant is one of the two parties.
+    if vendor and vendor == client:
+        # Outgoing: the tenant issued the receipt; the buyer is the other party.
         other_buyers = [cui for cui in after_heading if cui != vendor]
         if other_buyers:
             data["buyer_ein"] = other_buyers[0]
+    elif client and vendor and vendor != client:
+        # Incoming purchase: the buyer is the tenant. A fuel/retail bon fiscal
+        # doesn't print the buyer's CUI, so the model's duplicated seller CUI in
+        # buyer_ein is wrong — the tenant CUI is the only correct value. (When a
+        # "Client CUI" line IS printed it equals the tenant, so this is consistent.)
+        data["buyer_ein"] = client
 
     inferred = infer_direction(
         data.get("vendor_ein"), data.get("buyer_ein"), client_ein
