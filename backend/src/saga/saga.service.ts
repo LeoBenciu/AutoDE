@@ -7,6 +7,7 @@ import {
   normalizeAccountingDocument,
   normalizeEin,
 } from '../accounting/accounting-normalizer';
+import { isVehiclePurchaseDocument } from '../vehicles/vehicle-document-sync';
 import { AuditService } from '../common/audit.service';
 import { PrismaService } from '../common/prisma.service';
 import {
@@ -462,9 +463,15 @@ export class SagaService {
         data.referencedNumbers.length === 0;
       const purchaseContract = isVehiclePurchaseContract(data);
       if (document.type === 'Invoice' || independentReceipt || purchaseContract) {
-        invoices.push({ id: document.id, type: document.type, data });
+        invoices.push({
+          id: document.id,
+          type: document.type,
+          vehicleId: document.vehicleId,
+          data,
+        });
       }
     }
+    sortInvoicesByCar(invoices);
 
     const movements = movementsFromLedger(ledgerEntries, tenant.cui);
     const suppliers = parties
@@ -847,6 +854,107 @@ function validIsoDate(value?: string): boolean {
 
 function inRange(value: string, from: string, to: string): boolean {
   return value >= from && value <= to;
+}
+
+type InvoiceKind = 'car' | 'services' | 'transport';
+
+const INVOICE_KIND_RANK: Record<InvoiceKind, number> = {
+  car: 0,
+  services: 1,
+  transport: 2,
+};
+
+/**
+ * Classify an export document relative to a car. The dealership's convention
+ * (see vehicle-document-sync) posts the car itself as a 371 stock purchase,
+ * transport to 624 and every other ancillary service to 628 — so the car
+ * purchase wins first, then anything carrying a 624 line is transport, and
+ * whatever remains is a service.
+ */
+function classifyInvoice(record: SagaInvoiceRecord): InvoiceKind {
+  if (isVehiclePurchaseDocument(record.data)) return 'car';
+  const hasFreight = record.data.lineItems.some((line) =>
+    /^624/.test(line.accountCode),
+  );
+  return hasFreight ? 'transport' : 'services';
+}
+
+/** VIN a car purchase belongs to, so it groups even before a Vehicle link exists. */
+function invoiceVin(record: SagaInvoiceRecord): string {
+  const raw = record.data.raw;
+  return String(raw.vin ?? raw.vehicle_vin ?? raw.chassis_number ?? '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * Order the export car-by-car: each car's own purchase first, then its
+ * services, then its transport, before the next car. Cars are ordered by
+ * purchase date; documents not tied to any car keep chronological order at the
+ * very end. Sorts in place so every export (XML + CSV) inherits the layout.
+ */
+function sortInvoicesByCar(invoices: SagaInvoiceRecord[]): void {
+  const dateOf = (record: SagaInvoiceRecord) =>
+    record.data.documentDate || '9999-12-31';
+  const originalIndex = new Map(invoices.map((record, index) => [record, index]));
+
+  const kind = new Map<SagaInvoiceRecord, InvoiceKind>();
+  const groupKey = new Map<SagaInvoiceRecord, string | null>();
+  for (const record of invoices) {
+    const recordKind = classifyInvoice(record);
+    kind.set(record, recordKind);
+    if (record.vehicleId != null) {
+      groupKey.set(record, `v:${record.vehicleId}`);
+    } else if (recordKind === 'car' && invoiceVin(record)) {
+      groupKey.set(record, `vin:${invoiceVin(record)}`);
+    } else {
+      groupKey.set(record, null);
+    }
+  }
+
+  const groups = new Map<string, SagaInvoiceRecord[]>();
+  const ungrouped: SagaInvoiceRecord[] = [];
+  for (const record of invoices) {
+    const key = groupKey.get(record);
+    if (key == null) {
+      ungrouped.push(record);
+      continue;
+    }
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(record);
+    else groups.set(key, [record]);
+  }
+
+  const byIndex = (a: SagaInvoiceRecord, b: SagaInvoiceRecord) =>
+    originalIndex.get(a)! - originalIndex.get(b)!;
+  const withinGroup = (a: SagaInvoiceRecord, b: SagaInvoiceRecord) =>
+    INVOICE_KIND_RANK[kind.get(a)!] - INVOICE_KIND_RANK[kind.get(b)!] ||
+    dateOf(a).localeCompare(dateOf(b)) ||
+    byIndex(a, b);
+
+  const orderedGroups = [...groups.values()]
+    .map((records) => {
+      const sorted = [...records].sort(withinGroup);
+      const car = sorted.find((record) => kind.get(record) === 'car');
+      const date = car
+        ? dateOf(car)
+        : sorted.reduce(
+            (min, record) => (dateOf(record) < min ? dateOf(record) : min),
+            '9999-12-31',
+          );
+      return { records: sorted, date };
+    })
+    .sort(
+      (a, b) => a.date.localeCompare(b.date) || byIndex(a.records[0], b.records[0]),
+    );
+
+  ungrouped.sort((a, b) => dateOf(a).localeCompare(dateOf(b)) || byIndex(a, b));
+
+  const ordered = [
+    ...orderedGroups.flatMap((group) => group.records),
+    ...ungrouped,
+  ];
+  invoices.splice(0, invoices.length, ...ordered);
 }
 
 function cleanFilePart(value: string): string {
