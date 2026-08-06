@@ -15,6 +15,11 @@ export interface ImportResult {
   identifiersFilled?: number;
   identifierTypesCorrected?: number;
   duplicatesAvoided?: number;
+  identificationNumbersRead?: number;
+  rowsWithoutIdentification?: number;
+  matchedByIdentification?: number;
+  matchedByCode?: number;
+  matchedByName?: number;
   errors: string[];
 }
 

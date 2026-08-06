@@ -8,10 +8,14 @@
  * such as `Cod fiscal`, `Cod_fiscal` and `COD-FISCAL` map identically.
  */
 export function parseCsv(input: string | Buffer): Record<string, string>[] {
-  const text = (typeof input === 'string' ? input : input.toString('utf8')).replace(/^﻿/, '');
+  let text = decodeTabularText(input)
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '');
+  const declaredSeparator = text.match(/^\s*sep=(.)\s*[\r\n]+/i);
+  const delimiter = declaredSeparator?.[1] ?? detectDelimiter(text);
+  if (declaredSeparator) text = text.slice(declaredSeparator[0].length);
   if (!text.trim()) return [];
 
-  const delimiter = detectDelimiter(text);
   const rows = tokenize(text, delimiter).filter(
     (row) => row.length > 0 && !(row.length === 1 && row[0].trim() === ''),
   );
@@ -26,6 +30,34 @@ export function parseCsv(input: string | Buffer): Record<string, string>[] {
     });
     return record;
   });
+}
+
+function decodeTabularText(input: string | Buffer): string {
+  if (typeof input === 'string') return input;
+  if (input.length >= 2 && input[0] === 0xff && input[1] === 0xfe) {
+    return input.subarray(2).toString('utf16le');
+  }
+  if (input.length >= 2 && input[0] === 0xfe && input[1] === 0xff) {
+    const swapped = Buffer.allocUnsafe(input.length - 2);
+    for (let index = 2; index + 1 < input.length; index += 2) {
+      swapped[index - 2] = input[index + 1];
+      swapped[index - 1] = input[index];
+    }
+    return swapped.toString('utf16le');
+  }
+  const sampleLength = Math.min(input.length, 2048);
+  let oddNulls = 0;
+  for (let index = 1; index < sampleLength; index += 2) {
+    if (input[index] === 0) oddNulls += 1;
+  }
+  if (sampleLength > 8 && oddNulls > sampleLength / 8) {
+    return input.toString('utf16le');
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(input);
+  } catch {
+    return new TextDecoder('windows-1250').decode(input);
+  }
 }
 
 function detectDelimiter(text: string): string {

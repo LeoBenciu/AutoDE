@@ -33,7 +33,8 @@ async function main() {
       id: 1,
       tenantId,
       name: 'Andrei-Mihai Popescu',
-      supplierCode: '00004',
+      // SAGA/Excel may emit the same numeric code as either 4 or 00004.
+      supplierCode: '4',
       isSupplier: true,
     }),
     fakeParty({
@@ -83,7 +84,8 @@ async function main() {
     'furnizori.csv',
     'text/csv',
     [
-      'Cod Furnizor;Denumire;CUI/CNP;Tara;Cont_banca',
+      'sep=;',
+      'Cod Furnizor;Denumire;Număr identificare fiscală;Tara;Cont_banca',
       '00004;Andrei-Mihai Popescu;5050217041556;RO;RO49AAAA1B31007593840000',
     ].join('\n'),
   );
@@ -97,17 +99,35 @@ async function main() {
     },
     { created: 0, updated: 1, identifiersFilled: 1, errors: [] },
   );
+  assert.equal(first.identificationNumbersRead, 1);
+  assert.equal(first.rowsWithoutIdentification, 0);
+  assert.equal(first.matchedByCode, 1);
   assert.equal(parties.length, 3);
   assert.equal(parties[0].taxId, '5050217041556');
   assert.equal(parties[0].kind, 'INDIVIDUAL');
   assert.equal(parties[0].identifierType, 'CNP');
   assert.equal(parties[0].iban, 'RO49AAAA1B31007593840000');
 
+  const utf16Client = uploadedBuffer(
+    'clienti-utf16.csv',
+    'text/csv',
+    Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from(
+        'Cod Client\tDenumire\tCod fiscal / CNP\r\n00088\tClient UTF16 SRL\tRO47935139',
+        'utf16le',
+      ),
+    ]),
+  );
+  const utf16Result = await service.import(tenantId, 'client', utf16Client);
+  assert.equal(utf16Result.created, 1);
+  assert.ok(parties.some((party) => party.taxId === '47935139'));
+
   const repeated = await service.import(tenantId, 'supplier', csv);
   assert.equal(repeated.created, 0);
   assert.equal(repeated.updated, 1);
   assert.equal(repeated.identifiersFilled, 0);
-  assert.equal(parties.length, 3);
+  assert.equal(parties.length, 4);
 
   const xml = uploaded(
     'FUR.xml',
@@ -156,7 +176,7 @@ async function main() {
   );
   assert.equal(duplicateResult.created, 1);
   assert.equal(duplicateResult.updated, 1);
-  assert.equal(createCalls, 1);
+  assert.equal(createCalls, 2);
   assert.equal(
     parties.filter((party) => party.taxId === '11201891').length,
     1,
@@ -171,6 +191,14 @@ function uploaded(
   contents: string,
 ): UploadedCsv {
   return { originalname, mimetype, buffer: Buffer.from(contents, 'utf8') };
+}
+
+function uploadedBuffer(
+  originalname: string,
+  mimetype: string,
+  buffer: Buffer,
+): UploadedCsv {
+  return { originalname, mimetype, buffer };
 }
 
 function fakeParty(overrides: Partial<FakeParty>): FakeParty {

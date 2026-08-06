@@ -164,6 +164,10 @@ export class PartiesService {
     let updated = 0;
     let identifiersFilled = 0;
     let identifierTypesCorrected = 0;
+    let identificationNumbersRead = 0;
+    let matchedByIdentification = 0;
+    let matchedByCode = 0;
+    let matchedByName = 0;
     const errors: string[] = [];
     const changed = new Set<WorkingParty>();
     const initiallyMissingIdentifiers = new Set(
@@ -187,29 +191,10 @@ export class PartiesService {
         errors.push(`Rândul ${index + 2}: lipsește denumirea`);
         continue;
       }
-      const rawTaxId = pick(
-        row,
-        'taxid',
-        'cui',
-        'cif',
-        'ein',
-        'cod fiscal',
-        'cod_fiscal',
-        'cnp',
-        'cui cnp',
-        'cnp cui',
-        'cui cnp id extern',
-        'cif cnp',
-        'cod fiscal cnp',
-        'identificator',
-        'id extern',
-        'numar identificare',
-        'număr identificare',
-        'identification number',
-        'vat number',
-      );
+      const rawTaxId = pickIdentificationNumber(row);
       const normalizedTaxId = rawTaxId ? normalizeEin(rawTaxId) : '';
       const taxId = normalizedTaxId || undefined;
+      if (taxId) identificationNumbersRead += 1;
       const code = pick(
         row,
         'code',
@@ -223,7 +208,7 @@ export class PartiesService {
       let country = normalizePartyCountry(importedCountry);
       const codeMatches = indexedMatches(
         role === 'supplier' ? supplierCodeIndex : clientCodeIndex,
-        code,
+        partyCodeKey(code),
       );
       const taxIdMatches = indexedMatches(taxIdIndex, taxId);
       if (taxIdMatches.length > 1) {
@@ -249,7 +234,10 @@ export class PartiesService {
         continue;
       }
 
+      let matchSource: 'identification' | 'code' | 'name' | undefined;
       let existing = taxIdMatches[0] ?? codeMatches[0];
+      if (taxIdMatches[0]) matchSource = 'identification';
+      else if (codeMatches[0]) matchSource = 'code';
       if (!existing) {
         const nameMatches = indexedMatches(
           nameCountryIndex,
@@ -257,13 +245,22 @@ export class PartiesService {
         );
         if (nameMatches.length === 1) {
           const candidate = nameMatches[0];
-          if (!taxId || !candidate.taxId || candidate.taxId === taxId) {
+          if (
+            !taxId ||
+            !candidate.taxId ||
+            normalizeEin(candidate.taxId) === taxId
+          ) {
             existing = candidate;
+            matchSource = 'name';
           }
         }
       }
       country = normalizePartyCountry(importedCountry ?? existing?.country);
-      if (existing?.taxId && taxId && existing.taxId !== taxId) {
+      if (
+        existing?.taxId &&
+        taxId &&
+        normalizeEin(existing.taxId) !== taxId
+      ) {
         errors.push(
           `Rândul ${index + 2}: ${existing.name} are deja numărul de identificare ${existing.taxId}; valoarea ${rawTaxId} nu a fost suprascrisă`,
         );
@@ -292,6 +289,9 @@ export class PartiesService {
       }
 
       if (existing) {
+        if (matchSource === 'identification') matchedByIdentification += 1;
+        else if (matchSource === 'code') matchedByCode += 1;
+        else if (matchSource === 'name') matchedByName += 1;
         const priorIdentifierType = existing.identifierType;
         if (
           taxId &&
@@ -391,6 +391,11 @@ export class PartiesService {
       identifiersFilled,
       identifierTypesCorrected,
       duplicatesAvoided: updated,
+      identificationNumbersRead,
+      rowsWithoutIdentification: rows.length - identificationNumbersRead,
+      matchedByIdentification,
+      matchedByCode,
+      matchedByName,
       errors,
     };
   }
@@ -529,10 +534,10 @@ interface ImportedPartyValues {
 function parsePartyImportRows(file: UploadedCsv): Record<string, string>[] {
   const text = file.buffer.toString('utf8').replace(/^\uFEFF/, '').trim();
   const isXml =
-    text.startsWith('<') ||
     file.originalname.toLowerCase().endsWith('.xml') ||
-    /xml/i.test(file.mimetype);
-  return isXml ? parseSagaPartyXml(text) : parseCsv(text);
+    /xml/i.test(file.mimetype) ||
+    text.startsWith('<');
+  return isXml ? parseSagaPartyXml(text) : parseCsv(file.buffer);
 }
 
 function parseSagaPartyXml(xml: string): Record<string, string>[] {
@@ -590,9 +595,17 @@ function addToIndex(
 }
 
 function indexParty(party: WorkingParty, indexes: PartyIndexes) {
-  addToIndex(indexes.taxIdIndex, party.taxId, party);
-  addToIndex(indexes.supplierCodeIndex, party.supplierCode, party);
-  addToIndex(indexes.clientCodeIndex, party.clientCode, party);
+  addToIndex(
+    indexes.taxIdIndex,
+    party.taxId ? normalizeEin(party.taxId) : party.taxId,
+    party,
+  );
+  addToIndex(
+    indexes.supplierCodeIndex,
+    partyCodeKey(party.supplierCode),
+    party,
+  );
+  addToIndex(indexes.clientCodeIndex, partyCodeKey(party.clientCode), party);
   addToIndex(
     indexes.nameCountryIndex,
     partyNameCountryKey(party.name, party.country),
@@ -602,6 +615,53 @@ function indexParty(party: WorkingParty, indexes: PartyIndexes) {
 
 function normalizedIndexKey(value?: string | null): string {
   return String(value ?? '').trim().toUpperCase();
+}
+
+function partyCodeKey(value?: string | null): string {
+  const normalized = normalizedIndexKey(value).replace(/\.0+$/, '');
+  if (/^\d+$/.test(normalized)) return normalized.replace(/^0+(?=\d)/, '');
+  return normalized;
+}
+
+function pickIdentificationNumber(
+  row: Record<string, string>,
+): string | undefined {
+  const exact = pick(
+    row,
+    'taxid',
+    'cui',
+    'cif',
+    'ein',
+    'cod fiscal',
+    'cod_fiscal',
+    'cnp',
+    'cui cnp',
+    'cnp cui',
+    'cui cnp id extern',
+    'cif cnp',
+    'cod fiscal cnp',
+    'identificator',
+    'id extern',
+    'numar identificare',
+    'număr identificare',
+    'identification number',
+    'vat number',
+  );
+  if (exact) return exact;
+  for (const [header, value] of Object.entries(row)) {
+    if (!value?.trim() || header.includes('tip')) continue;
+    if (
+      header.includes('codfiscal') ||
+      header.includes('identific') ||
+      header.includes('vatnumber') ||
+      header.includes('cui') ||
+      header.includes('cif') ||
+      header.includes('cnp')
+    ) {
+      return value.trim();
+    }
+  }
+  return undefined;
 }
 
 function partyNameCountryKey(name: string, country: string): string {
