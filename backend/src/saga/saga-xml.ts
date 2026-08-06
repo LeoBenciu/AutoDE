@@ -25,6 +25,8 @@ export interface SagaCompany {
 export interface SagaInvoiceRecord {
   id: number;
   type: string | null;
+  /** Car this document belongs to, used to group the export car-by-car. */
+  vehicleId?: number | null;
   data: CanonicalAccountingDocument;
 }
 

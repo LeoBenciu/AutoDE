@@ -298,8 +298,16 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
     try {
       const result = await parseMessage(transportMessage).unwrap();
       const parsed = result?.fields ?? {};
+      const messageCui = String(parsed.transporter_tax_id ?? '')
+        .trim()
+        .replace(/\s+/g, '')
+        .replace(/^RO/i, '');
+      // When the message carries a Romanian CUI, take the transporter name from
+      // ANAF (fetched below) instead of the message text; keep the message name
+      // only as a fallback for foreign transporters ANAF can't resolve.
+      const nameFromAnaf = /^\d{2,10}$/.test(messageCui);
       const values: Record<string, unknown> = {
-        transporterName: parsed.transporter_name,
+        transporterName: nameFromAnaf ? undefined : parsed.transporter_name,
         transporterTaxId: parsed.transporter_tax_id,
         transporterCountry: parsed.transporter_country,
         vehiclePlate: parsed.vehicle_plate,
@@ -320,6 +328,8 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
         });
         return next;
       });
+      // Fetch the official name from ANAF using the CUI from the message.
+      if (nameFromAnaf) void lookupTransporterName(messageCui);
       const labels: Record<string, string> = {
         transporter_name: 'transportator',
         transporter_tax_id: 'cod fiscal',
@@ -344,12 +354,13 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
     }
   };
 
-  // Fill the transporter name from ANAF using the CUI typed into "Cod fiscal
-  // transportator". Fires on blur of that field; a foreign VAT (DE…, HU…) has no
-  // ANAF record so it's skipped, and any lookup failure is silent — the name
-  // stays editable for manual entry.
-  const lookupTransporterName = async () => {
-    const cui = String(form.transporterTaxId ?? '')
+  // Fill the transporter name from ANAF using its CUI. Called on blur of "Cod
+  // fiscal transportator" (no argument → reads the field) and from the message
+  // parser (passes the CUI it just extracted, since state hasn't flushed yet).
+  // A foreign VAT (DE…, HU…) has no ANAF record so it's skipped, and any lookup
+  // failure is silent — the name stays editable for manual entry.
+  const lookupTransporterName = async (rawTaxId?: string) => {
+    const cui = String(rawTaxId ?? form.transporterTaxId ?? '')
       .trim()
       .replace(/\s+/g, '')
       .replace(/^RO/i, '');
@@ -360,15 +371,16 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
         : String(Date.now());
     try {
       const details = await lookupTransporter({ cui, requestId }).unwrap();
-      // Ignore a stale response if the user has since changed the CUI.
-      const stillCurrent =
-        String(form.transporterTaxId ?? '')
+      if (!details?.name) return;
+      setForm((f) => {
+        // Apply only if the field still holds this CUI (guards against a stale
+        // response after the user/message changed the tax id).
+        const currentCui = String(f.transporterTaxId ?? '')
           .trim()
           .replace(/\s+/g, '')
-          .replace(/^RO/i, '') === cui;
-      if (details?.name && stillCurrent) {
-        setForm((f) => ({ ...f, transporterName: details.name }));
-      }
+          .replace(/^RO/i, '');
+        return currentCui === cui ? { ...f, transporterName: details.name } : f;
+      });
     } catch {
       // Non-fatal: ANAF has nothing for this CUI or is unavailable.
     }
@@ -522,7 +534,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
               placeholder="Cod fiscal transportator"
               value={form.transporterTaxId}
               onChange={set('transporterTaxId')}
-              onBlur={lookupTransporterName}
+              onBlur={() => lookupTransporterName()}
               required
             />
           </div>
