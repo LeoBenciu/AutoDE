@@ -2,6 +2,7 @@ import { FormEvent, useRef, useState } from 'react';
 import {
   useCreateEtransportMutation,
   useEtransportQuery,
+  useLazyCompanyFromAnafQuery,
   useLazyEtransportPrefillQuery,
   useParseEtransportMessageMutation,
   useSubmitEtransportMutation,
@@ -180,6 +181,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
   const [create, { isLoading: creating }] = useCreateEtransportMutation();
   const [update, { isLoading: updating }] = useUpdateEtransportMutation();
   const [parseMessage, { isLoading: parsingMessage }] = useParseEtransportMessageMutation();
+  const [lookupTransporter, { isFetching: loadingTransporterName }] = useLazyCompanyFromAnafQuery();
   const isLoading = creating || updating;
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -342,6 +344,36 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
     }
   };
 
+  // Fill the transporter name from ANAF using the CUI typed into "Cod fiscal
+  // transportator". Fires on blur of that field; a foreign VAT (DE…, HU…) has no
+  // ANAF record so it's skipped, and any lookup failure is silent — the name
+  // stays editable for manual entry.
+  const lookupTransporterName = async () => {
+    const cui = String(form.transporterTaxId ?? '')
+      .trim()
+      .replace(/\s+/g, '')
+      .replace(/^RO/i, '');
+    if (!/^\d{2,10}$/.test(cui)) return;
+    const requestId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : String(Date.now());
+    try {
+      const details = await lookupTransporter({ cui, requestId }).unwrap();
+      // Ignore a stale response if the user has since changed the CUI.
+      const stillCurrent =
+        String(form.transporterTaxId ?? '')
+          .trim()
+          .replace(/\s+/g, '')
+          .replace(/^RO/i, '') === cui;
+      if (details?.name && stillCurrent) {
+        setForm((f) => ({ ...f, transporterName: details.name }));
+      }
+    } catch {
+      // Non-fatal: ANAF has nothing for this CUI or is unavailable.
+    }
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
@@ -478,8 +510,21 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
             </label>
           </div>
           <div className="grid grid-cols-2 gap-2.5">
-            <input className={field} placeholder="Transportator" value={form.transporterName} onChange={set('transporterName')} required />
-            <input className={field} placeholder="Cod fiscal transportator" value={form.transporterTaxId} onChange={set('transporterTaxId')} required />
+            <input
+              className={field}
+              placeholder={loadingTransporterName ? 'Se caută la ANAF…' : 'Transportator'}
+              value={form.transporterName}
+              onChange={set('transporterName')}
+              required
+            />
+            <input
+              className={field}
+              placeholder="Cod fiscal transportator"
+              value={form.transporterTaxId}
+              onChange={set('transporterTaxId')}
+              onBlur={lookupTransporterName}
+              required
+            />
           </div>
           <div className="grid grid-cols-3 gap-2.5">
             <input className={field} placeholder="Țară" value={form.transporterCountry} onChange={set('transporterCountry')} maxLength={2} />
