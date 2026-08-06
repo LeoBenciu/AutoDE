@@ -93,6 +93,47 @@ Client C.U.I./C.I.F.: RO31194616
         self.assertEqual(data["buyer_ein"], "31194616")
         self.assertEqual(data["direction"], "incoming")
 
+    def test_fuel_receipt_buyer_defaults_to_tenant_when_not_printed(self):
+        # A real OMV fuel bon fiscal prints only the seller's CUIs; the buyer's CUI
+        # is nowhere on the paper, so the model duplicates the seller CUI into both
+        # fields. The tenant is the buyer of an incoming purchase.
+        data = {
+            "vendor_ein": "RO31194616",
+            "buyer_ein": "RO31194616",
+        }
+        text = """S.C. OMV PETROM MARKETING S.R.L.
+PETROM DRUMUL TABEREI
+STR. SIBIU, NR. 5A, SECTOR 6, BUCURESTI
+C.I.F.: RO11201891
+
+BON FISCAL
+C.I.F.: RO31194616
+Numar POS: 1
+"""
+        # Tenant CUI is a *different* company, not printed on the receipt.
+        validators.reconcile_receipt_party_eins(data, text, "12345674")
+
+        self.assertEqual(data["vendor_ein"], "11201891")
+        self.assertEqual(data["buyer_ein"], "12345674")
+        self.assertEqual(data["direction"], "incoming")
+
+    def test_receipt_vendor_recovered_when_only_seller_cui_is_legible(self):
+        # Header CIF didn't OCR; only the seller CUI below BON FISCAL survived. It is
+        # the sole printed CUI that isn't the tenant, so it's the vendor, and the
+        # tenant is the buyer.
+        data = {
+            "vendor_ein": "31194616",
+            "buyer_ein": "31194616",
+        }
+        text = """BON FISCAL
+C.I.F.: RO31194616
+"""
+        validators.reconcile_receipt_party_eins(data, text, "12345674")
+
+        self.assertEqual(data["vendor_ein"], "31194616")
+        self.assertEqual(data["buyer_ein"], "12345674")
+        self.assertEqual(data["direction"], "incoming")
+
     def test_fuel_receipt_is_always_6022_without_inferred_vehicle_cost(self):
         data = {
             "line_items": [

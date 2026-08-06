@@ -1325,14 +1325,17 @@ def _maybe_repair(
             _validators.reconcile_receipt_party_eins(data_r, text, client_ein)
             vendor_ein = _validators._norm_ein_compare(data_r.get("vendor_ein"))
             buyer_ein = _validators._norm_ein_compare(data_r.get("buyer_ein"))
-            inferred = _validators.infer_direction(vendor_ein, buyer_ein, client_ein)
+            # A distinct, checksum-valid vendor/buyer pair is already a good repair.
+            # Do NOT also require infer_direction to resolve: on a purchase receipt
+            # the buyer is the tenant whose CUI isn't printed, so direction can be
+            # underivable even though the identities are now correct — gating on it
+            # here is exactly what discarded the fix and left both CUIs identical.
             party_repair_valid = (
                 bool(vendor_ein)
                 and bool(buyer_ein)
                 and vendor_ein != buyer_ein
                 and _validators.valid_cui(vendor_ein) is not False
                 and _validators.valid_cui(buyer_ein) is not False
-                and inferred is not None
             )
             if not party_repair_valid:
                 print("↩️  receipt party repair discarded: identities still ambiguous",
@@ -1345,7 +1348,9 @@ def _maybe_repair(
             repaired_parties = dict(data)
             repaired_parties["vendor_ein"] = data_r.get("vendor_ein")
             repaired_parties["buyer_ein"] = data_r.get("buyer_ein")
-            repaired_parties["direction"] = inferred
+            # reconcile_receipt_party_eins sets `direction` when it can derive it;
+            # keep that, else fall back to the original pass's value.
+            repaired_parties["direction"] = data_r.get("direction") or data.get("direction")
             data_r = repaired_parties
             meta_r["receipt_parties_repaired"] = True
         except Exception as e:
