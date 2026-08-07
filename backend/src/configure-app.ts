@@ -1,4 +1,4 @@
-import { INestApplication, Logger, ValidationPipe } from '@nestjs/common';
+import { INestApplication, Logger, RequestMethod, ValidationPipe } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { NextFunction, Request, Response } from 'express';
 
@@ -6,7 +6,12 @@ const anafHttpLogger = new Logger('AnafCompanyHttp');
 const httpLogger = new Logger('Http');
 
 export function configureApp(app: INestApplication): INestApplication {
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix('api', {
+    // ANAF redirects the OAuth callback to the registered redirect_uri, which
+    // has no /api prefix; serve just this route at the root so the redirect
+    // resolves. All other routes stay under /api.
+    exclude: [{ path: 'etransport/anaf/callback', method: RequestMethod.GET }],
+  });
   app.enableCors({ origin: true, credentials: true });
   app.use(logEveryRequest);
   app.use(logAnafCompanyRequest);

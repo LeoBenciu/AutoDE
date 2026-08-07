@@ -25,6 +25,16 @@ class ReverseChargeDetectionTest(unittest.TestCase):
 
         self.assertTrue(_detect_reverse_charge(text, {"reverse_charge": False}))
 
+    def test_auto1_vat_key_e_sets_reverse_charge(self) -> None:
+        text = """
+        # Bezeichnung Bestandsnr. MwSt. Kennz. Preis €
+          Description Stock ID VAT Key Price €
+        001 Fahrzeug Handling KL94218 E 299,00
+        Total netto EUR 299,00
+        """
+
+        self.assertTrue(_detect_reverse_charge(text, {"reverse_charge": False}))
+
     def test_vat_key_cell_may_be_on_its_own_ocr_line(self) -> None:
         text = """
         MwSt. Kennz.
