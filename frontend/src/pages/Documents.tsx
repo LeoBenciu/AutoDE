@@ -1385,6 +1385,12 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                         onSave={(value) => saveLineField(index, 'articleCode', value)}
                       />
                       <LineField
+                        label="Stock ID / Ref."
+                        value={item.stock_id ?? ''}
+                        disabled={doc.reviewStatus === 'APPROVED'}
+                        onSave={(value) => saveLineField(index, 'stock_id', value)}
+                      />
+                      <LineField
                         label="Gestiune"
                         value={item.management ?? ''}
                         disabled={doc.reviewStatus === 'APPROVED'}

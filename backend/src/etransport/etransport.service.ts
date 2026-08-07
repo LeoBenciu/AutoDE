@@ -9,7 +9,7 @@ import {
   normalizeAccountingDocument,
 } from '../accounting/accounting-normalizer';
 import { AnafClient } from './anaf-client';
-import { resolveCurrentBnrRate } from './bnr-rate';
+import { resolveBnrRate } from './bnr-rate';
 import { ExtractionService } from '../extraction/extraction.service';
 import { isVehiclePurchaseDocument } from '../vehicles/vehicle-document-sync';
 import { DriveVehicleDataService } from './drive-vehicle-data.service';
@@ -120,6 +120,21 @@ export class EtransportService {
 
   driveStatus(refresh = false) {
     return this.driveVehicleData.status(refresh);
+  }
+
+  /** Official BNR rate for the UIT modal's currency conversion (date-aware). */
+  async bnrRate(currencyInput: unknown, dateInput?: unknown) {
+    const currency = textValue(currencyInput)?.toUpperCase();
+    if (!currency) throw new BadRequestException('Selectează moneda pentru cursul BNR');
+    const date = isoDate(dateInput);
+    try {
+      const rate = await resolveBnrRate(currency, date);
+      return { currency: rate.currency, rate: rate.rate, rateDate: rate.rateDate };
+    } catch (error) {
+      throw new BadRequestException(
+        `Cursul ${currency}/RON nu a putut fi obținut acum (${(error as Error).message}). Introdu manual cursul BNR.`,
+      );
+    }
   }
 
   async parseTransportMessage(message: unknown) {
@@ -261,8 +276,13 @@ export class EtransportService {
     const currency = (
       textValue(canonicalSource?.currency ?? vehicle.purchaseCurrency) ?? 'RON'
     ).toUpperCase();
-    const goodsDescription =
-      `Autoturism ${vehicle.make} ${vehicle.model}, VIN ${vehicle.vin}`;
+    // ANAF article name for a vehicle is "<VIN> <MODEL>" (e.g.
+    // "WAUZ23423JLKAISD3K TIGUAN") so the car is identifiable by chassis number.
+    const goodsDescription = [vehicle.vin, vehicle.model]
+      .map((part) => textValue(part))
+      .filter(Boolean)
+      .join(' ')
+      .toUpperCase();
     const transportDate = undefined;
     const goods = await this.enrichGoodsValues(
       [{ description: goodsDescription, tariffCode, weightKg, valueWithoutVat, currency }],
@@ -525,9 +545,10 @@ export class EtransportService {
             exchangeRateDate: source.date ?? dateInRomania(),
           };
         }
-        // 4. Live BNR feed — best-effort; degrades instead of hard-blocking.
+        // 4. Live BNR feed (cursbnr.ro, date-aware) — best-effort; degrades
+        //    instead of hard-blocking.
         try {
-          const bnr = await resolveCurrentBnrRate(currency);
+          const bnr = await resolveBnrRate(currency, source?.date);
           return {
             ...normalized,
             valueRon: round2(valueWithoutVat * bnr.rate),

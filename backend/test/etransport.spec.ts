@@ -32,17 +32,26 @@ const base: DeclarationData = {
 };
 
 const xml = buildETransportXml(base);
-assert.match(xml, /<codTipOperatiune>10<\/codTipOperatiune>/);
-assert.match(xml, /<codTarifar>87032390<\/codTarifar>/);
-assert.match(xml, /<greutateBruta>1327<\/greutateBruta>/);
-assert.match(xml, /<valoareLeiFaraTva>65000\.25<\/valoareLeiFaraTva>/);
+// v2 schema: notificare/bunuriTransportate/partenerComercial/dateTransport
+// carry their data as XML attributes, not child elements.
+assert.match(xml, /<notificare codTipOperatiune="10"/);
+assert.match(xml, /<bunuriTransportate codScopOperatiune="101"/);
+assert.match(xml, /codTarifar="87032390"/);
+assert.match(xml, /greutateBruta="1327"/);
+assert.match(xml, /valoareLeiFaraTva="65000\.25"/);
+assert.match(xml, /<partenerComercial codTara="DE"/);
+assert.match(xml, /<dateTransport nrVehicul="B123UIT"/);
+// The border crossing point is not declared unless explicitly provided.
+assert.doesNotMatch(xml, /codPtf=/);
+// Unloading place is a Romanian locatie with its county.
+assert.match(xml, /<locFinalTraseuRutier>\s*<locatie codJudet="B"/);
 
 const incompleteXml = buildETransportXml({
   ...base,
   goods: [{ description: 'Date încă neverificate' }],
 });
-assert.doesNotMatch(incompleteXml, /<codTarifar>8703<\/codTarifar>/);
-assert.doesNotMatch(incompleteXml, /<greutateBruta>1500<\/greutateBruta>/);
+assert.doesNotMatch(incompleteXml, /codTarifar="8703"/);
+assert.doesNotMatch(incompleteXml, /greutateBruta="1500"/);
 
 const rate = parseBnrRateXml(
   '<DataSet><Body><Cube date="2026-07-24"><Rate currency="EUR">5.2348</Rate><Rate currency="HUF" multiplier="100">1.4434</Rate></Cube></Body></DataSet>',

@@ -228,6 +228,15 @@ export const api = createApi({
     etransportPrefill: build.query<any, number>({
       query: (vehicleId) => `/etransport/prefill/${vehicleId}`,
     }),
+    bnrRate: build.query<
+      { currency: string; rate: number; rateDate: string },
+      { currency: string; date?: string }
+    >({
+      query: ({ currency, date }) => ({
+        url: '/etransport/bnr-rate',
+        params: { currency, ...(date ? { date } : {}) },
+      }),
+    }),
     parseEtransportMessage: build.mutation<any, string>({
       query: (message) => ({
         url: '/etransport/parse-message',
@@ -438,6 +447,7 @@ export const {
   useLazyDownloadUrlQuery,
   useEtransportQuery,
   useLazyEtransportPrefillQuery,
+  useLazyBnrRateQuery,
   useParseEtransportMessageMutation,
   useCreateEtransportMutation,
   useUpdateEtransportMutation,

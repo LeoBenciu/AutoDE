@@ -510,7 +510,7 @@ function buildFactura(
           <CodArticolClient>${esc(analytic)}</CodArticolClient>
           <GUID_cod_articol>${esc(line.raw.guid_article_code ?? line.raw.guid_cod_articol)}</GUID_cod_articol>
           <CodBare>${esc(line.raw.barcode ?? line.raw.cod_bare)}</CodBare>
-          <InformatiiSuplimentare>${esc(line.raw.additional_info ?? line.raw.informatii_suplimentare)}</InformatiiSuplimentare>
+          <InformatiiSuplimentare>${esc(line.raw.additional_info ?? line.raw.informatii_suplimentare ?? line.raw.stock_id)}</InformatiiSuplimentare>
           <UM>${esc(sagaUnit(line.unit))}</UM>
           <Cantitate>${esc(quantity)}</Cantitate>
           <Pret>${esc(unitPrice)}</Pret>

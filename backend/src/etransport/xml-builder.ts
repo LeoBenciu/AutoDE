@@ -1,10 +1,17 @@
 /**
- * Builds the RO e-Transport XML declaration.
+ * Builds the RO e-Transport XML declaration (schema
+ * `mfp:anaf:dgti:eTransport:declaratie:v2`).
  *
- * NOTE: the element names below follow the ANAF e-Transport spec as of the
- * last review, but ANAF revises the XSD periodically — validate against the
- * current XSD (DUKIntegrator) before production use. Endpoints and schema
- * versions are configuration, not code.
+ * In the v2 schema almost every field is an XML *attribute*, not a child
+ * element: `notificare`, `bunuriTransportate`, `partenerComercial`,
+ * `dateTransport` and `locatie` all carry their data as attributes. Emitting
+ * them as child elements is what triggered ANAF's
+ * `Attribute 'codTipOperatiune' must appear on element 'notificare'` rejection.
+ *
+ * NOTE: element/attribute names follow the ANAF e-Transport v2 XSD, but ANAF
+ * revises it periodically — validate against the current XSD (DUKIntegrator)
+ * before production use. Endpoints and schema versions are configuration, not
+ * code.
  */
 
 export interface DeclarationData {
@@ -13,16 +20,31 @@ export interface DeclarationData {
   transporter: { name: string; taxId: string; country: string };
   vehiclePlate: string;
   trailerPlate?: string;
-  loadingPlace: { country: string; county?: string; city?: string; address?: string };
-  unloadingPlace: { country: string; county?: string; city?: string; address?: string };
+  loadingPlace: ETransportPlace;
+  unloadingPlace: ETransportPlace;
   goods: Array<ETransportGood>;
   transportDate?: string; // ISO date
+}
+
+export interface ETransportPlace {
+  country: string;
+  county?: string;
+  city?: string;
+  address?: string;
+  /**
+   * Border crossing point / customs office code (`codPtf`). Left undefined by
+   * default: the route is described by the loading/unloading `locatie` and a
+   * border point is only declared when the operation explicitly needs one.
+   */
+  borderCrossingPoint?: string;
 }
 
 export interface ETransportGood {
   description: string;
   tariffCode?: string;
   weightKg?: number;
+  /** codScopOperatiune override; falls back to the per-operation default. */
+  scopeCode?: string;
   /** Net invoice/document value in its original currency. */
   valueWithoutVat?: number;
   currency?: string;
@@ -47,6 +69,16 @@ export const OPERATION_CODES: Record<string, string> = {
   DIE: '70',
 };
 
+// Operations that are not a transfer of ownership (lohn, stock-at-client,
+// import, export, warehousing) require the generic scope 9999. The
+// ownership-transfer operations (AIC, LIC, TTN) default to 101 — "comercializare"
+// — which fits buying/selling vehicles for resale.
+const NON_TRANSFER_OPERATION_CODES = new Set(['12', '14', '22', '24', '40', '50', '60', '70']);
+
+export function defaultScopeCode(operationCode: string): string {
+  return NON_TRANSFER_OPERATION_CODES.has(operationCode) ? '9999' : '101';
+}
+
 const esc = (s: unknown): string =>
   String(s ?? '')
     .replace(/&/g, '&amp;')
@@ -54,50 +86,45 @@ const esc = (s: unknown): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
+const isBlank = (value: unknown): boolean =>
+  value == null || String(value).trim() === '';
+
+/** Always-present attribute (empty string when missing, so required-field errors surface). */
+const reqAttr = (name: string, value: unknown): string => ` ${name}="${esc(value)}"`;
+
+/** Optional attribute, omitted entirely when blank. */
+const attr = (name: string, value: unknown): string =>
+  isBlank(value) ? '' : ` ${name}="${esc(value)}"`;
+
+function buildPlace(tag: string, place: ETransportPlace): string {
+  // The road leg on Romanian territory is described by a `locatie`, whose
+  // codJudet (Romanian county) is required by the XSD. A foreign leg therefore
+  // cannot be a locatie — it is represented by a border crossing point (codPtf),
+  // emitted only when explicitly provided. So a locatie is written only for a
+  // Romanian place (one that carries a county).
+  const locatie = !isBlank(place.county)
+    ? `\n      <locatie${reqAttr('codJudet', place.county)}${reqAttr('denumireLocalitate', place.city ?? '')}${reqAttr('denumireStrada', place.address ?? '')}/>`
+    : '';
+  return `<${tag}${attr('codPtf', place.borderCrossingPoint)}>${locatie}\n    </${tag}>`;
+}
+
 export function buildETransportXml(d: DeclarationData): string {
+  const operationCode = OPERATION_CODES[d.operationType] ?? '';
   const goods = d.goods
-    .map(
-      (g, i) => `
-    <bunuriTransportate>
-      <nrCrt>${i + 1}</nrCrt>
-      <denumireMarfa>${esc(g.description)}</denumireMarfa>
-      <codTarifar>${esc(g.tariffCode)}</codTarifar>
-      <cantitate>1</cantitate>
-      <codUnitateMasura>H87</codUnitateMasura>
-      <greutateBruta>${esc(g.weightKg)}</greutateBruta>
-      <valoareLeiFaraTva>${esc(g.valueRon)}</valoareLeiFaraTva>
-    </bunuriTransportate>`,
-    )
+    .map((g) => {
+      const scope = isBlank(g.scopeCode) ? defaultScopeCode(operationCode) : g.scopeCode;
+      return `
+    <bunuriTransportate${reqAttr('codScopOperatiune', scope)}${attr('codTarifar', g.tariffCode)}${reqAttr('denumireMarfa', g.description)}${reqAttr('cantitate', 1)}${reqAttr('codUnitateMasura', 'H87')}${reqAttr('greutateBruta', g.weightKg)}${attr('valoareLeiFaraTva', g.valueRon)}/>`;
+    })
     .join('');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<eTransport xmlns="mfp:anaf:dgti:eTransport:declaratie:v2" codDeclarant="${esc(d.tenantCui)}">
-  <notificare>
-    <codTipOperatiune>${esc(OPERATION_CODES[d.operationType])}</codTipOperatiune>
-    ${goods}
-    <partenerComercial>
-      <codTara>${esc(d.transporter.country)}</codTara>
-      <cod>${esc(d.transporter.taxId)}</cod>
-      <denumire>${esc(d.transporter.name)}</denumire>
-    </partenerComercial>
-    <dateTransport>
-      <nrVehicul>${esc(d.vehiclePlate)}</nrVehicul>${d.trailerPlate ? `\n      <nrRemorca1>${esc(d.trailerPlate)}</nrRemorca1>` : ''}
-      <codTaraOrgTransport>${esc(d.transporter.country)}</codTaraOrgTransport>
-      <codOrgTransport>${esc(d.transporter.taxId)}</codOrgTransport>
-      <denumireOrgTransport>${esc(d.transporter.name)}</denumireOrgTransport>
-      <dataTransport>${esc(d.transportDate)}</dataTransport>
-    </dateTransport>
-    <locStartTraseuRutier>
-      <codTara>${esc(d.loadingPlace.country)}</codTara>
-      <denumireLocalitate>${esc(d.loadingPlace.city ?? '')}</denumireLocalitate>
-      <adresa>${esc(d.loadingPlace.address ?? '')}</adresa>
-    </locStartTraseuRutier>
-    <locFinalTraseuRutier>
-      <codTara>${esc(d.unloadingPlace.country)}</codTara>
-      <codJudet>${esc(d.unloadingPlace.county ?? '')}</codJudet>
-      <denumireLocalitate>${esc(d.unloadingPlace.city ?? '')}</denumireLocalitate>
-      <adresa>${esc(d.unloadingPlace.address ?? '')}</adresa>
-    </locFinalTraseuRutier>
+<eTransport xmlns="mfp:anaf:dgti:eTransport:declaratie:v2"${reqAttr('codDeclarant', d.tenantCui)}>
+  <notificare${reqAttr('codTipOperatiune', operationCode)}>${goods}
+    <partenerComercial${reqAttr('codTara', d.transporter.country)}${attr('cod', d.transporter.taxId)}${reqAttr('denumire', d.transporter.name)}/>
+    <dateTransport${reqAttr('nrVehicul', d.vehiclePlate)}${attr('nrRemorca1', d.trailerPlate)}${reqAttr('codTaraOrgTransport', d.transporter.country)}${attr('codOrgTransport', d.transporter.taxId)}${reqAttr('denumireOrgTransport', d.transporter.name)}${reqAttr('dataTransport', d.transportDate)}/>
+    ${buildPlace('locStartTraseuRutier', d.loadingPlace)}
+    ${buildPlace('locFinalTraseuRutier', d.unloadingPlace)}
   </notificare>
 </eTransport>`;
 }
