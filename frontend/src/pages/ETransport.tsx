@@ -2,6 +2,7 @@ import { FormEvent, useRef, useState } from 'react';
 import {
   useCreateEtransportMutation,
   useEtransportQuery,
+  useLazyBnrRateQuery,
   useLazyCompanyFromAnafQuery,
   useLazyEtransportPrefillQuery,
   useParseEtransportMessageMutation,
@@ -178,6 +179,7 @@ export default function ETransport() {
 function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onClose: () => void }) {
   const { data: vehicles = [] } = useVehiclesQuery();
   const [prefill] = useLazyEtransportPrefillQuery();
+  const [fetchBnrRate, { isFetching: fetchingRate }] = useLazyBnrRateQuery();
   const [create, { isLoading: creating }] = useCreateEtransportMutation();
   const [update, { isLoading: updating }] = useUpdateEtransportMutation();
   const [parseMessage, { isLoading: parsingMessage }] = useParseEtransportMessageMutation();
@@ -386,6 +388,28 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
     }
   };
 
+  // Pull the official BNR rate (cursbnr.ro) for the selected currency and
+  // transport date, filling the exchange rate so the declared RON value is the
+  // legal conversion. Clears any manual RON override so it recomputes.
+  const applyBnrRate = async () => {
+    if (!form.currency || form.currency === 'RON') return;
+    setError('');
+    try {
+      const result = await fetchBnrRate({
+        currency: form.currency,
+        date: form.transportDate || undefined,
+      }).unwrap();
+      setForm((f) => ({
+        ...f,
+        exchangeRate: String(result.rate),
+        exchangeRateDate: result.rateDate,
+        valueRon: '',
+      }));
+    } catch (err: any) {
+      setError(err?.data?.message ?? 'Cursul BNR nu a putut fi obținut');
+    }
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
@@ -580,23 +604,34 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
             />
           </div>
           {form.currency !== 'RON' && (
-            <input
-              className={field}
-              type="number"
-              min="0"
-              step="0.0001"
-              placeholder="Curs BNR (auto din factură; completează manual dacă lipsește)"
-              value={form.exchangeRate}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  exchangeRate: e.target.value,
-                  exchangeRateDate: e.target.value
-                    ? form.exchangeRateDate || new Date().toISOString().slice(0, 10)
-                    : '',
-                })
-              }
-            />
+            <div className="grid grid-cols-[1fr_auto] gap-2.5">
+              <input
+                className={field}
+                type="number"
+                min="0"
+                step="0.0001"
+                placeholder="Curs BNR (auto din factură; completează manual dacă lipsește)"
+                value={form.exchangeRate}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    exchangeRate: e.target.value,
+                    exchangeRateDate: e.target.value
+                      ? form.exchangeRateDate || new Date().toISOString().slice(0, 10)
+                      : '',
+                  })
+                }
+              />
+              <button
+                type="button"
+                onClick={applyBnrRate}
+                disabled={fetchingRate || !form.currency}
+                className="shrink-0 rounded-control border border-line-strong bg-white px-3.5 text-xs font-semibold text-ink-soft disabled:opacity-50"
+                title="Preia cursul oficial BNR pentru moneda și data transportului"
+              >
+                {fetchingRate ? 'Iau cursul…' : 'Curs BNR'}
+              </button>
+            </div>
           )}
           {currentRonValue != null && Number.isFinite(currentRonValue) && (
             <p className="rounded-control bg-canvas px-3 py-2 text-xs text-muted">

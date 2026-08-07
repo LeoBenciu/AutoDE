@@ -25,6 +25,11 @@ export class EtransportController {
     return this.etransport.parseTransportMessage(dto?.message);
   }
 
+  @Get('bnr-rate')
+  bnrRate(@Query('currency') currency?: string, @Query('date') date?: string) {
+    return this.etransport.bnrRate(currency, date);
+  }
+
   @Get('drive/status')
   @Roles('ACCOUNTANT')
   driveStatus() {

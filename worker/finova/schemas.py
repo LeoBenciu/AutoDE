@@ -126,6 +126,7 @@ class LineItem(StrictBase):
     vat: VatRate
     um: UnitOfMeasure
     articleCode: str  # empty string when no match and type is 'Nedefinit'
+    stock_id: Optional[str]  # supplier Ref./Stock ID column (e.g. AUTO1 "NR22280"); null if absent
     account_code: str
     management: Optional[str]  # null when type is 'Nedefinit'
     isNew: bool

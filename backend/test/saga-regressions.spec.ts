@@ -203,6 +203,48 @@ assert.match(splitXml, /<Cont>371<\/Cont>/);
 assert.match(splitXml, /<Cont>624<\/Cont>/);
 assert.doesNotMatch(splitXml, /<TipDeducere>I<\/TipDeducere>/);
 
+// A line's supplier Stock ID/Ref (e.g. AUTO1 "NR22280") is exported into the
+// SAGA <InformatiiSuplimentare> field for that line.
+const stockIdInvoice = {
+  id: 15,
+  type: 'Invoice',
+  data: normalizeAccountingDocument(
+    'Invoice',
+    {
+      direction: 'incoming',
+      vendor: 'AUTO1 Car Trade S.r.l.',
+      vendor_ein: 'IT04927460230',
+      vendor_country: 'IT',
+      buyer: company.name,
+      buyer_ein: company.cui,
+      buyer_country: 'RO',
+      document_number: '17012651015926',
+      document_date: '05-08-2026',
+      total_amount: 13_407,
+      vat_amount: 0,
+      currency: 'EUR',
+      line_items: [
+        {
+          name: 'BMW X3 xDrive 20d xLine',
+          quantity: 1,
+          unit_price: 13_407,
+          total: 13_407,
+          vat_amount: 0,
+          vat: 'ZERO',
+          account_code: '371',
+          stock_id: 'NR22280',
+        },
+      ],
+    },
+    company.cui,
+  ),
+};
+const stockIdXml = buildFacturiXml([stockIdInvoice], company, []);
+assert.match(
+  stockIdXml,
+  /<InformatiiSuplimentare>NR22280<\/InformatiiSuplimentare>/,
+);
+
 assert.equal(
   sagaInvoicesFileName(company.cui, '2026-07-23'),
   'F_31194616_2026-07-23.xml',
