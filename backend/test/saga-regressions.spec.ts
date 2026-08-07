@@ -119,10 +119,89 @@ assert.equal(contract.vendorAddress, 'Str. Exemplului 10');
 assert.equal(contract.vendorCity, 'Bacău');
 assert.equal(contract.vendorPhone, '+40 700 111 222');
 assert.equal(contract.vendorEmail, 'andrei@example.test');
-assert.match(
-  buildFacturiXml([{ id: 13, type: 'Contract', data: contract }], company, []),
-  /<FacturaTip>R<\/FacturaTip>/,
+const contractXml = buildFacturiXml(
+  [{ id: 13, type: 'Contract', data: contract }],
+  company,
+  [],
 );
+assert.match(contractXml, /<FacturaTip>R<\/FacturaTip>/);
+// A private-seller vehicle purchase carries no VAT, so its line must not be
+// tagged non-deductible (TipDeducere=I); the deduction type stays blank.
+assert.doesNotMatch(contractXml, /<TipDeducere>I<\/TipDeducere>/);
+assert.match(contractXml, /<TipDeducere><\/TipDeducere>/);
+
+// A purchase contract may be split across lines like an invoice (car on 371,
+// transport on 624). The normalizer keeps the supplied lines and SAGA exports
+// each on its own account with a blank deduction type.
+const splitContract = normalizeAccountingDocument(
+  'Contract',
+  {
+    direction: 'incoming',
+    contract_number: 'FICTIV-002/2026',
+    contract_date: '31-07-2026',
+    total_value: 50_500,
+    currency: 'RON',
+    vehicle_transaction: 'purchase',
+    vin: 'WVWZZZ3CZGE654321',
+    vehicle_make: 'Skoda',
+    vehicle_model: 'Octavia',
+    line_items: [
+      {
+        name: 'Autoturism',
+        account_code: '371',
+        quantity: 1,
+        unit_price: 50_000,
+        total: 50_000,
+        vat_amount: 0,
+        vat: 'ZERO',
+        vat_deductibility: 'FULL',
+        um: 'BUCATA',
+      },
+      {
+        name: 'Transport',
+        account_code: '624',
+        quantity: 1,
+        unit_price: 500,
+        total: 500,
+        vat_amount: 0,
+        vat: 'ZERO',
+        vat_deductibility: 'FULL',
+        um: 'BUCATA',
+      },
+    ],
+    parties: [
+      {
+        name: 'Vasile Vânzător',
+        ein: '1900101223344',
+        role: 'vendor',
+        kind: 'INDIVIDUAL',
+        identifier_type: 'CNP',
+        country: 'RO',
+      },
+      {
+        name: company.name,
+        ein: company.cui,
+        role: 'client',
+        kind: 'COMPANY',
+        identifier_type: 'CUI',
+        country: 'RO',
+      },
+    ],
+  },
+  company.cui,
+);
+assert.equal(splitContract.lineItems.length, 2);
+// The car line keeps the AUTO-VIN stock identity; the transport line does not.
+assert.equal(splitContract.lineItems[0].articleCode, 'AUTO-WVWZZZ3CZGE654321');
+assert.equal(splitContract.lineItems[1].accountCode, '624');
+const splitXml = buildFacturiXml(
+  [{ id: 14, type: 'Contract', data: splitContract }],
+  company,
+  [],
+);
+assert.match(splitXml, /<Cont>371<\/Cont>/);
+assert.match(splitXml, /<Cont>624<\/Cont>/);
+assert.doesNotMatch(splitXml, /<TipDeducere>I<\/TipDeducere>/);
 
 assert.equal(
   sagaInvoicesFileName(company.cui, '2026-07-23'),

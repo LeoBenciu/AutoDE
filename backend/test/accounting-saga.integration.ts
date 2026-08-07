@@ -1083,7 +1083,7 @@ async function main() {
       facturiXml,
       /<FacturaNumar>CA-1<\/FacturaNumar>[\s\S]*?<FacturaTip>R<\/FacturaTip>/,
     );
-    assert.match(facturiXml, /<Descriere>Autoturism Volkswagen Golf VIN WVWZZZ1JZXW000001<\/Descriere>/);
+    assert.match(facturiXml, /<Descriere>WVWZZZ1JZXW000001 Golf<\/Descriere>/);
     assert.match(facturiXml, /<TipDeducere><\/TipDeducere>/);
     assert.match(incasariXml, /<Incasari>[\s\S]*<Cont>5311<\/Cont>/);
     assert.match(platiXml, /<Plati>[\s\S]*<ContFurnizor>401\./);

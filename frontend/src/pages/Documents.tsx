@@ -651,7 +651,34 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
     doc.type === 'Other' ||
     effectiveDocumentType !== String(doc.type ?? '') ||
     Number(doc.processedData?.typeConfidence ?? 0) < 0.7;
-  const lineItems = Array.isArray(fields.line_items) ? fields.line_items : [];
+  const persistedLineItems = Array.isArray(fields.line_items)
+    ? fields.line_items
+    : [];
+  // A purchase contract carries no extracted line_items, but posting/SAGA treat
+  // the vehicle as a single 371 line. Seed the editor with that same line so the
+  // user sees—and can split—it; the first edit persists the array.
+  const lineItems =
+    persistedLineItems.length === 0 && isPurchaseContract
+      ? [defaultContractVehicleLine(fields)]
+      : persistedLineItems;
+  const saveLineField = (index: number, key: string, value: unknown) => {
+    // Contract lines may not be persisted yet, so write the whole array to keep
+    // the seeded defaults; invoices/receipts keep their per-field audit trail.
+    if (isPurchaseContract) {
+      return correct({
+        id,
+        field: 'line_items',
+        newValue: lineItems.map((line: any, lineIndex: number) =>
+          lineIndex === index ? { ...line, [key]: value } : line,
+        ),
+      }).unwrap();
+    }
+    return correct({
+      id,
+      field: `line_items[${index}].${key}`,
+      newValue: value,
+    }).unwrap();
+  };
   const hasExtractedVehicleCostCategory = lineItems.some((line: any) =>
     COST_CATEGORY_OPTIONS.some(
       ([category]) => category === line?.vehicle_cost_category,
@@ -1212,7 +1239,8 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
           {visibleEntries.length === 0 && <p className="py-3 text-sm text-muted">Nu s-au extras câmpuri.</p>}
         </div>
 
-        {['Invoice', 'Receipt'].includes(effectiveDocumentType) && (
+        {(['Invoice', 'Receipt'].includes(effectiveDocumentType) ||
+          isPurchaseContract) && (
           <div className="mt-5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-ink">Linii document ({lineItems.length})</h3>
@@ -1246,10 +1274,12 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                 + Adaugă linie
               </button>
             </div>
-            {(fields.vehicle_transaction === 'purchase' || isVehicleCostDocument) && (
+            {(fields.vehicle_transaction === 'purchase' ||
+              isPurchaseContract ||
+              isVehicleCostDocument) && (
               <p className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-                {fields.vehicle_transaction === 'purchase'
-                  ? 'Regulă SAGA: numai mașina se înregistrează pe 371; transportul pe 624; orice serviciu sau taxă asociată pe 628.'
+                {fields.vehicle_transaction === 'purchase' || isPurchaseContract
+                  ? 'Regulă SAGA: numai mașina se înregistrează pe 371; transportul pe 624; orice serviciu sau taxă asociată pe 628. Liniile trebuie să însumeze valoarea contractului.'
                   : 'Regulă SAGA: transportul se înregistrează pe 624; document handling, taxe, înmatriculare, reparații și orice alt cost pe 628. Contul 371 este rezervat mașinii.'}
               </p>
             )}
@@ -1295,41 +1325,41 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                         value={item.name ?? item.description ?? ''}
                         disabled={doc.reviewStatus === 'APPROVED'}
                         className="col-span-2"
-                        onSave={(value) => correct({ id, field: `line_items[${index}].name`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'name', value)}
                       />
                       <LineField
                         label="Cantitate"
                         value={item.quantity ?? ''}
                         type="number"
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].quantity`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'quantity', value)}
                       />
                       <LineField
                         label="Preț unitar"
                         value={item.unit_price ?? ''}
                         type="number"
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].unit_price`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'unit_price', value)}
                       />
                       <LineField
                         label="Valoare netă"
                         value={item.total ?? item.net_amount ?? ''}
                         type="number"
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].total`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'total', value)}
                       />
                       <LineField
                         label="TVA"
                         value={item.vat_amount ?? ''}
                         type="number"
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].vat_amount`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'vat_amount', value)}
                       />
                       <LineField
                         label="Cotă TVA"
                         value={item.vat ?? item.vat_rate ?? ''}
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].vat`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'vat', value)}
                       />
                       <LineField
                         label="Deductibilitate"
@@ -1340,25 +1370,25 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                           ['NONE', 'Nedeductibil'],
                         ]}
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].vat_deductibility`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'vat_deductibility', value)}
                       />
                       <LineField
                         label="UM"
                         value={item.um ?? 'BUCATA'}
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].um`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'um', value)}
                       />
                       <LineField
                         label="Cod articol"
                         value={item.articleCode ?? ''}
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].articleCode`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'articleCode', value)}
                       />
                       <LineField
                         label="Gestiune"
                         value={item.management ?? ''}
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].management`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'management', value)}
                       />
                       <LineField
                         label="Cont"
@@ -1368,7 +1398,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                           `${account.accountCode} · ${account.accountName}`,
                         ])}
                         disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => correct({ id, field: `line_items[${index}].account_code`, newValue: value }).unwrap()}
+                        onSave={(value) => saveLineField(index, 'account_code', value)}
                       />
                       {isVehicleCostDocument && (
                         <LineField
@@ -1658,6 +1688,42 @@ function displayExtractedFieldValue(field: string, value: unknown): string {
   const options = extractedFieldOptions(field, value);
   const draft = extractedFieldDraftValue(field, value);
   return options?.find(([option]) => option === draft)?.[1] ?? String(value);
+}
+
+// Mirrors the single vehicle line the backend synthesizes for a purchase
+// contract (accounting-normalizer.ts): the car on 371 with an AUTO-VIN article.
+function defaultContractVehicleLine(
+  fields: Record<string, any>,
+): Record<string, any> {
+  const total = Number(fields.total_value ?? fields.total_amount ?? 0) || 0;
+  const vin = String(fields.vin ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const identity = [
+    fields.vehicle_make,
+    fields.vehicle_model,
+    fields.vehicle_variant,
+  ]
+    .map((part) => (part == null ? '' : String(part).trim()))
+    .filter(Boolean)
+    .join(' ');
+  const name = ['Autoturism', identity, vin ? `VIN ${vin}` : '']
+    .filter(Boolean)
+    .join(' ');
+  return {
+    name,
+    quantity: 1,
+    unit_price: total,
+    total,
+    vat_amount: 0,
+    vat: 'ZERO',
+    vat_deductibility: 'FULL',
+    um: 'BUCATA',
+    account_code: '371',
+    articleCode: vin ? `AUTO-${vin}` : '',
+    article_type: 'MARFURI',
+  };
 }
 
 function humanField(field: string): string {
