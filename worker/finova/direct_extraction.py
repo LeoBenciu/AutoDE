@@ -1701,10 +1701,10 @@ _VAT_KEY_HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 _VAT_KEY_BEFORE_PRICE_RE = re.compile(
-    r"(?:^|[\s|;])([IM])(?=\s*(?:[|;]\s*)?(?:EUR|€)?\s*[-+]?\d[\d.,]*)",
+    r"(?:^|[\s|;])([IME])(?=\s*(?:[|;]\s*)?(?:EUR|€)?\s*[-+]?\d[\d.,]*)",
     re.IGNORECASE,
 )
-_VAT_KEY_ONLY_RE = re.compile(r"^\s*[|;]?\s*([IM])\s*[|;]?\s*$", re.IGNORECASE)
+_VAT_KEY_ONLY_RE = re.compile(r"^\s*[|;]?\s*([IME])\s*[|;]?\s*$", re.IGNORECASE)
 _VAT_TABLE_END_RE = re.compile(
     r"^\s*(?:total(?:\s+netto)?|summe\s+netto|subtotal|gesamt)",
     re.IGNORECASE,
@@ -1714,11 +1714,11 @@ _VAT_TABLE_END_RE = re.compile(
 def _reverse_charge_from_vat_key(text: Optional[str]) -> Optional[bool]:
     """Map an explicitly printed VAT-key table column to reverse charge.
 
-    AUTO1 invoice tables label the column ``MwSt. Kennz. / VAT Key``. Their key
-    ``I`` means reverse charge while ``M`` means reverse charge is not applied.
-    OCR may preserve a whole table row on one line or emit each cell on its own
-    line, so support both shapes. Return ``None`` when there is no trustworthy
-    VAT-key table signal.
+    AUTO1 invoice tables label the column ``MwSt. Kennz. / VAT Key``. Their keys
+    ``I`` and ``E`` mean reverse charge while ``M`` means reverse charge is not
+    applied. OCR may preserve a whole table row on one line or emit each cell on
+    its own line, so support both shapes. Return ``None`` when there is no
+    trustworthy VAT-key table signal.
     """
     lines = (text or "").splitlines()
     header_index = next(
@@ -1737,7 +1737,7 @@ def _reverse_charge_from_vat_key(text: Optional[str]) -> Optional[bool]:
         if match:
             keys.append(match.group(1).upper())
 
-    if "I" in keys:
+    if "I" in keys or "E" in keys:
         return True
     if "M" in keys:
         return False
