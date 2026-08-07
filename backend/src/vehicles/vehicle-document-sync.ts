@@ -137,6 +137,79 @@ export function applyVehiclePurchaseInvoiceDefaults(
   return changed;
 }
 
+/**
+ * Pre-fills a vehicle purchase contract before review. Contracts carry no
+ * extracted line_items, yet posting/SAGA treat the car as a single 371 line, so
+ * seed that line here—bound to the full-VIN article and the brand gestiune (the
+ * client stores managements named after the make: BMW, Audi, …)—so the review
+ * UI shows the gestiune already selected, exactly like a purchase invoice.
+ */
+export function applyVehiclePurchaseContractDefaults(
+  extractedFields: unknown,
+  managements: Array<{ code: string; name: string }>,
+  tenantCui?: string | null,
+): boolean {
+  const fields = unwrapExtractedFields(extractedFields);
+  const canonical = normalizeAccountingDocument('Contract', fields, tenantCui);
+  if (!isVehiclePurchaseContract(canonical)) return false;
+
+  const managementCode = brandManagementCode(fields, managements);
+  const articleCode = vehicleArticleCode(
+    fields.vin ?? fields.vehicle_vin ?? fields.chassis_number,
+  );
+  const existingLines = Array.isArray(fields.line_items) ? fields.line_items : [];
+
+  if (existingLines.length === 0) {
+    const total = canonical.totalAmount;
+    if (total <= 0) return false;
+    const identity = vehicleModelDescription(fields);
+    const vin = text(fields.vin).toUpperCase();
+    const name = ['Autoturism', identity, vin ? `VIN ${vin}` : '']
+      .filter(Boolean)
+      .join(' ');
+    fields.line_items = [
+      {
+        name,
+        quantity: 1,
+        unit_price: total,
+        total,
+        vat_amount: 0,
+        vat: 'ZERO',
+        um: 'BUCATA',
+        account_code: '371',
+        articleCode: articleCode || '',
+        article_type: 'MARFURI',
+        management: managementCode ?? null,
+        isNew: false,
+        vat_deductibility: 'FULL',
+        vehicle_cost_category: null,
+      },
+    ];
+    return true;
+  }
+
+  // A contract already carrying lines (e.g. re-processed): just make sure the
+  // car's 371 stock line has the brand gestiune and full-VIN article.
+  let changed = false;
+  for (const line of existingLines) {
+    if (!line || typeof line !== 'object') continue;
+    if (!/^371(?:\.|$)/.test(text(line.account_code ?? line.accountCode))) continue;
+    if (managementCode && text(line.management) !== managementCode) {
+      line.management = managementCode;
+      changed = true;
+    }
+    if (
+      articleCode &&
+      text(line.articleCode ?? line.article_code) !== articleCode
+    ) {
+      line.articleCode = articleCode;
+      if ('article_code' in line) line.article_code = articleCode;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function selectVehiclePurchaseLines(lines: any[]): any[] {
   const semanticMatches = lines.filter(
     (line) => !isAncillaryVehicleCostLine(line) && hasVehicleLineDescription(line),
