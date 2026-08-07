@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser, JwtAuthGuard, Roles, RolesGuard } from '../auth/guards';
 import { AuthUser } from '../auth/jwt.strategy';
 import { VehiclesService } from './vehicles.service';
@@ -35,5 +35,11 @@ export class VehiclesController {
   @Roles('ACCOUNTANT')
   addCost(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: AddCostDto) {
     return this.vehicles.addCost(user.tenantId, id, dto);
+  }
+
+  @Delete(':id')
+  @Roles('ACCOUNTANT')
+  remove(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.vehicles.delete(user.tenantId, id);
   }
 }

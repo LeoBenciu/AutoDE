@@ -1,10 +1,13 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import {
   useCreateVehicleMutation,
+  useDeleteVehicleMutation,
   usePartiesQuery,
   useVehiclesQuery,
 } from '../store/api';
+import type { RootState } from '../store/store';
 import { StatusChip } from '../components/StatusChip';
 import { VehicleBrandLogo } from '../components/VehicleBrandLogo';
 import {
@@ -20,6 +23,12 @@ const PlusIcon = () => (
   </svg>
 );
 
+const TrashIcon = ({ size = 15 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6" />
+  </svg>
+);
+
 const CarIcon = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     <path d="M5 17h14M5 17a2 2 0 104 0M15 17a2 2 0 104 0M3 17V11l2-5h10l4 5v6" />
@@ -30,9 +39,34 @@ export default function Vehicles() {
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [error, setError] = useState('');
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const { data: vehicles = [], isLoading } = useVehiclesQuery({ status: status || undefined, search: search || undefined });
+  const [deleteVehicle] = useDeleteVehicleMutation();
+  const role = useSelector((state: RootState) => state.auth.user?.role);
+  const canDelete = role === 'ACCOUNTANT';
 
   const filtered = Boolean(status || search);
+
+  const handleDelete = async (event: ReactMouseEvent, vehicle: any) => {
+    // The card is a link, so keep the click from navigating to the detail page.
+    event.preventDefault();
+    event.stopPropagation();
+    const confirmed = window.confirm(
+      `Ștergi definitiv vehiculul ${vehicle.make} ${vehicle.model} (VIN ${vehicle.vin})?\n\n` +
+        'Documentele, contractele și declarațiile e-Transport rămân salvate, dar nu vor mai fi legate de acest vehicul.',
+    );
+    if (!confirmed) return;
+    setError('');
+    setDeletingId(vehicle.id);
+    try {
+      await deleteVehicle(vehicle.id).unwrap();
+    } catch (err: any) {
+      setError(err?.data?.message ?? 'Ștergerea vehiculului a eșuat');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div>
@@ -54,6 +88,10 @@ export default function Vehicles() {
           </button>
         </div>
       </div>
+
+      {error && (
+        <p className="mt-4 rounded-control bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p>
+      )}
 
       <div className="mt-5 flex flex-col gap-2.5 sm:flex-row">
         <div className="relative flex-1 sm:max-w-xs">
@@ -106,7 +144,21 @@ export default function Vehicles() {
                   {v.make} {v.model}
                 </p>
               </div>
-              <StatusChip status={v.status} />
+              <div className="flex shrink-0 items-center gap-1.5">
+                <StatusChip status={v.status} />
+                {canDelete && (
+                  <button
+                    type="button"
+                    onClick={(event) => handleDelete(event, v)}
+                    disabled={deletingId === v.id}
+                    title="Șterge vehiculul"
+                    aria-label={`Șterge ${v.make} ${v.model}`}
+                    className="rounded-md p-1 text-muted-2 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                  >
+                    <TrashIcon />
+                  </button>
+                )}
+              </div>
             </div>
             <p className="mt-3 text-[12.5px] text-muted">
               {v.year} · {v.mileageKm ? `${Number(v.mileageKm).toLocaleString('ro-RO')} km` : 'km n/a'} · {v.originCountry}

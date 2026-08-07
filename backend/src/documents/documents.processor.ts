@@ -14,6 +14,7 @@ import {
 } from '../extraction/extraction.service';
 import {
   applyVehicleCostAccountDefaults,
+  applyVehiclePurchaseContractDefaults,
   applyVehiclePurchaseInvoiceDefaults,
 } from '../vehicles/vehicle-document-sync';
 
@@ -200,14 +201,24 @@ export class DocumentsProcessor {
       if (phase1Saved.count === 0) return;
 
       const fields = result.fields ?? {};
-      if (result.document_type === 'Invoice') {
+      if (result.document_type === 'Invoice' || result.document_type === 'Contract') {
         const managements = await this.prisma.management.findMany({
           where: { tenantId: row.tenantId },
           select: { code: true, name: true },
         });
-        if (
-          applyVehiclePurchaseInvoiceDefaults(fields, managements, context.tenantCui)
-        ) {
+        const prefilled =
+          result.document_type === 'Contract'
+            ? applyVehiclePurchaseContractDefaults(
+                fields,
+                managements,
+                context.tenantCui,
+              )
+            : applyVehiclePurchaseInvoiceDefaults(
+                fields,
+                managements,
+                context.tenantCui,
+              );
+        if (prefilled) {
           this.logger.log(
             `upload ${row.id}: pre-filled vehicle purchase line article/description/management`,
           );

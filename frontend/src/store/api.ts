@@ -124,6 +124,10 @@ export const api = createApi({
       query: ({ id, body }) => ({ url: `/vehicles/${id}/costs`, method: 'POST', body }),
       invalidatesTags: (_r, _e, { id }) => [{ type: 'Vehicle', id }],
     }),
+    deleteVehicle: build.mutation<any, number>({
+      query: (id) => ({ url: `/vehicles/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['Vehicle', 'Document', 'Contract', 'ETransport'],
+    }),
 
     parties: build.query<any[], string | void>({
       query: (search) => ({ url: '/parties', params: search ? { search } : undefined }),
@@ -428,6 +432,7 @@ export const {
   useCreateVehicleMutation,
   useUpdateVehicleMutation,
   useAddCostMutation,
+  useDeleteVehicleMutation,
   usePartiesQuery,
   useCreatePartyMutation,
   useUpdatePartyMutation,

@@ -1,0 +1,5 @@
+# Single-page-app fallback: serve index.html for any deep link so refreshing on
+# a client route (e.g. /setari, /vehicule) doesn't 404. React Router then
+# resolves the path in the browser. Honored by Render Static Sites and Netlify;
+# the Docker/nginx deploy handles the same via `try_files` in deploy/nginx.conf.
+/*    /index.html   200

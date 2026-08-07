@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { normalizeAccountingDocument } from '../src/accounting/accounting-normalizer';
 import {
   applyVehicleCostAccountDefaults,
+  applyVehiclePurchaseContractDefaults,
   applyVehiclePurchaseInvoiceDefaults,
   defaultVehicleCostCategoryForAccount,
   isVehicleCostDocument,
@@ -315,6 +316,67 @@ function purchaseInvoiceFields() {
   assert.equal(fields.line_items[0].account_code, '6022');
 
   assert.equal(isVehicleCostDocument(canonical, 1), true);
+}
+
+// 12. A vehicle purchase contract carries no extracted line_items; processing
+//     seeds the single 371 vehicle line and selects the brand-named gestiune.
+{
+  const managements = [
+    { code: 'G-BMW', name: 'BMW' },
+    { code: 'G-AUDI', name: 'Audi' },
+  ];
+  const fields = {
+    document_type: 'Contract',
+    direction: 'incoming',
+    contract_type: 'vanzare-cumparare autoturism',
+    vehicle_transaction: 'purchase',
+    total_value: 50000,
+    vin: VIN,
+    vehicle_make: 'BMW',
+    vehicle_model: 'Seria 3',
+  } as Record<string, any>;
+
+  assert.equal(applyVehiclePurchaseContractDefaults(fields, managements), true);
+  assert.equal(fields.line_items.length, 1);
+  assert.equal(fields.line_items[0].account_code, '371');
+  assert.equal(fields.line_items[0].management, 'G-BMW');
+  assert.equal(fields.line_items[0].articleCode, `AUTO-${VIN}`);
+  assert.equal(fields.line_items[0].total, 50000);
+
+  // Idempotent: re-running keeps the seeded line and the gestiune unchanged.
+  assert.equal(applyVehiclePurchaseContractDefaults(fields, managements), false);
+  assert.equal(fields.line_items.length, 1);
+  assert.equal(fields.line_items[0].management, 'G-BMW');
+
+  // No brand-matched gestiune: the line is still seeded, management left null.
+  const noMatch = {
+    document_type: 'Contract',
+    direction: 'incoming',
+    contract_type: 'vanzare-cumparare autoturism',
+    vehicle_transaction: 'purchase',
+    total_value: 30000,
+    vin: 'WVWZZZ1JZXW000009',
+    vehicle_make: 'Renault',
+    vehicle_model: 'Clio',
+  } as Record<string, any>;
+  assert.equal(
+    applyVehiclePurchaseContractDefaults(noMatch, [{ code: 'G-BMW', name: 'BMW' }]),
+    true,
+  );
+  assert.equal(noMatch.line_items[0].management, null);
+
+  // A non-purchase contract is left untouched.
+  const nonPurchase = {
+    document_type: 'Contract',
+    direction: 'incoming',
+    contract_type: 'prestari servicii',
+    total_value: 1000,
+  } as Record<string, any>;
+  assert.equal(
+    applyVehiclePurchaseContractDefaults(nonPurchase, managements),
+    false,
+  );
+  assert.equal(nonPurchase.line_items, undefined);
 }
 
 console.log('vehicle-purchase-line.spec.ts passed');
