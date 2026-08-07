@@ -1,6 +1,10 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useSearchParams } from 'react-router-dom';
 import {
+  useAnafStatusQuery,
+  useLazyAnafAuthorizeUrlQuery,
+  useAnafDisconnectMutation,
   useArticlesQuery,
   useCompanyQuery,
   useContractTemplatesQuery,
@@ -41,6 +45,119 @@ const VAT_RATE_LABELS: Record<string, string> = {
   NINETEEN: '19%',
   TWENTYONE: '21%',
 };
+
+function AnafConnectionSection() {
+  const { data: status, refetch, isLoading } = useAnafStatusQuery();
+  const [getAuthorizeUrl, { isFetching: connecting }] = useLazyAnafAuthorizeUrlQuery();
+  const [disconnect, { isLoading: disconnecting }] = useAnafDisconnectMutation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [error, setError] = useState('');
+  const anafResult = searchParams.get('anaf');
+  const anafReason = searchParams.get('reason');
+
+  // The OAuth callback redirects back here with ?anaf=connected|error. Refresh
+  // the status and strip the params so the banner doesn't stick on reload.
+  useEffect(() => {
+    if (!anafResult) return;
+    refetch();
+    const next = new URLSearchParams(searchParams);
+    next.delete('anaf');
+    next.delete('reason');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anafResult]);
+
+  const connect = async () => {
+    setError('');
+    try {
+      const { url } = await getAuthorizeUrl().unwrap();
+      window.location.assign(url);
+    } catch (e: any) {
+      setError(apiError(e));
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setError('');
+    try {
+      await disconnect().unwrap();
+      refetch();
+    } catch (e: any) {
+      setError(apiError(e));
+    }
+  };
+
+  return (
+    <section className="mt-8">
+      <div>
+        <h2 className="text-lg font-bold text-ink">Conectare ANAF (e-Transport)</h2>
+        <p className="mt-1 text-sm text-muted">
+          Autorizează aplicația în SPV prin OAuth2 cu certificatul calificat, ca să poți trimite
+          declarații e-Transport și obține coduri UIT.
+        </p>
+      </div>
+
+      {anafResult === 'connected' && (
+        <p className="mt-3 rounded-control bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
+          Contul ANAF a fost conectat.
+        </p>
+      )}
+      {anafResult === 'error' && (
+        <p className="mt-3 rounded-control bg-red-50 px-4 py-2 text-sm text-red-700">
+          Conectarea ANAF a eșuat{anafReason ? `: ${anafReason}` : ''}.
+        </p>
+      )}
+      {error && (
+        <p className="mt-3 rounded-control bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-card border border-line bg-white p-4">
+        <div className="min-w-0">
+          {isLoading ? (
+            <p className="text-sm text-muted">Se verifică statusul…</p>
+          ) : !status?.configured ? (
+            <p className="text-sm text-amber-700">
+              Integrarea ANAF nu este configurată pe server (ANAF_CLIENT_ID/SECRET, ANAF_REDIRECT_URI).
+            </p>
+          ) : status?.connected ? (
+            <p className="text-sm font-semibold text-emerald-700">
+              Conectat
+              {status.expiresAt && (
+                <span className="font-normal text-muted">
+                  {' '}
+                  · token valabil până la {new Date(status.expiresAt).toLocaleString('ro-RO')}
+                </span>
+              )}
+            </p>
+          ) : (
+            <p className="text-sm text-ink-soft">
+              Neconectat — apasă „Conectează ANAF" și autentifică-te cu certificatul calificat.
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {status?.connected ? (
+            <button
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              className="rounded-control border border-line-strong px-3.5 py-2 text-sm font-semibold text-ink-soft disabled:opacity-50"
+            >
+              {disconnecting ? 'Se deconectează…' : 'Deconectează'}
+            </button>
+          ) : (
+            <button
+              onClick={connect}
+              disabled={connecting || !status?.configured}
+              className="rounded-control bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-50"
+            >
+              {connecting ? 'Se deschide ANAF…' : 'Conectează ANAF'}
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export default function Settings() {
   const me = useSelector((state: RootState) => state.auth.user);
@@ -85,6 +202,8 @@ export default function Settings() {
         onMessage={setMessage}
         canEditTemplates={canManageUsers}
       />
+
+      {canManageUsers && <AnafConnectionSection />}
 
       {canManageUsers && (
         <section className="mt-8">

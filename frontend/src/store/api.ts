@@ -84,6 +84,7 @@ export const api = createApi({
     'Party',
     'Document',
     'ETransport',
+    'AnafStatus',
     'Contract',
     'User',
     'Accounting',
@@ -311,6 +312,20 @@ export const api = createApi({
         headers: { 'x-request-id': requestId },
       }),
     }),
+    anafStatus: build.query<
+      { configured: boolean; connected: boolean; expiresAt: string | null },
+      void
+    >({
+      query: () => '/etransport/anaf/status',
+      providesTags: ['AnafStatus'],
+    }),
+    anafAuthorizeUrl: build.query<{ url: string }, void>({
+      query: () => '/etransport/anaf/authorize-url',
+    }),
+    anafDisconnect: build.mutation<{ connected: boolean }, void>({
+      query: () => ({ url: '/etransport/anaf/disconnect', method: 'POST' }),
+      invalidatesTags: ['AnafStatus'],
+    }),
     updateCompany: build.mutation<any, any>({
       query: (body) => ({ url: '/accounting/company', method: 'PATCH', body }),
       invalidatesTags: ['Accounting', 'Saga'],
@@ -427,6 +442,9 @@ export const {
   useCreateEtransportMutation,
   useUpdateEtransportMutation,
   useSubmitEtransportMutation,
+  useAnafStatusQuery,
+  useLazyAnafAuthorizeUrlQuery,
+  useAnafDisconnectMutation,
   useContractsQuery,
   useGenerateContractMutation,
   useRegenerateContractMutation,
