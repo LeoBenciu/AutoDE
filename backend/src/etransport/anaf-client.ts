@@ -29,6 +29,111 @@ export class AnafClient {
     return this.config.get('ANAF_ETRANSPORT_BASE_URL', 'https://api.anaf.ro/test/ETRANSPORT/ws/v1');
   }
 
+  private get redirectUri(): string {
+    return (this.config.get<string>('ANAF_REDIRECT_URI') ?? '').trim();
+  }
+
+  /**
+   * Build the logincert.anaf.ro authorize URL the browser must open. The
+   * qualified certificate is presented there (in the browser), so this only
+   * returns the URL — the frontend performs the top-level redirect.
+   */
+  buildAuthorizeUrl(state: string): string {
+    if (!this.configured) {
+      throw new BadRequestException(
+        'Integrarea ANAF nu este configurată. Setează ANAF_CLIENT_ID/ANAF_CLIENT_SECRET.',
+      );
+    }
+    if (!this.redirectUri) {
+      throw new BadRequestException(
+        'ANAF_REDIRECT_URI nu este setat. Trebuie să fie identic cu URI-ul înregistrat în portalul ANAF.',
+      );
+    }
+    const authorizeUrl = this.config.get(
+      'ANAF_AUTHORIZE_URL',
+      'https://logincert.anaf.ro/anaf-oauth2/v1/authorize',
+    );
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: this.config.get('ANAF_CLIENT_ID', ''),
+      redirect_uri: this.redirectUri,
+      token_content_type: 'jwt',
+      state,
+    });
+    return `${authorizeUrl}?${params.toString()}`;
+  }
+
+  /** Exchange the authorization code for tokens and store them for the tenant. */
+  async connectWithCode(tenantId: number, code: string): Promise<void> {
+    if (!this.configured) {
+      throw new BadRequestException('Integrarea ANAF nu este configurată.');
+    }
+    if (!this.redirectUri) {
+      throw new BadRequestException('ANAF_REDIRECT_URI nu este setat.');
+    }
+    const tokenUrl = this.config.get('ANAF_TOKEN_URL', 'https://logincert.anaf.ro/anaf-oauth2/v1/token');
+    // ANAF documents "Client Authentication: Send as Basic Auth header".
+    const basicAuth = Buffer.from(
+      `${this.config.get('ANAF_CLIENT_ID', '')}:${this.config.get('ANAF_CLIENT_SECRET', '')}`,
+    ).toString('base64');
+    const res = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${basicAuth}`,
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: this.redirectUri,
+        token_content_type: 'jwt',
+      }),
+    });
+    if (!res.ok) {
+      throw new BadRequestException(
+        `Schimbul codului ANAF a eșuat (${res.status}): ${(await res.text()).slice(0, 300)}`,
+      );
+    }
+    const data = (await res.json()) as {
+      access_token: string;
+      refresh_token?: string;
+      expires_in: number;
+    };
+    const expiresAt = new Date(Date.now() + (data.expires_in ?? 0) * 1000);
+    await this.prisma.anafToken.upsert({
+      where: { tenantId },
+      create: {
+        tenantId,
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token ?? '',
+        expiresAt,
+      },
+      update: {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token ?? '',
+        expiresAt,
+      },
+    });
+  }
+
+  /** Connection status for the Settings UI. */
+  async getConnectionStatus(
+    tenantId: number,
+  ): Promise<{ configured: boolean; connected: boolean; expiresAt: string | null }> {
+    const row = this.configured
+      ? await this.prisma.anafToken.findUnique({ where: { tenantId } })
+      : null;
+    return {
+      configured: this.configured,
+      connected: Boolean(row),
+      expiresAt: row?.expiresAt.toISOString() ?? null,
+    };
+  }
+
+  async disconnect(tenantId: number): Promise<void> {
+    await this.prisma.anafToken.deleteMany({ where: { tenantId } });
+  }
+
   async getAccessToken(tenantId: number): Promise<string> {
     if (!this.configured) {
       throw new BadRequestException(

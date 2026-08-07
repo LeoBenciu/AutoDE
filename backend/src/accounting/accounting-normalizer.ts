@@ -192,7 +192,10 @@ export function normalizeAccountingDocument(
             account_code: '371',
             articleCode: vehicleArticleCode(raw.vin),
             article_type: 'MARFURI',
-            vat_deductibility: 'NONE',
+            // Purchase from a private seller carries no VAT, so there is nothing
+            // to mark non-deductible. NONE would export TipDeducere=I in SAGA;
+            // FULL leaves it blank, which is what a no-VAT line should show.
+            vat_deductibility: 'FULL',
           },
         ];
   const hasStructuredReferences = Array.isArray(raw.referenced_invoices);

@@ -545,6 +545,20 @@ export class PostingService {
           `Completează datele vehiculului din contract: ${missingVehicleFields.join(', ')}`,
         );
       }
+      const contractLineTotal = round2(
+        canonical.lineItems.reduce(
+          (sum, line) => sum + line.netAmount + line.vatAmount,
+          0,
+        ),
+      );
+      if (
+        canonical.lineItems.length > 0 &&
+        Math.abs(contractLineTotal - canonical.totalAmount) > 0.05
+      ) {
+        errors.push(
+          `Liniile însumează ${contractLineTotal.toFixed(2)}, dar valoarea contractului este ${canonical.totalAmount.toFixed(2)}`,
+        );
+      }
     }
     errors.push(...vehicleAccountingReviewErrors(canonical, vehicleId));
     if (
@@ -677,25 +691,44 @@ export class PostingService {
       );
     }
     if (isVehiclePurchaseContract(canonical)) {
-      const amount = money(canonical.totalAmount, exchangeRate);
+      // A purchase from a private seller carries no VAT, so each line debits its
+      // own asset/cost account (the car on 371, any split cost on 624/628) and
+      // the whole contract value is owed to the seller on 462. A single-line
+      // contract yields exactly the historic 371/462 note.
+      const lines =
+        canonical.lineItems.length > 0
+          ? canonical.lineItems
+          : [
+              {
+                name: `Autoturism achiziționat de la ${canonical.vendor}`,
+                netAmount: canonical.totalAmount,
+                vatAmount: 0,
+                accountCode: '371',
+                vatDeductibility: 'FULL',
+              } as CanonicalLineItem,
+            ];
+      const entries: JournalDraftLine[] = lines.map((line) => {
+        const original = round2(line.netAmount + line.vatAmount);
+        return draft(
+          line.accountCode || '371',
+          money(original, exchangeRate),
+          0,
+          line.name || `Autoturism achiziționat de la ${canonical.vendor}`,
+          original,
+        );
+      });
+      entries.push(
+        draft(
+          '462',
+          0,
+          money(canonical.totalAmount, exchangeRate),
+          `Datorie către vânzătorul persoană fizică ${canonical.vendor}`,
+          canonical.totalAmount,
+        ),
+      );
       return {
         sourceType: 'CONTRACT_PURCHASE',
-        entries: balanceConvertedEntries([
-          draft(
-            '371',
-            amount,
-            0,
-            `Autoturism achiziționat de la ${canonical.vendor}`,
-            canonical.totalAmount,
-          ),
-          draft(
-            '462',
-            0,
-            amount,
-            `Datorie către vânzătorul persoană fizică ${canonical.vendor}`,
-            canonical.totalAmount,
-          ),
-        ]),
+        entries: balanceConvertedEntries(entries),
       };
     }
     if (canonical.documentType === 'Receipt') {
