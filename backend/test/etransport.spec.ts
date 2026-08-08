@@ -20,7 +20,7 @@ const base: DeclarationData = {
   transporter: { name: 'Transportator verificat', taxId: 'DE123', country: 'DE' },
   vehiclePlate: 'B123UIT',
   loadingPlace: { country: 'DE', city: 'Berlin' },
-  unloadingPlace: { country: 'RO', county: 'B', city: 'București' },
+  unloadingPlace: { country: 'RO', county: 'B', city: 'București', address: 'Str. Exemplu 1' },
   transportDate: '2026-07-28',
   goods: [
     {
@@ -47,6 +47,10 @@ assert.doesNotMatch(xml, /codPtf=/);
 // Unloading place is a Romanian locatie whose county is emitted as the numeric
 // ANAF codJudet (București "B" → 40), never the 2-letter plate code.
 assert.match(xml, /<locFinalTraseuRutier>\s*<locatie codJudet="40"/);
+// codJudet, denumireLocalitate and denumireStrada are all mandatory (minLength 1);
+// they must be emitted non-empty for a Romanian locatie.
+assert.match(xml, /denumireLocalitate="București"/);
+assert.match(xml, /denumireStrada="Str\. Exemplu 1"/);
 
 // A county given as its plate code becomes the numeric codJudet the XSD needs
 // (this is what the 'AG' is not a valid value for 'integer' rejection was about).
