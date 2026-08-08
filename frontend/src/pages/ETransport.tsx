@@ -206,6 +206,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
           loadingCountry: declaration.loadingPlace?.country ?? 'DE',
           unloadingCity: declaration.unloadingPlace?.city ?? '',
           unloadingCounty: declaration.unloadingPlace?.county ?? '',
+          unloadingAddress: declaration.unloadingPlace?.address ?? '',
           goodsDescription: declaration.goods?.[0]?.description ?? '',
           tariffCode: declaration.goods?.[0]?.tariffCode || DEFAULT_TARIFF_CODE,
           weightKg: declaration.goods?.[0]?.weightKg != null ? String(declaration.goods[0].weightKg) : '',
@@ -234,6 +235,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
           loadingCountry: 'DE',
           unloadingCity: '',
           unloadingCounty: '',
+          unloadingAddress: '',
           goodsDescription: '',
           tariffCode: DEFAULT_TARIFF_CODE,
           weightKg: '',
@@ -278,6 +280,8 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
         loadingCity: p.loadingPlace?.city ?? f.loadingCity,
         loadingCountry: p.loadingPlace?.country ?? f.loadingCountry,
         unloadingCity: p.unloadingPlace?.city ?? f.unloadingCity,
+        unloadingCounty: p.unloadingPlace?.county || f.unloadingCounty,
+        unloadingAddress: p.unloadingPlace?.address || f.unloadingAddress,
         goodsDescription: p.goods?.[0]?.description ?? f.goodsDescription,
         tariffCode: p.goods?.[0]?.tariffCode || DEFAULT_TARIFF_CODE,
         weightKg: p.goods?.[0]?.weightKg != null ? String(p.goods[0].weightKg) : '',
@@ -422,7 +426,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
       vehiclePlate: form.vehiclePlate,
       trailerPlate: form.trailerPlate || undefined,
       loadingPlace: { country: form.loadingCountry, city: form.loadingCity },
-      unloadingPlace: { country: 'RO', county: form.unloadingCounty, city: form.unloadingCity },
+      unloadingPlace: { country: 'RO', county: form.unloadingCounty, city: form.unloadingCity, address: form.unloadingAddress },
       goods: [
         {
           description: form.goodsDescription,
@@ -578,6 +582,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
             <input className={field} placeholder="Loc descărcare (oraș, RO)" value={form.unloadingCity} onChange={set('unloadingCity')} />
             <input className={field} placeholder="Județ descărcare" value={form.unloadingCounty} onChange={set('unloadingCounty')} />
           </div>
+          <input className={field} placeholder="Stradă descărcare (RO)" value={form.unloadingAddress} onChange={set('unloadingAddress')} />
           <input className={field} placeholder="Descriere marfă" value={form.goodsDescription} onChange={set('goodsDescription')} required />
           <div className="grid grid-cols-2 gap-2.5">
             <input
