@@ -1231,11 +1231,15 @@ export class PostingService {
     for (const line of canonical.lineItems) {
       await this.upsertArticle(tx, tenantId, line);
       if (line.management) {
+        // line.management is the gestiune CODE. Only ensure the catalogue has an
+        // entry for it; never touch an existing gestiune's name (it was imported
+        // from SAGA with a real name like "Alfa Romeo" — overwriting it with the
+        // code turned "Alfa Romeo" into "0001").
         await tx.management.upsert({
           where: {
             tenantId_code: { tenantId, code: line.management },
           },
-          update: { name: line.management },
+          update: {},
           create: {
             tenantId,
             code: line.management,

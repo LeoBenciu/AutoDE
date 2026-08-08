@@ -1098,6 +1098,86 @@ async function main() {
     assert.match(clientsXml, /<Adresa>Str\. Integrării 1<\/Adresa>/);
     assert.match(articlesXml, /<Articole>[\s\S]*<UM>/);
 
+    // Archiving a document ("Arhivează") drops it from the export: the approved
+    // contract disappears from the facturi and the count falls by one, even
+    // though it stays in the database (archive is reversible, unlike delete).
+    await prisma.document.update({
+      where: { id: purchaseContract.id },
+      data: { archivedAt: new Date() },
+    });
+    const archivedPreview = await saga.preview(tenant.id, {
+      from: today,
+      to: today,
+      types: ['facturi', 'incasari', 'plati', 'furnizori', 'clienti', 'articole'],
+    });
+    assert.equal(
+      archivedPreview.counts.facturi,
+      sagaPreview.counts.facturi - 1,
+      'archived contract must not be counted in the export',
+    );
+    const archivedZip = await JSZip.loadAsync(
+      (await saga.exportZip(tenant.id, user.id, { from: today, to: today })).content,
+    );
+    const archivedFacturiName = Object.keys(archivedZip.files).find((name) =>
+      name.startsWith('F_'),
+    )!;
+    const archivedFacturiXml = await archivedZip
+      .file(archivedFacturiName)!
+      .async('string');
+    assert.doesNotMatch(archivedFacturiXml, /<FacturaNumar>CA-1<\/FacturaNumar>/);
+    assert.doesNotMatch(archivedFacturiXml, /WVWZZZ1JZXW000001 Golf/);
+    // Restoring it brings the document back into the export.
+    await prisma.document.update({
+      where: { id: purchaseContract.id },
+      data: { archivedAt: null },
+    });
+    const restoredPreview = await saga.preview(tenant.id, {
+      from: today,
+      to: today,
+      types: ['facturi'],
+    });
+    assert.equal(restoredPreview.counts.facturi, sagaPreview.counts.facturi);
+
+    // Approving a document that references a gestiune by CODE must keep the
+    // gestiune's real name (imported from SAGA) — not overwrite it with the code.
+    await prisma.management.create({
+      data: { tenantId: tenant.id, code: '0001', name: 'Alfa Romeo' },
+    });
+    const gestiuneDoc = await createDocument('Invoice', 'GST-1', {
+      direction: 'incoming',
+      vendor: 'Furnizor Gestiune SRL',
+      vendor_ein: 'RO888777',
+      buyer: marker,
+      buyer_ein: 'RO50675950',
+      total_amount: 119,
+      net_amount: 100,
+      vat_amount: 19,
+      line_items: [
+        {
+          name: 'Marfă',
+          quantity: 1,
+          unit_price: 100,
+          total: 100,
+          vat_amount: 19,
+          vat: 'NINETEEN',
+          account_code: '628',
+          articleCode: 'MARFA-GST',
+          management: '0001',
+          um: 'BUCATA',
+          vat_deductibility: 'FULL',
+        },
+      ],
+    });
+    await posting.approve(tenant.id, user.id, gestiuneDoc.id);
+    const preservedGestiune = await prisma.management.findFirst({
+      where: { tenantId: tenant.id, code: '0001' },
+    });
+    assert.equal(
+      preservedGestiune?.name,
+      'Alfa Romeo',
+      'approving a document must not overwrite an existing gestiune name with its code',
+    );
+
     await posting.reopen(tenant.id, user.id, incoming.id);
     assert.equal(
       await prisma.generalLedgerEntry.count({ where: { documentId: incoming.id } }),

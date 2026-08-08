@@ -213,6 +213,10 @@ export const api = createApi({
       query: ({ id, archived }) => ({ url: `/documents/${id}/${archived ? 'archive' : 'unarchive'}`, method: 'POST' }),
       invalidatesTags: ['Document'],
     }),
+    deleteDocument: build.mutation<any, number>({
+      query: (id) => ({ url: `/documents/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['Document', 'Accounting', 'Vehicle', 'Saga'],
+    }),
     retryPendingUpload: build.mutation<any, number>({
       query: (id) => ({ url: `/documents/pending/${id}/retry`, method: 'POST' }),
       invalidatesTags: ['Document'],
@@ -447,6 +451,7 @@ export const {
   useReopenDocumentMutation,
   useAssignDocumentMutation,
   useArchiveDocumentMutation,
+  useDeleteDocumentMutation,
   useRetryPendingUploadMutation,
   useCancelPendingUploadMutation,
   useLazyDownloadUrlQuery,

@@ -491,18 +491,11 @@ function normalizePartyKind(value: unknown): 'INDIVIDUAL' | 'COMPANY' {
 }
 
 function vehicleDescription(raw: Record<string, any>): string {
-  const identity = [
-    raw.vehicle_make ?? raw.make,
-    raw.vehicle_model ?? raw.model,
-    raw.vehicle_variant ?? raw.variant,
-  ]
-    .map(stringValue)
-    .filter(Boolean)
-    .join(' ');
-  const vin = stringValue(raw.vin).toUpperCase();
-  return ['Autoturism', identity, vin ? `VIN ${vin}` : '']
-    .filter(Boolean)
-    .join(' ');
+  // Vehicle line name is "<VIN> <MODEL>" (e.g. "WDC2923241A044449 GLE"), matching
+  // the SAGA export and the AUTO-<VIN> article so the car is identified by chassis.
+  const vin = stringValue(raw.vin ?? raw.vehicle_vin ?? raw.chassis_number).toUpperCase();
+  const model = stringValue(raw.vehicle_model ?? raw.model);
+  return [vin, model].filter(Boolean).join(' ');
 }
 
 function normalizeDirection(value: unknown): AccountingDirection | undefined {

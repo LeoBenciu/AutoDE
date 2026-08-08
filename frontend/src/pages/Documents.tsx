@@ -3,6 +3,7 @@ import { useSelector } from 'react-redux';
 import {
   useApproveDocumentMutation,
   useArchiveDocumentMutation,
+  useDeleteDocumentMutation,
   useAssignDocumentMutation,
   useCancelPendingUploadMutation,
   useChartOfAccountsQuery,
@@ -504,6 +505,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   const [reopen, { isLoading: reopening }] = useReopenDocumentMutation();
   const [assign] = useAssignDocumentMutation();
   const [archive] = useArchiveDocumentMutation();
+  const [deleteDocument, { isLoading: deleting }] = useDeleteDocumentMutation();
   const [getUrl] = useLazyDownloadUrlQuery();
   const [editing, setEditing] = useState<{ field: string; value: string } | null>(null);
   const [actionMessage, setActionMessage] = useState('');
@@ -717,6 +719,25 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
     }
   };
 
+  const runDelete = async () => {
+    if (
+      !window.confirm(
+        'Ștergi definitiv acest document? Nu va mai apărea în listă sau în exporturile SAGA.',
+      )
+    ) {
+      return;
+    }
+    setActionMessage('');
+    try {
+      await deleteDocument(id).unwrap();
+      onClose();
+    } catch (error: any) {
+      setActionMessage(
+        error?.data?.message ?? error?.message ?? 'Documentul nu a putut fi șters',
+      );
+    }
+  };
+
   const runReprocess = async (documentType: string) => {
     setActionMessage('');
     try {
@@ -827,14 +848,23 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                     : '✓ Aprobă documentul'}
               </button>
             )}
+          {doc.archivedAt && (
+            <button
+              onClick={async () => {
+                await archive({ id, archived: false });
+                onClose();
+              }}
+              className="hidden rounded-control border border-line-strong px-3 py-2 text-xs text-ink-soft hover:bg-surface sm:block"
+            >
+              Restaurează
+            </button>
+          )}
           <button
-            onClick={async () => {
-              await archive({ id, archived: !doc.archivedAt });
-              onClose();
-            }}
-            className="hidden rounded-control border border-line-strong px-3 py-2 text-xs text-ink-soft hover:bg-surface sm:block"
+            onClick={runDelete}
+            disabled={deleting}
+            className="hidden rounded-control border border-red-300 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 sm:block"
           >
-            {doc.archivedAt ? 'Restaurează' : 'Arhivează'}
+            {deleting ? 'Se șterge…' : 'Șterge'}
           </button>
           <button onClick={onClose} aria-label="Închide" className="flex h-9 w-9 items-center justify-center rounded-control text-xl leading-none text-muted-2 hover:bg-surface hover:text-ink">
             ×
@@ -1706,17 +1736,10 @@ function defaultContractVehicleLine(
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '');
-  const identity = [
-    fields.vehicle_make,
-    fields.vehicle_model,
-    fields.vehicle_variant,
-  ]
-    .map((part) => (part == null ? '' : String(part).trim()))
-    .filter(Boolean)
-    .join(' ');
-  const name = ['Autoturism', identity, vin ? `VIN ${vin}` : '']
-    .filter(Boolean)
-    .join(' ');
+  // Vehicle line name is "<VIN> <MODEL>" (e.g. "WDC2923241A044449 GLE"), matching
+  // the SAGA export and the AUTO-<VIN> article.
+  const model = String(fields.vehicle_model ?? fields.model ?? '').trim();
+  const name = [vin, model].filter(Boolean).join(' ');
   return {
     name,
     quantity: 1,

@@ -12,6 +12,7 @@ import {
   validityDaysForOperation,
 } from '../src/etransport/etransport.service';
 import { buildETransportXml, DeclarationData } from '../src/etransport/xml-builder';
+import { eTransportCodJudet } from '../src/etransport/judet-codes';
 
 const base: DeclarationData = {
   tenantCui: '12345678',
@@ -43,8 +44,28 @@ assert.match(xml, /<partenerComercial codTara="DE"/);
 assert.match(xml, /<dateTransport nrVehicul="B123UIT"/);
 // The border crossing point is not declared unless explicitly provided.
 assert.doesNotMatch(xml, /codPtf=/);
-// Unloading place is a Romanian locatie with its county.
-assert.match(xml, /<locFinalTraseuRutier>\s*<locatie codJudet="B"/);
+// Unloading place is a Romanian locatie whose county is emitted as the numeric
+// ANAF codJudet (București "B" → 40), never the 2-letter plate code.
+assert.match(xml, /<locFinalTraseuRutier>\s*<locatie codJudet="40"/);
+
+// A county given as its plate code becomes the numeric codJudet the XSD needs
+// (this is what the 'AG' is not a valid value for 'integer' rejection was about).
+const argesXml = buildETransportXml({
+  ...base,
+  unloadingPlace: { country: 'RO', county: 'AG', city: 'Pitești' },
+});
+assert.match(argesXml, /<locatie codJudet="3"/);
+// Full county names resolve too, diacritics or "Județul" prefix notwithstanding.
+assert.equal(eTransportCodJudet('Argeș'), '3');
+assert.equal(eTransportCodJudet('Județul Cluj'), '12');
+assert.equal(eTransportCodJudet('bucuresti'), '40');
+// The non-alphabetical tail must not be guessed as 41/42.
+assert.equal(eTransportCodJudet('CL'), '51');
+assert.equal(eTransportCodJudet('Giurgiu'), '52');
+assert.equal(eTransportCodJudet('IF'), '23');
+// Already-numeric passes through; unknown resolves to '' (surfaces as required).
+assert.equal(eTransportCodJudet('3'), '3');
+assert.equal(eTransportCodJudet('Freistaat Bayern'), '');
 
 const incompleteXml = buildETransportXml({
   ...base,

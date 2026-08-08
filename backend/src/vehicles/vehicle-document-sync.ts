@@ -76,7 +76,7 @@ export function applyVehiclePurchaseInvoiceDefaults(
   const vehicleLines = selectVehiclePurchaseLines(lines);
   if (vehicleLines.length === 0) return false;
 
-  const description = vehicleModelDescription(fields);
+  const description = vehicleVinModelName(fields);
   const managementCode = brandManagementCode(fields, managements);
   const articleCode = vehicleArticleCode(
     fields.vin ?? fields.vehicle_vin ?? fields.chassis_number,
@@ -162,11 +162,7 @@ export function applyVehiclePurchaseContractDefaults(
   if (existingLines.length === 0) {
     const total = canonical.totalAmount;
     if (total <= 0) return false;
-    const identity = vehicleModelDescription(fields);
-    const vin = text(fields.vin).toUpperCase();
-    const name = ['Autoturism', identity, vin ? `VIN ${vin}` : '']
-      .filter(Boolean)
-      .join(' ');
+    const name = vehicleVinModelName(fields);
     fields.line_items = [
       {
         name,
@@ -302,15 +298,17 @@ export function applyVehicleCostAccountDefaults(
   return changed;
 }
 
-function vehicleModelDescription(fields: Record<string, any>): string {
-  return [
-    fields.vehicle_make ?? fields.make,
-    fields.vehicle_model ?? fields.model,
-    fields.vehicle_variant ?? fields.variant,
-  ]
-    .map(text)
-    .filter(Boolean)
-    .join(' ');
+/**
+ * Vehicle line/article name: "<VIN> <MODEL>" (e.g. "WDC2923241A044449 GLE"),
+ * matching the SAGA export description so the review UI, the article and the
+ * SAGA file all identify the car by chassis number rather than a generic label.
+ */
+function vehicleVinModelName(fields: Record<string, any>): string {
+  const vin = text(
+    fields.vin ?? fields.vehicle_vin ?? fields.chassis_number,
+  ).toUpperCase();
+  const model = text(fields.vehicle_model ?? fields.model);
+  return [vin, model].filter(Boolean).join(' ');
 }
 
 function brandManagementCode(

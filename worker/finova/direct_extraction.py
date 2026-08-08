@@ -1705,20 +1705,28 @@ _VAT_KEY_BEFORE_PRICE_RE = re.compile(
     re.IGNORECASE,
 )
 _VAT_KEY_ONLY_RE = re.compile(r"^\s*[|;]?\s*([IME])\s*[|;]?\s*$", re.IGNORECASE)
+# A single I/M/E as its own whitespace/pipe-delimited token anywhere on a line —
+# covers a key that trails a data row ("FS10577 M") when the price wraps to the
+# next OCR line, so neither _VAT_KEY_BEFORE_PRICE_RE nor _VAT_KEY_ONLY_RE fires.
+_VAT_KEY_TOKEN_RE = re.compile(r"(?:^|[\s|;])([IME])(?=[\s|;]|$)", re.IGNORECASE)
+# A line that looks like a VAT-table data row: it carries a price/amount, a
+# currency, or an AUTO1 stock id (2 letters + digits, e.g. FS10577 / KL94218).
+# Used to accept a trailing key while ignoring the I/E legend rows ("I = ...").
+_VAT_ROW_HINT_RE = re.compile(r"\d[.,]\d|\bEUR\b|€|\b[A-Za-z]{2}\d{3,}\b")
 _VAT_TABLE_END_RE = re.compile(
     r"^\s*(?:total(?:\s+netto)?|summe\s+netto|subtotal|gesamt)",
     re.IGNORECASE,
 )
 
 
-def _reverse_charge_from_vat_key(text: Optional[str]) -> Optional[bool]:
-    """Map an explicitly printed VAT-key table column to reverse charge.
+def _vat_key_table_keys(text: Optional[str]) -> tuple[bool, list[str]]:
+    """Scan an AUTO1 ``MwSt. Kennz. / VAT Key`` column.
 
-    AUTO1 invoice tables label the column ``MwSt. Kennz. / VAT Key``. Their keys
-    ``I`` and ``E`` mean reverse charge while ``M`` means reverse charge is not
-    applied. OCR may preserve a whole table row on one line or emit each cell on
-    its own line, so support both shapes. Return ``None`` when there is no
-    trustworthy VAT-key table signal.
+    Returns ``(header_present, keys)``. Keys ``I``/``E`` mean reverse charge and
+    ``M`` means it is not applied. OCR may keep a whole row on one line, emit each
+    cell on its own line, or leave the key trailing its row with the price wrapped
+    to the next line — all three shapes are supported. ``header_present`` lets the
+    caller know an AUTO1 VAT table exists even when no key could be read.
     """
     lines = (text or "").splitlines()
     header_index = next(
@@ -1726,17 +1734,35 @@ def _reverse_charge_from_vat_key(text: Optional[str]) -> Optional[bool]:
         None,
     )
     if header_index is None:
-        return None
+        return (False, [])
 
     keys: list[str] = []
     # VAT tables are short, but keep a generous bound for multi-line OCR output.
     for line in lines[header_index + 1:header_index + 121]:
         if keys and _VAT_TABLE_END_RE.search(line):
             break
-        match = _VAT_KEY_BEFORE_PRICE_RE.search(line) or _VAT_KEY_ONLY_RE.fullmatch(line)
-        if match:
-            keys.append(match.group(1).upper())
+        only = _VAT_KEY_ONLY_RE.fullmatch(line)
+        if only:
+            keys.append(only.group(1).upper())
+            continue
+        before = _VAT_KEY_BEFORE_PRICE_RE.search(line)
+        if before:
+            keys.append(before.group(1).upper())
+            continue
+        # A key trailing a data row ("FS10577 M") whose price wrapped to the next
+        # line: accept a standalone I/M/E only on a line that also carries a stock
+        # id or price, so the I/E legend rows ("I = Intra-community …") are ignored.
+        if _VAT_ROW_HINT_RE.search(line):
+            token = _VAT_KEY_TOKEN_RE.search(line)
+            if token:
+                keys.append(token.group(1).upper())
 
+    return (True, keys)
+
+
+def _reverse_charge_from_vat_key(text: Optional[str]) -> Optional[bool]:
+    """Reverse-charge flag from the AUTO1 VAT-key column, or ``None`` if absent."""
+    _, keys = _vat_key_table_keys(text)
     if "I" in keys or "E" in keys:
         return True
     if "M" in keys:
@@ -1749,14 +1775,20 @@ def _detect_reverse_charge(text: Optional[str], data: dict) -> bool:
     VAT key is authoritative; otherwise use a "taxare inversă" text marker and
     finally keep whatever the model may have set."""
     import unicodedata
-    vat_key_value = _reverse_charge_from_vat_key(text)
-    if vat_key_value is not None:
-        return vat_key_value
+    header_present, keys = _vat_key_table_keys(text)
+    if "I" in keys or "E" in keys:
+        return True
+    if "M" in keys:
+        return False
     hay = "".join(
         c for c in unicodedata.normalize("NFKD", (text or "").lower())
         if not unicodedata.combining(c)
     )
-    if any(marker in hay for marker in _REVERSE_CHARGE_MARKERS):
+    # An AUTO1 VAT-key table prints a reverse-charge legend for its I/E keys, so
+    # the generic "reverse charge" text marker is unreliable when such a table is
+    # present (it would flag a margin-scheme "M" invoice). Only trust the marker
+    # when there is no VAT-key table; otherwise defer to the model.
+    if not header_present and any(marker in hay for marker in _REVERSE_CHARGE_MARKERS):
         return True
     return data.get("reverse_charge") is True
 
