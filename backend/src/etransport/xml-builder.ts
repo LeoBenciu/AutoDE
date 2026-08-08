@@ -26,6 +26,8 @@ export interface DeclarationData {
   unloadingPlace: ETransportPlace;
   goods: Array<ETransportGood>;
   transportDate?: string; // ISO date
+  /** Accompanying transport documents; the XSD requires at least one. */
+  documents?: ETransportDocument[];
 }
 
 export interface ETransportPlace {
@@ -39,6 +41,14 @@ export interface ETransportPlace {
    * border point is only declared when the operation explicitly needs one.
    */
   borderCrossingPoint?: string;
+}
+
+export interface ETransportDocument {
+  /** 10 = CMR, 20 = Factură, 30 = Aviz de însoțire, 9999 = Altele. */
+  tipDocument: string;
+  /** ISO date (YYYY-MM-DD). */
+  dataDocument: string;
+  documentNumber?: string;
 }
 
 export interface ETransportGood {
@@ -126,13 +136,27 @@ export function buildETransportXml(d: DeclarationData): string {
     })
     .join('');
 
+  // The XSD requires at least one documenteTransport. When none is supplied,
+  // fall back to a CMR (the standard road-transport document) dated on the
+  // transport day, so the notification is never incomplete.
+  const documentList =
+    d.documents && d.documents.length > 0
+      ? d.documents
+      : [{ tipDocument: '10', dataDocument: d.transportDate ?? '' }];
+  const documents = documentList
+    .map(
+      (doc) =>
+        `\n    <documenteTransport${reqAttr('tipDocument', doc.tipDocument)}${attr('numarDocument', doc.documentNumber)}${reqAttr('dataDocument', doc.dataDocument)}/>`,
+    )
+    .join('');
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <eTransport xmlns="mfp:anaf:dgti:eTransport:declaratie:v2"${reqAttr('codDeclarant', d.tenantCui)}>
   <notificare${reqAttr('codTipOperatiune', operationCode)}>${goods}
     <partenerComercial${reqAttr('codTara', d.transporter.country)}${attr('cod', d.transporter.taxId)}${reqAttr('denumire', d.transporter.name)}/>
     <dateTransport${reqAttr('nrVehicul', d.vehiclePlate)}${attr('nrRemorca1', d.trailerPlate)}${reqAttr('codTaraOrgTransport', d.transporter.country)}${attr('codOrgTransport', d.transporter.taxId)}${reqAttr('denumireOrgTransport', d.transporter.name)}${reqAttr('dataTransport', d.transportDate)}/>
     ${buildPlace('locStartTraseuRutier', d.loadingPlace)}
-    ${buildPlace('locFinalTraseuRutier', d.unloadingPlace)}
+    ${buildPlace('locFinalTraseuRutier', d.unloadingPlace)}${documents}
   </notificare>
 </eTransport>`;
 }
