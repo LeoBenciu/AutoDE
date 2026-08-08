@@ -104,11 +104,14 @@ function buildPlace(tag: string, place: ETransportPlace): string {
   // cannot be a locatie — it is represented by a border crossing point (codPtf),
   // emitted only when explicitly provided. So a locatie is written only for a
   // Romanian place (one that carries a county).
-  // codJudet + denumireLocalitate are required; denumireStrada is optional and
-  // must be OMITTED when empty — emitting denumireStrada="" fails the XSD's
-  // minLength(1), while leaving it out is accepted (this is what SAGA does).
+  // codJudet, denumireLocalitate and denumireStrada are all required and must be
+  // non-empty (Str100, minLength 1): ANAF rejects both an empty value AND a
+  // missing attribute. When no explicit street is given, fall back to the city
+  // so the attribute is always present and non-empty — this mirrors SAGA, which
+  // fills the street field with a locality label (e.g. "SEDIU") that ANAF accepts.
+  const street = !isBlank(place.address) ? place.address : place.city;
   const locatie = !isBlank(place.county)
-    ? `\n      <locatie${reqAttr('codJudet', eTransportCodJudet(place.county))}${reqAttr('denumireLocalitate', place.city ?? '')}${attr('denumireStrada', place.address)}/>`
+    ? `\n      <locatie${reqAttr('codJudet', eTransportCodJudet(place.county))}${reqAttr('denumireLocalitate', place.city ?? '')}${reqAttr('denumireStrada', street ?? '')}/>`
     : '';
   return `<${tag}${attr('codPtf', place.borderCrossingPoint)}>${locatie}\n    </${tag}>`;
 }
