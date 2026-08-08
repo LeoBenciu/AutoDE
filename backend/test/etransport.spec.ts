@@ -51,14 +51,16 @@ assert.match(xml, /<locFinalTraseuRutier>\s*<locatie codJudet="40"/);
 assert.match(xml, /denumireLocalitate="București"/);
 assert.match(xml, /denumireStrada="Str\. Exemplu 1"/);
 
-// denumireStrada is optional: when there is no street it must be OMITTED, not
-// emitted empty (empty fails the XSD minLength, an omission is accepted — SAGA).
+// denumireStrada is required and must be non-empty AND present: with no explicit
+// street it falls back to the city so ANAF gets a value (never empty/omitted).
 const noStreetXml = buildETransportXml({
   ...base,
   unloadingPlace: { country: 'RO', county: 'B', city: 'București' },
 });
-assert.match(noStreetXml, /<locatie codJudet="40" denumireLocalitate="București"\/>/);
-assert.doesNotMatch(noStreetXml, /denumireStrada/);
+assert.match(
+  noStreetXml,
+  /<locatie codJudet="40" denumireLocalitate="București" denumireStrada="București"\/>/,
+);
 
 // A county given as its plate code becomes the numeric codJudet the XSD needs
 // (this is what the 'AG' is not a valid value for 'integer' rejection was about).

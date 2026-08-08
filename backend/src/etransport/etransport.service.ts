@@ -680,8 +680,9 @@ export class EtransportService {
     if (!/^[A-Z]{2}$/.test(input.loadingPlace.country)) errors.push('țara de încărcare');
     if (!/^[A-Z]{2}$/.test(input.unloadingPlace.country)) errors.push('țara de descărcare');
     // A Romanian leg is emitted as a <locatie>, whose codJudet and
-    // denumireLocalitate are required (the street is optional and simply omitted
-    // when absent). Catch a missing county/city here with a clear message.
+    // denumireLocalitate are required. denumireStrada is also required by the XSD
+    // but the builder falls back to the city when no street is given, so we only
+    // need a valid county + city here. Catch those with a clear message.
     const validateRomanianPlace = (
       place: { country?: string; county?: string; city?: string; address?: string },
       label: string,
