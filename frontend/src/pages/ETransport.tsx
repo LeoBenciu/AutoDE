@@ -582,7 +582,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
             <input className={field} placeholder="Loc descărcare (oraș, RO)" value={form.unloadingCity} onChange={set('unloadingCity')} />
             <input className={field} placeholder="Județ descărcare" value={form.unloadingCounty} onChange={set('unloadingCounty')} />
           </div>
-          <input className={field} placeholder="Stradă descărcare (RO)" value={form.unloadingAddress} onChange={set('unloadingAddress')} />
+          <input className={field} placeholder="Stradă descărcare (opțional)" value={form.unloadingAddress} onChange={set('unloadingAddress')} />
           <input className={field} placeholder="Descriere marfă" value={form.goodsDescription} onChange={set('goodsDescription')} required />
           <div className="grid grid-cols-2 gap-2.5">
             <input
