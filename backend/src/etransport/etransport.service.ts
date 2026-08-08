@@ -19,6 +19,7 @@ import {
   ETransportGood,
   OPERATION_CODES,
 } from './xml-builder';
+import { eTransportCodJudet } from './judet-codes';
 
 export interface CreateDeclarationInput {
   vehicleId?: number;
@@ -673,6 +674,20 @@ export class EtransportService {
     if (!input.vehiclePlate) errors.push('numărul vehiculului de transport');
     if (!/^[A-Z]{2}$/.test(input.loadingPlace.country)) errors.push('țara de încărcare');
     if (!/^[A-Z]{2}$/.test(input.unloadingPlace.country)) errors.push('țara de descărcare');
+    // A Romanian leg is emitted as a <locatie>, whose codJudet, denumireLocalitate
+    // and denumireStrada are all mandatory (Str100, minLength 1) — ANAF rejects an
+    // empty one. Catch it here with a clear message instead of a round-trip.
+    const validateRomanianPlace = (
+      place: { country?: string; county?: string; city?: string; address?: string },
+      label: string,
+    ) => {
+      if ((place.country ?? '').toUpperCase() !== 'RO') return;
+      if (!eTransportCodJudet(place.county)) errors.push(`județul ${label} (cod valid)`);
+      if (!textValue(place.city)) errors.push(`localitatea ${label}`);
+      if (!textValue(place.address)) errors.push(`strada ${label}`);
+    };
+    validateRomanianPlace(input.loadingPlace, 'locului de încărcare');
+    validateRomanianPlace(input.unloadingPlace, 'locului de descărcare');
     if (!input.goods.length) errors.push('cel puțin o poziție de bunuri');
 
     input.goods.forEach((good, index) => {
