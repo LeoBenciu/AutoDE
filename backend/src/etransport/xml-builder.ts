@@ -104,8 +104,11 @@ function buildPlace(tag: string, place: ETransportPlace): string {
   // cannot be a locatie — it is represented by a border crossing point (codPtf),
   // emitted only when explicitly provided. So a locatie is written only for a
   // Romanian place (one that carries a county).
+  // codJudet + denumireLocalitate are required; denumireStrada is optional and
+  // must be OMITTED when empty — emitting denumireStrada="" fails the XSD's
+  // minLength(1), while leaving it out is accepted (this is what SAGA does).
   const locatie = !isBlank(place.county)
-    ? `\n      <locatie${reqAttr('codJudet', eTransportCodJudet(place.county))}${reqAttr('denumireLocalitate', place.city ?? '')}${reqAttr('denumireStrada', place.address ?? '')}/>`
+    ? `\n      <locatie${reqAttr('codJudet', eTransportCodJudet(place.county))}${reqAttr('denumireLocalitate', place.city ?? '')}${attr('denumireStrada', place.address)}/>`
     : '';
   return `<${tag}${attr('codPtf', place.borderCrossingPoint)}>${locatie}\n    </${tag}>`;
 }
