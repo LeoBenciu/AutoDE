@@ -183,7 +183,9 @@ export class EtransportService {
     const vehicle = await this.prisma.vehicle.findFirst({
       where: { id: vehicleId, tenantId },
       include: {
-        tenant: { select: { cui: true } },
+        tenant: {
+          select: { cui: true, address: true, city: true, county: true },
+        },
         seller: true,
         documents: {
           where: {
@@ -319,10 +321,13 @@ export class EtransportService {
         address: '',
       },
       unloadingPlace: {
+        // An intra-community acquisition is delivered to the company's own
+        // premises, so default the RO county/city/street from the registered
+        // company address (Settings). ANAF requires all three on the locatie.
         country: 'RO',
-        county: '',
-        city: driveRow?.unloadingCity ?? '',
-        address: '',
+        county: textValue(vehicle.tenant.county) ?? '',
+        city: driveRow?.unloadingCity ?? textValue(vehicle.tenant.city) ?? '',
+        address: textValue(vehicle.tenant.address) ?? '',
       },
       transportDate,
       goods,
