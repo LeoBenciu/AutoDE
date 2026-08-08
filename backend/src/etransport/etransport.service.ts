@@ -16,6 +16,7 @@ import { DriveVehicleDataService } from './drive-vehicle-data.service';
 import {
   buildETransportXml,
   DeclarationData,
+  ETransportDocument,
   ETransportGood,
   OPERATION_CODES,
 } from './xml-builder';
@@ -440,8 +441,51 @@ export class EtransportService {
       unloadingPlace: input.unloadingPlace,
       goods: input.goods,
       transportDate: input.transportDate,
+      documents: await this.resolveTransportDocuments(tenantId, input),
     };
     return buildETransportXml(data);
+  }
+
+  /**
+   * The XSD requires at least one documenteTransport. Reference the vehicle's
+   * purchase document (supplier invoice → Factură/20, otherwise Altele/9999),
+   * falling back to a CMR (10) dated on the transport day when no source exists.
+   */
+  private async resolveTransportDocuments(
+    tenantId: number,
+    input: CreateDeclarationInput,
+  ): Promise<ETransportDocument[]> {
+    const fallback: ETransportDocument[] = [
+      { tipDocument: '10', dataDocument: input.transportDate },
+    ];
+    if (!input.vehicleId) return fallback;
+    const [tenant, docs] = await Promise.all([
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { cui: true },
+      }),
+      this.prisma.document.findMany({
+        where: {
+          tenantId,
+          vehicleId: input.vehicleId,
+          type: { in: ['Invoice', 'Contract'] },
+          deletedAt: null,
+          processedData: { isNot: null },
+        },
+        include: { processedData: true },
+        orderBy: { uploadedAt: 'desc' },
+      }),
+    ]);
+    const source = selectUitPurchaseSource(docs, tenant?.cui);
+    if (!source) return fallback;
+    return [
+      {
+        tipDocument: source.document.type === 'Invoice' ? '20' : '9999',
+        dataDocument:
+          isoDate(source.canonical.documentDate) ?? input.transportDate,
+        documentNumber: textValue(source.canonical.documentNumber),
+      },
+    ];
   }
 
   private async normalizeInput(input: CreateDeclarationInput, strictExchangeRate: boolean): Promise<CreateDeclarationInput> {

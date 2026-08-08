@@ -44,6 +44,18 @@ assert.match(xml, /<partenerComercial codTara="DE"/);
 assert.match(xml, /<dateTransport nrVehicul="B123UIT"/);
 // The border crossing point is not declared unless explicitly provided.
 assert.doesNotMatch(xml, /codPtf=/);
+// The XSD requires at least one documenteTransport; with none supplied it falls
+// back to a CMR (10) dated on the transport day.
+assert.match(xml, /<documenteTransport tipDocument="10" dataDocument="2026-07-28"\/>/);
+// Supplied documents are emitted with their number and date.
+const withDocXml = buildETransportXml({
+  ...base,
+  documents: [{ tipDocument: '20', dataDocument: '2026-08-01', documentNumber: 'F-123' }],
+});
+assert.match(
+  withDocXml,
+  /<documenteTransport tipDocument="20" numarDocument="F-123" dataDocument="2026-08-01"\/>/,
+);
 // Unloading place is a Romanian locatie whose county is emitted as the numeric
 // ANAF codJudet (București "B" → 40), never the 2-letter plate code.
 assert.match(xml, /<locFinalTraseuRutier>\s*<locatie codJudet="40"/);
