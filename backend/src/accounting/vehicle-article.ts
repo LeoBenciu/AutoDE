@@ -46,10 +46,11 @@ export async function ensureVehicleArticle(
       return Number.isFinite(numeric) ? Math.max(max, numeric) : max;
     }, 0) + 1,
   ).padStart(5, '0');
-  const identity = [vehicle.make, vehicle.model, vehicle.variant]
-    .map((value) => String(value ?? '').trim())
-    .filter(Boolean)
-    .join(' ');
+  // Article name is "<VIN> <MODEL>" (e.g. "WDC2923241A044449 GLE"), matching the
+  // SAGA export description so the car is identified by chassis number.
+  const vin = String(vehicle.vin ?? '').trim().toUpperCase();
+  const model = String(vehicle.model ?? '').trim();
+  const vinModel = [vin, model].filter(Boolean).join(' ');
 
   await db.article.upsert({
     where: { tenantId_code: { tenantId, code } },
@@ -57,7 +58,7 @@ export async function ensureVehicleArticle(
     create: {
       tenantId,
       code,
-      name: [identity || 'Autoturism', `VIN ${vehicle.vin}`].join(' · '),
+      name: vinModel || 'Autoturism',
       analyticCode: nextAnalytic,
       vatRate: 'TWENTYONE',
       unit: 'BUCATA',

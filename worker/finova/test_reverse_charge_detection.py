@@ -64,6 +64,41 @@ class ReverseChargeDetectionTest(unittest.TestCase):
 
         self.assertFalse(_detect_reverse_charge(text, {"reverse_charge": False}))
 
+    def test_vat_key_m_trailing_row_with_wrapped_price_and_legend(self) -> None:
+        # French AUTO1 layout where OCR leaves the key trailing its row and wraps
+        # the price to the next line; the I/E legend must not flip M to True.
+        text = """
+        Numéro de référence Code TVA Prix EUR
+        Stock ID VAT Key PriceEUR
+        FS10577 M
+        9.382,50
+        Alfa Romeo / Giulia 2.2 JTDM Super
+        M = Régime de la marge / Margin scheme
+        I = Livraison intracommunautaire - Reverse charge applies
+        """
+
+        self.assertFalse(_detect_reverse_charge(text, {"reverse_charge": True}))
+
+    def test_vat_key_i_trailing_row_still_reverse_charge(self) -> None:
+        text = """
+        Stock ID VAT Key PriceEUR
+        KL94218 I
+        299,00
+        """
+
+        self.assertTrue(_detect_reverse_charge(text, {"reverse_charge": False}))
+
+    def test_reverse_charge_legend_alone_does_not_flip_margin_invoice(self) -> None:
+        # A VAT-key table is present and reads M; a "reverse charge" legend line
+        # elsewhere must not override it via the generic text marker.
+        text = """
+        MwSt. Kennz. / VAT Key
+        FS10577 M 9.382,50
+        Intra-community deliveries are subject to reverse charge.
+        """
+
+        self.assertFalse(_detect_reverse_charge(text, {"reverse_charge": True}))
+
 
 if __name__ == "__main__":
     unittest.main()

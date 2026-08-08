@@ -356,6 +356,7 @@ export class SagaService {
           where: {
             tenantId,
             deletedAt: null,
+            archivedAt: null,
             reviewStatus: 'APPROVED',
             uploadedAt: { gte: tenant.accountingCutoverAt },
             type: {
@@ -385,6 +386,7 @@ export class SagaService {
           where: {
             tenantId,
             deletedAt: null,
+            archivedAt: null,
             OR: [
               { uploadedAt: { lt: tenant.accountingCutoverAt } },
               {
@@ -420,6 +422,7 @@ export class SagaService {
                 reviewStatus: 'APPROVED',
                 uploadedAt: { gte: tenant.accountingCutoverAt },
                 deletedAt: null,
+                archivedAt: null,
               },
             },
           },

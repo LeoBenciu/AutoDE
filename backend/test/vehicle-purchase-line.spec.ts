@@ -35,7 +35,7 @@ function purchaseInvoiceFields() {
   } as Record<string, any>;
 }
 
-// 1. Brand-organized managements: description becomes the model, gestiune the brand.
+// 1. Brand-organized managements: description becomes "<VIN> <model>", gestiune the brand.
 {
   const fields = purchaseInvoiceFields();
   const changed = applyVehiclePurchaseInvoiceDefaults(fields, [
@@ -43,7 +43,7 @@ function purchaseInvoiceFields() {
     { code: 'G-AUDI', name: 'Audi' },
   ]);
   assert.equal(changed, true);
-  assert.equal(fields.line_items[0].name, 'BMW Seria 3 320d');
+  assert.equal(fields.line_items[0].name, `${VIN} Seria 3`);
   assert.equal(fields.line_items[0].management, 'G-BMW');
   assert.equal(fields.line_items[0].articleCode, `AUTO-${VIN}`);
 }
@@ -56,7 +56,7 @@ function purchaseInvoiceFields() {
     { code: 'DEPOZIT', name: 'Depozit central' },
   ]);
   assert.equal(changed, true);
-  assert.equal(fields.line_items[0].name, 'BMW Seria 3 320d');
+  assert.equal(fields.line_items[0].name, `${VIN} Seria 3`);
   assert.equal(fields.line_items[0].management, '');
   assert.equal(
     fields.line_items[0].articleCode,
@@ -75,7 +75,7 @@ function purchaseInvoiceFields() {
     { code: 'G-MB', name: 'Mercedes' },
   ]);
   assert.equal(changed, true);
-  assert.equal(fields.line_items[0].name, 'Mercedes-Benz C 220');
+  assert.equal(fields.line_items[0].name, `${VIN} C 220`);
   assert.equal(fields.line_items[0].management, 'G-MB');
 }
 
@@ -111,7 +111,7 @@ function purchaseInvoiceFields() {
     { code: 'G-BMW', name: 'BMW' },
   ]);
   assert.equal(changed, true);
-  assert.equal(fields.line_items[0].name, 'BMW Seria 3 320d');
+  assert.equal(fields.line_items[0].name, `${VIN} Seria 3`);
   assert.equal(fields.line_items[0].management, 'G-BMW');
   assert.equal(fields.line_items[1].name, 'Transport');
   assert.equal(fields.line_items[1].account_code, '624');
