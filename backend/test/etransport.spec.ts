@@ -44,6 +44,13 @@ assert.match(xml, /<partenerComercial codTara="DE"/);
 assert.match(xml, /<dateTransport nrVehicul="B123UIT"/);
 // The border crossing point is not declared unless explicitly provided.
 assert.doesNotMatch(xml, /codPtf=/);
+// BR-004: an intra-community operation carries the border crossing point (codPtf)
+// on the foreign entry leg (locStartTraseuRutier).
+const borderXml = buildETransportXml({
+  ...base,
+  loadingPlace: { country: 'DE', city: 'Berlin', borderCrossingPoint: '37' },
+});
+assert.match(borderXml, /<locStartTraseuRutier codPtf="37">/);
 // The XSD requires at least one documenteTransport; with none supplied it falls
 // back to a CMR (10) dated on the transport day.
 assert.match(xml, /<documenteTransport tipDocument="10" dataDocument="2026-07-28"\/>/);

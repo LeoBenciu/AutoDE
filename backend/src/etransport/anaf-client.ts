@@ -192,6 +192,15 @@ export class AnafClient {
     });
     const text = await res.text();
     if (!res.ok) {
+      // 5xx is an ANAF gateway/server outage, not a rejection of our file. The
+      // declaration stays DRAFT (status is only advanced on success), so the
+      // user can safely retry once ANAF is back — surface that, don't imply the
+      // content was refused.
+      if (res.status >= 500) {
+        throw new BadRequestException(
+          `ANAF este temporar indisponibil (${res.status}). Declarația NU a fost trimisă — reîncearcă în câteva minute.`,
+        );
+      }
       throw new BadRequestException(`ANAF a respins declarația (${res.status}): ${text.slice(0, 300)}`);
     }
     const indexMatch = text.match(/index_incarcare="?(\d+)/);
