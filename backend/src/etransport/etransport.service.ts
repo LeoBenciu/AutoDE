@@ -28,13 +28,31 @@ export interface CreateDeclarationInput {
   transporter: { name: string; taxId: string; country: string };
   vehiclePlate: string;
   trailerPlate?: string;
-  loadingPlace: { country: string; county?: string; city?: string; address?: string };
-  unloadingPlace: { country: string; county?: string; city?: string; address?: string };
+  loadingPlace: {
+    country: string;
+    county?: string;
+    city?: string;
+    address?: string;
+    borderCrossingPoint?: string;
+  };
+  unloadingPlace: {
+    country: string;
+    county?: string;
+    city?: string;
+    address?: string;
+    borderCrossingPoint?: string;
+  };
   goods: ETransportGood[];
   transportDate: string;
   /** Explicit user confirmation; extracted suggestions are never submission-ready by themselves. */
   dataVerified?: boolean;
 }
+
+// Schematron BR-004: these operation codes (intra-community acquisition/supply,
+// lohn in/out, stock-at-client in/out) require a border crossing point (codPtf).
+const BORDER_CROSSING_REQUIRED_CODES = new Set([
+  '10', '12', '14', '20', '22', '24', '60', '70',
+]);
 
 const EU_COUNTRY_CODES = new Set([
   'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DE', 'DK', 'EE', 'ES', 'FI', 'FR', 'GR',
@@ -737,6 +755,14 @@ export class EtransportService {
     };
     validateRomanianPlace(input.loadingPlace, 'locului de încărcare');
     validateRomanianPlace(input.unloadingPlace, 'locului de descărcare');
+    // Schematron BR-004: intra-community / lohn / stock operations cross the EU
+    // border, so a border crossing point (codPtf) is mandatory.
+    if (BORDER_CROSSING_REQUIRED_CODES.has(OPERATION_CODES[input.operationType])) {
+      const border =
+        input.loadingPlace.borderCrossingPoint ??
+        input.unloadingPlace.borderCrossingPoint;
+      if (!textValue(border)) errors.push('punctul de trecere a frontierei (vamă)');
+    }
     if (!input.goods.length) errors.push('cel puțin o poziție de bunuri');
 
     input.goods.forEach((good, index) => {

@@ -41,6 +41,22 @@ const OPERATION_TYPES = [
   ['DIE', 'Depozitare ieșire'],
 ] as const;
 
+// ANAF codPtf (border crossing point) nomenclator. Required by Schematron rule
+// BR-004 for intra-community/import/export operations. Cars from the EU usually
+// enter via the Hungarian points (Nădlac/Borș).
+const BORDER_POINTS: ReadonlyArray<readonly [string, string]> = [
+  ['1', 'Petea (HU)'], ['2', 'Borș (HU)'], ['3', 'Vărșand (HU)'], ['4', 'Nădlac (HU)'],
+  ['5', 'Calafat (BG)'], ['6', 'Bechet (BG)'], ['7', 'Turnu Măgurele (BG)'], ['8', 'Zimnicea (BG)'],
+  ['9', 'Giurgiu (BG)'], ['10', 'Ostrov (BG)'], ['11', 'Negru Vodă (BG)'], ['12', 'Vama Veche (BG)'],
+  ['13', 'Călărași (BG)'], ['14', 'Corabia (BG)'], ['15', 'Oltenița (BG)'], ['16', 'Carei (HU)'],
+  ['17', 'Cenad (HU)'], ['18', 'Episcopia Bihor (HU)'], ['19', 'Salonta (HU)'], ['20', 'Săcuieni (HU)'],
+  ['21', 'Turnu (HU)'], ['22', 'Urziceni (HU)'], ['23', 'Valea lui Mihai (HU)'], ['24', 'Vladimirescu (HU)'],
+  ['25', 'Porțile de Fier 1 (RS)'], ['26', 'Naidăș (RS)'], ['27', 'Stamora Moravița (RS)'], ['28', 'Jimbolia (RS)'],
+  ['29', 'Halmeu (UA)'], ['30', 'Stânca Costești (MD)'], ['31', 'Sculeni (MD)'], ['32', 'Albița (MD)'],
+  ['33', 'Oancea (MD)'], ['34', 'Galați Giurgiulești (MD)'], ['35', 'Constanța Sud Agigea'], ['36', 'Siret (UA)'],
+  ['37', 'Nădlac 2 - A1 (HU)'], ['38', 'Borș 2 - A3 (HU)'],
+];
+
 // Every transport in this app is a passenger car (NC heading 8703), so the
 // NC/tariff field defaults to 87035000 — the user can still override it.
 const DEFAULT_TARIFF_CODE = '87035000';
@@ -204,6 +220,10 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
           trailerPlate: declaration.trailerPlate ?? '',
           loadingCity: declaration.loadingPlace?.city ?? '',
           loadingCountry: declaration.loadingPlace?.country ?? 'DE',
+          borderCrossingPoint:
+            declaration.loadingPlace?.borderCrossingPoint ??
+            declaration.unloadingPlace?.borderCrossingPoint ??
+            '',
           unloadingCity: declaration.unloadingPlace?.city ?? '',
           unloadingCounty: declaration.unloadingPlace?.county ?? '',
           unloadingAddress: declaration.unloadingPlace?.address ?? '',
@@ -233,6 +253,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
           trailerPlate: '',
           loadingCity: '',
           loadingCountry: 'DE',
+          borderCrossingPoint: '',
           unloadingCity: '',
           unloadingCounty: '',
           unloadingAddress: '',
@@ -425,8 +446,20 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
       transporter: { name: form.transporterName, taxId: form.transporterTaxId, country: form.transporterCountry },
       vehiclePlate: form.vehiclePlate,
       trailerPlate: form.trailerPlate || undefined,
-      loadingPlace: { country: form.loadingCountry, city: form.loadingCity },
-      unloadingPlace: { country: 'RO', county: form.unloadingCounty, city: form.unloadingCity, address: form.unloadingAddress },
+      loadingPlace: {
+        country: form.loadingCountry,
+        city: form.loadingCity,
+        // The border crossing point belongs to the foreign leg. Incoming (RO
+        // unloading) → it is the entry point on the loading side.
+        borderCrossingPoint:
+          form.loadingCountry.toUpperCase() !== 'RO' ? form.borderCrossingPoint || undefined : undefined,
+      },
+      unloadingPlace: {
+        country: 'RO',
+        county: form.unloadingCounty,
+        city: form.unloadingCity,
+        address: form.unloadingAddress,
+      },
       goods: [
         {
           description: form.goodsDescription,
@@ -578,6 +611,12 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
             <input className={field} placeholder="Loc încărcare (oraș)" value={form.loadingCity} onChange={set('loadingCity')} />
             <input className={field} placeholder="Țară încărcare" value={form.loadingCountry} onChange={set('loadingCountry')} maxLength={2} />
           </div>
+          <select className={field} value={form.borderCrossingPoint} onChange={set('borderCrossingPoint')}>
+            <option value="">Punct trecere frontieră (obligatoriu la achiziție/livrare intracom.)</option>
+            {BORDER_POINTS.map(([value, label]) => (
+              <option key={value} value={value}>{`${value} · ${label}`}</option>
+            ))}
+          </select>
           <div className="grid grid-cols-2 gap-2.5">
             <input className={field} placeholder="Loc descărcare (oraș, RO)" value={form.unloadingCity} onChange={set('unloadingCity')} />
             <input className={field} placeholder="Județ descărcare" value={form.unloadingCounty} onChange={set('unloadingCounty')} />
