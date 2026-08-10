@@ -64,15 +64,16 @@ assert.match(
 assert.match(partnerXml, /<dateTransport[^>]*denumireOrgTransport="PLAYER MEDIA SRL"/);
 // The border crossing point is not declared unless explicitly provided.
 assert.doesNotMatch(xml, /codPtf=/);
-// BR-004: an intra-community operation carries the border crossing point (codPtf)
-// as an attribute of dateTransport (the ANAF schema places it there, not on the
-// loc element).
+// An intra-community operation carries the border crossing point (codPtf) as an
+// attribute of the route-leg element (locStart/locFinalTraseuRutier) — the v2
+// schema places it there, NOT on dateTransport (which rejects it: "Attribute
+// 'codPtf' is not allowed to appear in element 'dateTransport'").
 const borderXml = buildETransportXml({
   ...base,
   loadingPlace: { country: 'DE', city: 'Berlin', borderCrossingPoint: '37' },
 });
-assert.match(borderXml, /<dateTransport[^>]*codPtf="37"/);
-assert.doesNotMatch(borderXml, /<locStartTraseuRutier[^>]*codPtf/);
+assert.match(borderXml, /<locStartTraseuRutier codPtf="37">/);
+assert.doesNotMatch(borderXml, /<dateTransport[^>]*codPtf/);
 // The XSD requires at least one documenteTransport; with none supplied it falls
 // back to a CMR (10) dated on the transport day.
 assert.match(xml, /<documenteTransport tipDocument="10" dataDocument="2026-07-28"\/>/);
