@@ -50,15 +50,29 @@ const roOrgXml = buildETransportXml({
 assert.match(roOrgXml, /codOrgTransport="20752458"/);
 assert.doesNotMatch(roOrgXml, /codOrgTransport="RO20752458"/);
 assert.match(roOrgXml, /<partenerComercial codTara="RO" cod="20752458"/);
+// partenerComercial is the (foreign) seller, distinct from the transporter which
+// stays on dateTransport.
+const partnerXml = buildETransportXml({
+  ...base,
+  transporter: { name: 'PLAYER MEDIA SRL', taxId: 'RO20752458', country: 'RO' },
+  partner: { name: 'AUTO1 European Cars B.V.', taxId: 'NL861042479B01', country: 'NL' },
+});
+assert.match(
+  partnerXml,
+  /<partenerComercial codTara="NL" cod="861042479B01" denumire="AUTO1 European Cars B\.V\."/,
+);
+assert.match(partnerXml, /<dateTransport[^>]*denumireOrgTransport="PLAYER MEDIA SRL"/);
 // The border crossing point is not declared unless explicitly provided.
 assert.doesNotMatch(xml, /codPtf=/);
 // BR-004: an intra-community operation carries the border crossing point (codPtf)
-// on the foreign entry leg (locStartTraseuRutier).
+// as an attribute of dateTransport (the ANAF schema places it there, not on the
+// loc element).
 const borderXml = buildETransportXml({
   ...base,
   loadingPlace: { country: 'DE', city: 'Berlin', borderCrossingPoint: '37' },
 });
-assert.match(borderXml, /<locStartTraseuRutier codPtf="37">/);
+assert.match(borderXml, /<dateTransport[^>]*codPtf="37"/);
+assert.doesNotMatch(borderXml, /<locStartTraseuRutier[^>]*codPtf/);
 // The XSD requires at least one documenteTransport; with none supplied it falls
 // back to a CMR (10) dated on the transport day.
 assert.match(xml, /<documenteTransport tipDocument="10" dataDocument="2026-07-28"\/>/);

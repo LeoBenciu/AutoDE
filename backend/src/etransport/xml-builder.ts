@@ -20,6 +20,12 @@ export interface DeclarationData {
   tenantCui: string;
   operationType: string; // AIC = intra-community acquisition
   transporter: { name: string; taxId: string; country: string };
+  /**
+   * Commercial partner (partenerComercial) — the other party in the trade, e.g.
+   * the foreign seller for an acquisition. Distinct from the transporter; falls
+   * back to the transporter when unknown.
+   */
+  partner?: { name: string; taxId?: string; country: string };
   vehiclePlate: string;
   trailerPlate?: string;
   loadingPlace: ETransportPlace;
@@ -130,7 +136,9 @@ function buildPlace(tag: string, place: ETransportPlace): string {
   const locatie = !isBlank(place.county)
     ? `\n      <locatie${reqAttr('codJudet', eTransportCodJudet(place.county))}${reqAttr('denumireLocalitate', place.city ?? '')}${reqAttr('denumireStrada', street ?? '')}/>`
     : '';
-  return `<${tag}${attr('codPtf', place.borderCrossingPoint)}>${locatie}\n    </${tag}>`;
+  // NOTE: codPtf (border crossing point) is NOT emitted here — the ANAF schema
+  // carries it on <dateTransport>, not on the loc element. See buildETransportXml.
+  return `<${tag}>${locatie}\n    </${tag}>`;
 }
 
 export function buildETransportXml(d: DeclarationData): string {
@@ -161,11 +169,21 @@ export function buildETransportXml(d: DeclarationData): string {
   // for a RO organizer it must be "20752458", not "RO20752458" — the prefixed
   // form fails Schematron BR-043 (codOrgTransport must be filled/valid).
   const orgTaxId = stripCountryPrefix(d.transporter.taxId, d.transporter.country);
+  // partenerComercial is the trade counterparty (the seller for an acquisition),
+  // NOT the transporter — for an AIC it must be the foreign seller. Fall back to
+  // the transporter only when the seller is unknown.
+  const partner = d.partner ?? d.transporter;
+  const partnerCode = stripCountryPrefix(partner.taxId, partner.country);
+  // codPtf (border crossing point, BR-004) is an attribute of dateTransport in
+  // the ANAF schema, not of the loc element. It is on whichever leg is foreign.
+  const codPtf = !isBlank(d.loadingPlace.borderCrossingPoint)
+    ? d.loadingPlace.borderCrossingPoint
+    : d.unloadingPlace.borderCrossingPoint;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <eTransport xmlns="mfp:anaf:dgti:eTransport:declaratie:v2"${reqAttr('codDeclarant', d.tenantCui)}>
   <notificare${reqAttr('codTipOperatiune', operationCode)}>${goods}
-    <partenerComercial${reqAttr('codTara', d.transporter.country)}${attr('cod', orgTaxId)}${reqAttr('denumire', d.transporter.name)}/>
-    <dateTransport${reqAttr('nrVehicul', d.vehiclePlate)}${attr('nrRemorca1', d.trailerPlate)}${reqAttr('codTaraOrgTransport', d.transporter.country)}${attr('codOrgTransport', orgTaxId)}${reqAttr('denumireOrgTransport', d.transporter.name)}${reqAttr('dataTransport', d.transportDate)}/>
+    <partenerComercial${reqAttr('codTara', partner.country)}${attr('cod', partnerCode)}${reqAttr('denumire', partner.name)}/>
+    <dateTransport${reqAttr('nrVehicul', d.vehiclePlate)}${attr('nrRemorca1', d.trailerPlate)}${reqAttr('codTaraOrgTransport', d.transporter.country)}${attr('codOrgTransport', orgTaxId)}${reqAttr('denumireOrgTransport', d.transporter.name)}${reqAttr('dataTransport', d.transportDate)}${attr('codPtf', codPtf)}/>
     ${buildPlace('locStartTraseuRutier', d.loadingPlace)}
     ${buildPlace('locFinalTraseuRutier', d.unloadingPlace)}${documents}
   </notificare>
