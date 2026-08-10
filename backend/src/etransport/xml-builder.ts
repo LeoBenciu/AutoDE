@@ -136,9 +136,11 @@ function buildPlace(tag: string, place: ETransportPlace): string {
   const locatie = !isBlank(place.county)
     ? `\n      <locatie${reqAttr('codJudet', eTransportCodJudet(place.county))}${reqAttr('denumireLocalitate', place.city ?? '')}${reqAttr('denumireStrada', street ?? '')}/>`
     : '';
-  // NOTE: codPtf (border crossing point) is NOT emitted here — the ANAF schema
-  // carries it on <dateTransport>, not on the loc element. See buildETransportXml.
-  return `<${tag}>${locatie}\n    </${tag}>`;
+  // codPtf (border crossing point) is an attribute of the route-leg element
+  // (locStart/locFinalTraseuRutier) in the ANAF v2 schema — NOT of <dateTransport>
+  // (that placement, valid only in the v1 XSD, is rejected by v2 with
+  // "Attribute 'codPtf' is not allowed to appear in element 'dateTransport'").
+  return `<${tag}${attr('codPtf', place.borderCrossingPoint)}>${locatie}\n    </${tag}>`;
 }
 
 export function buildETransportXml(d: DeclarationData): string {
@@ -174,16 +176,14 @@ export function buildETransportXml(d: DeclarationData): string {
   // the transporter only when the seller is unknown.
   const partner = d.partner ?? d.transporter;
   const partnerCode = stripCountryPrefix(partner.taxId, partner.country);
-  // codPtf (border crossing point, BR-004) is an attribute of dateTransport in
-  // the ANAF schema, not of the loc element. It is on whichever leg is foreign.
-  const codPtf = !isBlank(d.loadingPlace.borderCrossingPoint)
-    ? d.loadingPlace.borderCrossingPoint
-    : d.unloadingPlace.borderCrossingPoint;
+  // codPtf (border crossing point) is emitted by buildPlace on the foreign
+  // route leg (locStart/locFinalTraseuRutier), where the v2 schema carries it —
+  // NOT on <dateTransport>.
   return `<?xml version="1.0" encoding="UTF-8"?>
 <eTransport xmlns="mfp:anaf:dgti:eTransport:declaratie:v2"${reqAttr('codDeclarant', d.tenantCui)}>
   <notificare${reqAttr('codTipOperatiune', operationCode)}>${goods}
     <partenerComercial${reqAttr('codTara', partner.country)}${attr('cod', partnerCode)}${reqAttr('denumire', partner.name)}/>
-    <dateTransport${reqAttr('nrVehicul', d.vehiclePlate)}${attr('nrRemorca1', d.trailerPlate)}${reqAttr('codTaraOrgTransport', d.transporter.country)}${attr('codOrgTransport', orgTaxId)}${reqAttr('denumireOrgTransport', d.transporter.name)}${reqAttr('dataTransport', d.transportDate)}${attr('codPtf', codPtf)}/>
+    <dateTransport${reqAttr('nrVehicul', d.vehiclePlate)}${attr('nrRemorca1', d.trailerPlate)}${reqAttr('codTaraOrgTransport', d.transporter.country)}${attr('codOrgTransport', orgTaxId)}${reqAttr('denumireOrgTransport', d.transporter.name)}${reqAttr('dataTransport', d.transportDate)}/>
     ${buildPlace('locStartTraseuRutier', d.loadingPlace)}
     ${buildPlace('locFinalTraseuRutier', d.unloadingPlace)}${documents}
   </notificare>
