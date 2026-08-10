@@ -453,6 +453,7 @@ export class EtransportService {
       tenantCui: tenant?.cui ?? '',
       operationType: input.operationType,
       transporter: input.transporter,
+      partner: await this.resolvePartner(tenantId, input),
       vehiclePlate: input.vehiclePlate,
       trailerPlate: input.trailerPlate,
       loadingPlace: input.loadingPlace,
@@ -504,6 +505,41 @@ export class EtransportService {
         documentNumber: textValue(source.canonical.documentNumber),
       },
     ];
+  }
+
+  /**
+   * The commercial partner (partenerComercial) is the seller in the acquisition,
+   * taken from the vehicle's purchase document (the intra-community supplier,
+   * e.g. AUTO1) — not the transporter. Returns undefined when unresolved, so the
+   * builder falls back to the transporter.
+   */
+  private async resolvePartner(
+    tenantId: number,
+    input: CreateDeclarationInput,
+  ): Promise<{ name: string; taxId?: string; country: string } | undefined> {
+    if (!input.vehicleId) return undefined;
+    const [tenant, docs] = await Promise.all([
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { cui: true },
+      }),
+      this.prisma.document.findMany({
+        where: {
+          tenantId,
+          vehicleId: input.vehicleId,
+          type: { in: ['Invoice', 'Contract'] },
+          deletedAt: null,
+          processedData: { isNot: null },
+        },
+        include: { processedData: true },
+        orderBy: { uploadedAt: 'desc' },
+      }),
+    ]);
+    const source = selectUitPurchaseSource(docs, tenant?.cui);
+    const name = textValue(source?.canonical.vendor);
+    const country = textValue(source?.canonical.vendorCountry)?.toUpperCase();
+    if (!name || !country) return undefined;
+    return { name, country, taxId: textValue(source?.canonical.vendorEin) };
   }
 
   private async normalizeInput(input: CreateDeclarationInput, strictExchangeRate: boolean): Promise<CreateDeclarationInput> {
