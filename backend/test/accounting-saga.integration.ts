@@ -1178,6 +1178,54 @@ async function main() {
       'approving a document must not overwrite an existing gestiune name with its code',
     );
 
+    // A supplier whose analytic already carries the account root (SAGA's "cont
+    // analitic" is "401.00063", not "00063") must not double it into 401.401...
+    await prisma.party.create({
+      data: {
+        tenantId: tenant.id,
+        name: 'Furnizor Analitic SRL',
+        taxId: '777333',
+        kind: 'COMPANY',
+        identifierType: 'CUI',
+        country: 'RO',
+        isSupplier: true,
+        supplierAnalytic: '401.00063',
+        supplierCode: 'FURN00063',
+      },
+    });
+    const analyticDoc = await createDocument('Invoice', 'ANL-1', {
+      direction: 'incoming',
+      vendor: 'Furnizor Analitic SRL',
+      vendor_ein: 'RO777333',
+      buyer: marker,
+      buyer_ein: 'RO50675950',
+      total_amount: 119,
+      net_amount: 100,
+      vat_amount: 19,
+      line_items: [
+        {
+          name: 'Servicii',
+          quantity: 1,
+          unit_price: 100,
+          total: 100,
+          vat_amount: 19,
+          vat: 'NINETEEN',
+          account_code: '628',
+          um: 'BUCATA',
+          vat_deductibility: 'FULL',
+        },
+      ],
+    });
+    const analyticPreview = await posting.preview(tenant.id, analyticDoc.id);
+    assert.ok(
+      analyticPreview.entries.some((entry) => entry.accountCode === '401.00063'),
+      'payable must be 401.00063, not a doubled 401.401.00063',
+    );
+    assert.ok(
+      !analyticPreview.entries.some((entry) => entry.accountCode.startsWith('401.401')),
+      'the account root must not be duplicated',
+    );
+
     await posting.reopen(tenant.id, user.id, incoming.id);
     assert.equal(
       await prisma.generalLedgerEntry.count({ where: { documentId: incoming.id } }),

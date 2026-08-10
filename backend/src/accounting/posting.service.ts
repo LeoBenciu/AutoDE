@@ -1165,12 +1165,8 @@ export class PostingService {
         : null,
     ]);
     return {
-      payable: supplier?.supplierAnalytic
-        ? `401.${supplier.supplierAnalytic}`
-        : '401',
-      receivable: client?.clientAnalytic
-        ? `411.${client.clientAnalytic}`
-        : '411',
+      payable: analyticAccount('401', supplier?.supplierAnalytic),
+      receivable: analyticAccount('411', client?.clientAnalytic),
       supplierId: supplier?.id,
       clientId: client?.id,
     };
@@ -1249,12 +1245,8 @@ export class PostingService {
       }
     }
     return {
-      payable: supplier?.supplierAnalytic
-        ? `401.${supplier.supplierAnalytic}`
-        : '401',
-      receivable: client?.clientAnalytic
-        ? `411.${client.clientAnalytic}`
-        : '411',
+      payable: analyticAccount('401', supplier?.supplierAnalytic),
+      receivable: analyticAccount('411', client?.clientAnalytic),
       supplierId: supplier?.id,
       clientId: client?.id,
     };
@@ -1426,6 +1418,20 @@ function draft(
 
 function money(amount: number, exchangeRate: number): number {
   return round2(amount * exchangeRate);
+}
+
+/**
+ * Builds a partner's analytic account (e.g. 401.00063). The stored analytic is
+ * meant to be just the suffix ("00063"), but SAGA's "cont analitic" column often
+ * carries the whole account ("401.00063"); prepending the root then would double
+ * it into "401.401.00063". Return the analytic as-is when it already includes
+ * the root.
+ */
+function analyticAccount(root: string, analytic: string | null | undefined): string {
+  const trimmed = String(analytic ?? '').trim();
+  if (!trimmed) return root;
+  if (trimmed === root || trimmed.startsWith(`${root}.`)) return trimmed;
+  return `${root}.${trimmed}`;
 }
 
 const ROUNDING_PROTECTED_ACCOUNT_RE =
