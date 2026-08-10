@@ -60,6 +60,8 @@ export interface ETransportDocument {
 export interface ETransportGood {
   description: string;
   tariffCode?: string;
+  /** Net weight; for an unpackaged vehicle this defaults to the gross cargo weight. */
+  netWeightKg?: number;
   weightKg?: number;
   /** codScopOperatiune override; falls back to the per-operation default. */
   scopeCode?: string;
@@ -187,8 +189,12 @@ export function buildETransportXml(d: DeclarationData): string {
   const goods = d.goods
     .map((g) => {
       const scope = normalizeScopeCode(g.scopeCode, operationCode);
+      // Schematron BR-207 requires greutateNeta for every operation except
+      // 60/70. A transported vehicle has no packaging represented separately
+      // in this model, so its gross cargo weight is the safe default.
+      const netWeightKg = g.netWeightKg ?? g.weightKg;
       return `
-    <bunuriTransportate${reqAttr('codScopOperatiune', scope)}${attr('codTarifar', g.tariffCode)}${reqAttr('denumireMarfa', g.description)}${reqAttr('cantitate', 1)}${reqAttr('codUnitateMasura', 'H87')}${reqAttr('greutateBruta', g.weightKg)}${attr('valoareLeiFaraTva', g.valueRon)}/>`;
+    <bunuriTransportate${reqAttr('codScopOperatiune', scope)}${attr('codTarifar', g.tariffCode)}${reqAttr('denumireMarfa', g.description)}${reqAttr('cantitate', 1)}${reqAttr('codUnitateMasura', 'H87')}${reqAttr('greutateNeta', netWeightKg)}${reqAttr('greutateBruta', g.weightKg)}${attr('valoareLeiFaraTva', g.valueRon)}/>`;
     })
     .join('');
 

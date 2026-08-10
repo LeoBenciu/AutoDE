@@ -44,6 +44,7 @@ assert.match(xml, /<notificare codTipOperatiune="10"/);
 assert.match(xml, /<bunuriTransportate codScopOperatiune="101"/);
 assert.doesNotMatch(xml, /codScopOperatiune="100101"/);
 assert.match(xml, /codTarifar="87032390"/);
+assert.match(xml, /greutateNeta="1327"/);
 assert.match(xml, /greutateBruta="1327"/);
 assert.match(xml, /valoareLeiFaraTva="65000\.25"/);
 assert.match(xml, /<partenerComercial codTara="DE"/);
@@ -70,6 +71,12 @@ const legacyDraftXml = buildETransportXml({
 });
 assert.match(legacyDraftXml, /codScopOperatiune="101"/);
 assert.doesNotMatch(legacyDraftXml, /codScopOperatiune="100101"/);
+const explicitNetWeightXml = buildETransportXml({
+  ...base,
+  goods: [{ ...base.goods[0], netWeightKg: 1300 }],
+});
+assert.match(explicitNetWeightXml, /greutateNeta="1300"/);
+assert.match(explicitNetWeightXml, /greutateBruta="1327"/);
 // BR-043: cod/codOrgTransport must be the bare CUI, without the country prefix.
 const roOrgXml = buildETransportXml({
   ...base,
