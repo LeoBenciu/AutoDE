@@ -18,6 +18,7 @@ import {
 } from '../src/etransport/etransport.service';
 import {
   buildETransportXml,
+  buildETransportInfirmationXml,
   DeclarationData,
   defaultScopeCode,
   normalizeScopeCode,
@@ -72,6 +73,16 @@ assert.deepEqual(
 );
 assert.deepEqual(parseAnafStatusResponse('{"stare":"nok"}'), { status: 'REJECTED' });
 assert.deepEqual(parseAnafStatusResponse('{"stare":"in_prelucru"}'), { status: 'PENDING' });
+const infirmationXml = buildETransportInfirmationXml(
+  '31194616',
+  '5F3P2L8P0T8D1574',
+  'Transport anulat & neefectuat',
+);
+assert.match(infirmationXml, /<eTransport[^>]*codDeclarant="31194616"/);
+assert.match(
+  infirmationXml,
+  /<confirmare uit="5F3P2L8P0T8D1574" tipConfirmare="30" observatii="Transport anulat &amp; neefectuat"\/>/,
+);
 // ANAF v2 accepts the short scope-code enumeration. Ownership-transfer flows
 // use Comercializare (101); non-transfer/customs/warehousing flows use 9999.
 for (const operationCode of ['10', '20', '30']) {
@@ -339,6 +350,73 @@ async function verifyDriveWorkbookParsing() {
   await assert.rejects(
     () => draftService.removeDraft(7, 3, 42),
     /Poți șterge doar ciornele/,
+  );
+
+  let confirmedDeclaration: any = {
+    id: 43,
+    tenantId: 7,
+    status: 'CONFIRMED',
+    operationType: 'AIC',
+    uit: '5F3P2L8P0T8D1574',
+    validUntil: new Date(Date.now() + 86_400_000),
+  };
+  const infirmationAudits: any[] = [];
+  let infirmationStatus: 'CONFIRMED' | 'REJECTED' = 'CONFIRMED';
+  const infirmationService = new EtransportService(
+    {
+      tenant: { findUnique: async () => ({ cui: '31194616' }) },
+      eTransportDeclaration: {
+        findFirst: async () => confirmedDeclaration,
+        findMany: async () =>
+          confirmedDeclaration.status === 'INFIRMING' ? [confirmedDeclaration] : [],
+        update: async ({ data }: any) => {
+          confirmedDeclaration = { ...confirmedDeclaration, ...data };
+          return confirmedDeclaration;
+        },
+      },
+    } as any,
+    {
+      configured: true,
+      submitDeclaration: async (_tenantId: number, cui: string, xmlPayload: string) => {
+        assert.equal(cui, '31194616');
+        assert.match(xmlPayload, /<confirmare[^>]*tipConfirmare="30"/);
+        assert.match(xmlPayload, /uit="5F3P2L8P0T8D1574"/);
+        return '5060642999';
+      },
+      checkStatus: async () => ({
+        status: infirmationStatus,
+        raw: infirmationStatus === 'CONFIRMED' ? '{"stare":"ok"}' : '{"stare":"nok"}',
+      }),
+    } as any,
+    { log: async (entry: any) => infirmationAudits.push(entry) } as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
+  await infirmationService.infirm(7, 3, 43, 'Transport anulat & neefectuat');
+  assert.equal(confirmedDeclaration.status, 'INFIRMING');
+  assert.equal(confirmedDeclaration.infirmationUploadId, '5060642999');
+  assert.equal(infirmationAudits[0]?.action, 'etransport.infirmation_submitted');
+  await infirmationService.pollStatuses();
+  assert.equal(confirmedDeclaration.status, 'INFIRMED');
+  assert.ok(confirmedDeclaration.infirmedAt instanceof Date);
+  assert.equal(infirmationAudits[1]?.action, 'etransport.infirmed');
+
+  confirmedDeclaration = {
+    ...confirmedDeclaration,
+    id: 44,
+    status: 'CONFIRMED',
+    infirmationUploadId: null,
+    infirmationResponse: null,
+    infirmedAt: null,
+  };
+  infirmationStatus = 'REJECTED';
+  await infirmationService.infirm(7, 3, 44, 'Transport neefectuat');
+  await infirmationService.pollStatuses();
+  assert.equal(confirmedDeclaration.status, 'CONFIRMED');
+  assert.equal(
+    infirmationAudits[infirmationAudits.length - 1]?.action,
+    'etransport.infirmation_rejected',
   );
 }
 

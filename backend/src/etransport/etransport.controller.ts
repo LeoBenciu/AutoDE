@@ -71,6 +71,16 @@ export class EtransportController {
     return this.etransport.removeDraft(user.tenantId, user.userId, id);
   }
 
+  @Post(':id/infirm')
+  @Roles('ACCOUNTANT')
+  infirm(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { reason?: string },
+  ) {
+    return this.etransport.infirm(user.tenantId, user.userId, id, dto?.reason);
+  }
+
   @Get(':id/uit-sheet')
   async uitSheet(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Res() res: Response) {
     const pdf = await this.etransport.uitSheet(user.tenantId, id);

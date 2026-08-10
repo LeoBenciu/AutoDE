@@ -628,6 +628,12 @@ async function main() {
       },
     });
     assert.match(declaration.xmlPayload, /<eTransport/);
+    await request(baseUrl, `/etransport/${declaration.id}/infirm`, {
+      method: 'POST',
+      token: tokens.get('ACCOUNTANT'),
+      expected: 400,
+      body: { reason: 'Transport anulat' },
+    });
     await request(baseUrl, `/etransport/${declaration.id}/submit`, {
       method: 'POST',
       token: tokens.get('ACCOUNTANT'),

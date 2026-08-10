@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
 import PDFDocument = require('pdfkit');
 import { PrismaService } from '../common/prisma.service';
@@ -15,6 +16,7 @@ import { isVehiclePurchaseDocument } from '../vehicles/vehicle-document-sync';
 import { DriveVehicleDataService } from './drive-vehicle-data.service';
 import {
   buildETransportXml,
+  buildETransportInfirmationXml,
   DeclarationData,
   ETransportDocument,
   ETransportGood,
@@ -421,6 +423,10 @@ export class EtransportService {
         uit: null,
         uitDocumentId: null,
         anafUploadId: null,
+        infirmationUploadId: null,
+        infirmationReason: null,
+        infirmationResponse: Prisma.DbNull,
+        infirmedAt: null,
         declaredAt: null,
         validFrom: null,
         validUntil: null,
@@ -776,6 +782,60 @@ export class EtransportService {
     return { id, deleted: true };
   }
 
+  /** Submit the official tipConfirmare=30 message for an existing valid UIT. */
+  async infirm(
+    tenantId: number,
+    userId: number,
+    id: number,
+    reasonInput: unknown,
+  ) {
+    const reason = textValue(reasonInput);
+    if (!reason || reason.length < 3) {
+      throw new BadRequestException('Completează motivul infirmării (minimum 3 caractere)');
+    }
+    if (reason.length > 200) {
+      throw new BadRequestException('Motivul infirmării poate avea maximum 200 de caractere');
+    }
+
+    const decl = await this.get(tenantId, id);
+    if (decl.status !== 'CONFIRMED' || !decl.uit) {
+      throw new BadRequestException('Poți infirma doar o declarație confirmată, care are cod UIT');
+    }
+    if (decl.validUntil && decl.validUntil.getTime() < Date.now()) {
+      throw new BadRequestException('Codul UIT a expirat și nu mai poate fi infirmat din AutoImport');
+    }
+
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { cui: true },
+    });
+    if (!tenant?.cui) {
+      throw new BadRequestException('Completează CUI-ul firmei înainte de infirmarea la ANAF');
+    }
+
+    const xml = buildETransportInfirmationXml(tenant.cui, decl.uit, reason);
+    const uploadId = await this.anaf.submitDeclaration(tenantId, tenant.cui, xml);
+    const updated = await this.prisma.eTransportDeclaration.update({
+      where: { id },
+      data: {
+        status: 'INFIRMING',
+        infirmationUploadId: uploadId,
+        infirmationReason: reason,
+        infirmationResponse: { submittedXml: xml },
+        infirmedAt: null,
+      },
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'etransport.infirmation_submitted',
+      entity: 'ETransportDeclaration',
+      entityId: id,
+      details: { uit: decl.uit, uploadId, reason },
+    });
+    return updated;
+  }
+
   private validateForSubmission(input: CreateDeclarationInput): void {
     const errors: string[] = [];
     if (!OPERATION_CODES[input.operationType]) errors.push('tipul operațiunii');
@@ -849,17 +909,60 @@ export class EtransportService {
     }
   }
 
-  /** Poll ANAF for SUBMITTED declarations until the UIT (or a rejection) arrives. */
+  /** Poll ANAF for both initial submissions and infirmation messages. */
   @Cron('0 */2 * * * *')
   async pollStatuses() {
     if (!this.anaf.configured) return;
     const pending = await this.prisma.eTransportDeclaration.findMany({
-      where: { status: 'SUBMITTED', anafUploadId: { not: null } },
+      where: {
+        OR: [
+          { status: 'SUBMITTED', anafUploadId: { not: null } },
+          { status: 'INFIRMING', infirmationUploadId: { not: null } },
+        ],
+      },
       take: 20,
     });
     for (const decl of pending) {
       try {
-        const result = await this.anaf.checkStatus(decl.tenantId, decl.anafUploadId!);
+        const infirming = decl.status === 'INFIRMING';
+        const uploadId = infirming ? decl.infirmationUploadId! : decl.anafUploadId!;
+        const result = await this.anaf.checkStatus(decl.tenantId, uploadId);
+        if (infirming) {
+          if (result.status === 'CONFIRMED') {
+            await this.prisma.eTransportDeclaration.update({
+              where: { id: decl.id },
+              data: {
+                status: 'INFIRMED',
+                infirmedAt: new Date(),
+                infirmationResponse: { raw: result.raw },
+              },
+            });
+            await this.audit.log({
+              tenantId: decl.tenantId,
+              action: 'etransport.infirmed',
+              entity: 'ETransportDeclaration',
+              entityId: decl.id,
+              details: { uit: decl.uit, uploadId },
+            });
+          } else if (result.status === 'REJECTED') {
+            // The infirmation failed; the original confirmed UIT remains valid.
+            await this.prisma.eTransportDeclaration.update({
+              where: { id: decl.id },
+              data: {
+                status: 'CONFIRMED',
+                infirmationResponse: { raw: result.raw },
+              },
+            });
+            await this.audit.log({
+              tenantId: decl.tenantId,
+              action: 'etransport.infirmation_rejected',
+              entity: 'ETransportDeclaration',
+              entityId: decl.id,
+              details: { uit: decl.uit, uploadId },
+            });
+          }
+          continue;
+        }
         if (result.status === 'CONFIRMED') {
           const validFrom = decl.transportDate ?? decl.declaredAt ?? new Date();
           const validUntil = new Date(validFrom);

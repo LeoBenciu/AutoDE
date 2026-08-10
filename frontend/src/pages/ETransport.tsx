@@ -3,6 +3,7 @@ import {
   useCreateEtransportMutation,
   useDeleteEtransportDraftMutation,
   useEtransportQuery,
+  useInfirmEtransportMutation,
   useLazyBnrRateQuery,
   useLazyCompanyFromAnafQuery,
   useLazyEtransportPrefillQuery,
@@ -109,6 +110,7 @@ export default function ETransport() {
   const { data: declarations = [] } = useEtransportQuery();
   const [submitDecl] = useSubmitEtransportMutation();
   const [deleteDraft] = useDeleteEtransportDraftMutation();
+  const [infirmDecl] = useInfirmEtransportMutation();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [error, setError] = useState('');
@@ -159,12 +161,15 @@ export default function ETransport() {
                     {daysLeft != null && daysLeft < 0 && (
                       <span className="ml-1 font-semibold text-red-600">· UIT expirat</span>
                     )}
+                    {d.status === 'CONFIRMED' && d.infirmationUploadId && d.infirmationResponse?.raw && (
+                      <span className="ml-1 font-semibold text-red-600">· Ultima infirmare a fost respinsă de ANAF</span>
+                    )}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <StatusChip status={d.status} />
-                {d.status !== 'SUBMITTED' && (
+                {!['SUBMITTED', 'INFIRMING'].includes(d.status) && (
                   <button
                     onClick={() => setEditing(d)}
                     className="rounded-lg border border-line-strong bg-white px-3.5 py-2 text-[13px] text-ink-soft"
@@ -205,6 +210,29 @@ export default function ETransport() {
                     className="rounded-lg bg-sidebar px-3.5 py-2 text-[13px] font-semibold text-white"
                   >
                     Trimite la ANAF
+                  </button>
+                )}
+                {d.status === 'CONFIRMED' && (
+                  <button
+                    onClick={async () => {
+                      const reason = window.prompt(
+                        'Motivul infirmării la ANAF (de exemplu: transport anulat sau nefinalizat):',
+                      )?.trim();
+                      if (!reason) return;
+                      if (!window.confirm(
+                        `Infirmi la ANAF declarația cu UIT ${d.uit}? Această acțiune nu șterge istoricul și nu poate fi tratată ca o simplă ștergere locală.`,
+                      )) return;
+                      setError('');
+                      try {
+                        await infirmDecl({ id: d.id, reason }).unwrap();
+                      } catch (err: any) {
+                        setError(err?.data?.message ?? 'Declarația nu a putut fi infirmată la ANAF');
+                      }
+                    }}
+                    className="rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-[13px] font-semibold text-amber-800"
+                    title="Transmite la ANAF confirmarea oficială Infirmat"
+                  >
+                    Infirmă la ANAF
                   </button>
                 )}
                 {d.uit && (

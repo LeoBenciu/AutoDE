@@ -268,6 +268,14 @@ export const api = createApi({
       query: (id) => ({ url: `/etransport/${id}`, method: 'DELETE' }),
       invalidatesTags: ['ETransport'],
     }),
+    infirmEtransport: build.mutation<any, { id: number; reason: string }>({
+      query: ({ id, reason }) => ({
+        url: `/etransport/${id}/infirm`,
+        method: 'POST',
+        body: { reason },
+      }),
+      invalidatesTags: ['ETransport', 'Vehicle'],
+    }),
 
     contracts: build.query<any[], number | void>({
       query: (vehicleId) => ({ url: '/contracts', params: vehicleId ? { vehicleId } : undefined }),
@@ -467,6 +475,7 @@ export const {
   useUpdateEtransportMutation,
   useSubmitEtransportMutation,
   useDeleteEtransportDraftMutation,
+  useInfirmEtransportMutation,
   useAnafStatusQuery,
   useLazyAnafAuthorizeUrlQuery,
   useAnafDisconnectMutation,

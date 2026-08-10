@@ -234,3 +234,15 @@ export function buildETransportXml(d: DeclarationData): string {
   </notificare>
 </eTransport>`;
 }
+
+/** Official RO e-Transport confirmation message: tipConfirmare 30 = Infirmat. */
+export function buildETransportInfirmationXml(
+  tenantCui: string,
+  uit: string,
+  reason: string,
+): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<eTransport xmlns="mfp:anaf:dgti:eTransport:declaratie:v2"${reqAttr('codDeclarant', tenantCui)}>
+  <confirmare${reqAttr('uit', uit)}${reqAttr('tipConfirmare', '30')}${reqAttr('observatii', reason)}/>
+</eTransport>`;
+}
