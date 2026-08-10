@@ -65,6 +65,16 @@ export class EtransportController {
     return this.etransport.submit(user.tenantId, user.userId, id);
   }
 
+  @Post(':id/recover')
+  @Roles('ACCOUNTANT')
+  recoverSubmission(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { uploadId?: string },
+  ) {
+    return this.etransport.recoverSubmission(user.tenantId, user.userId, id, dto?.uploadId);
+  }
+
   @Get(':id/uit-sheet')
   async uitSheet(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Res() res: Response) {
     const pdf = await this.etransport.uitSheet(user.tenantId, id);

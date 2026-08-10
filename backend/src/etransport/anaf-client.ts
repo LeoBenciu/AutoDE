@@ -27,6 +27,43 @@ function describeAnafResponse(text: string): string {
   return text.slice(0, 1000);
 }
 
+/** Accept both ANAF's JSON upload receipt and its older XML-like response. */
+export function parseAnafUploadIndex(text: string): string | undefined {
+  try {
+    const body = JSON.parse(text);
+    const rawIndex = body?.index_incarcare;
+    const index = String(rawIndex ?? '').trim();
+    if (/^\d+$/.test(index)) return index;
+  } catch {
+    // Not JSON — try the legacy response syntax below.
+  }
+
+  return text.match(/index_incarcare["']?\s*(?:=|:)\s*["']?(\d+)/i)?.[1];
+}
+
+export function parseAnafStatusResponse(
+  text: string,
+): { status: 'CONFIRMED' | 'REJECTED' | 'PENDING'; uit?: string } {
+  let state = '';
+  let uit: string | undefined;
+  try {
+    const body = JSON.parse(text);
+    state = String(body?.stare ?? body?.status ?? '').trim().toLowerCase();
+    const rawUit = String(body?.UIT ?? body?.uit ?? '').trim().toUpperCase();
+    if (/^[0-9A-Z]{10,20}$/.test(rawUit)) uit = rawUit;
+  } catch {
+    // Not JSON — retain compatibility with the older text/XML response.
+    state = text.match(/stare["']?\s*(?:=|:)\s*["']?([^"'\s,}]+)/i)?.[1]?.toLowerCase() ?? '';
+    uit = text.match(/UIT["']?\s*(?:=|:)\s*["']?([0-9A-Z]{10,20})/i)?.[1];
+  }
+
+  if (/^(?:nok|rejected|respins)/.test(state)) return { status: 'REJECTED' };
+  if (uit || /^(?:ok|valid|validated|confirmed)/.test(state)) {
+    return { status: 'CONFIRMED', uit };
+  }
+  return { status: 'PENDING' };
+}
+
 /**
  * ANAF OAuth2 + e-Transport web-service client.
  *
@@ -226,11 +263,11 @@ export class AnafClient {
       }
       throw new BadRequestException(`ANAF a respins declarația (${res.status}): ${describeAnafResponse(text)}`);
     }
-    const indexMatch = text.match(/index_incarcare="?(\d+)/);
-    if (!indexMatch) {
+    const uploadId = parseAnafUploadIndex(text);
+    if (!uploadId) {
       throw new BadRequestException(`Răspuns ANAF neașteptat: ${describeAnafResponse(text)}`);
     }
-    return indexMatch[1];
+    return uploadId;
   }
 
   /** Poll declaration status; returns UIT when validated. */
@@ -244,12 +281,9 @@ export class AnafClient {
       this.logger.warn(`ANAF status check failed (${res.status}) for upload ${uploadId}`);
       return { status: 'UNKNOWN', raw: text };
     }
-    const uitMatch = text.match(/UIT[=:"\s]+([0-9A-Z]{10,20})/i);
-    const okMatch = /stare="?ok/i.test(text) || uitMatch != null;
-    const nokMatch = /stare="?nok/i.test(text);
+    const parsed = parseAnafStatusResponse(text);
     return {
-      status: nokMatch ? 'REJECTED' : okMatch ? 'CONFIRMED' : 'PENDING',
-      uit: uitMatch?.[1],
+      ...parsed,
       raw: text,
     };
   }
