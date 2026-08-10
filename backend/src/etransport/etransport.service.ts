@@ -756,7 +756,7 @@ export class EtransportService {
     return updated;
   }
 
-  /** Drafts have no accepted ANAF lifecycle to preserve and may be removed. */
+  /** Remove a local draft only; this endpoint never sends a cancellation to ANAF. */
   async removeDraft(tenantId: number, userId: number, id: number) {
     const decl = await this.get(tenantId, id);
     if (decl.status !== 'DRAFT') {

@@ -176,7 +176,9 @@ export default function ETransport() {
                 {d.status === 'DRAFT' && (
                   <button
                     onClick={async () => {
-                      if (!window.confirm('Ștergi această ciornă din AutoImport? Acțiunea nu poate fi anulată.')) return;
+                      if (!window.confirm(
+                        'Ștergi această ciornă din AutoImport? Acțiunea nu poate fi anulată și nu anulează o eventuală trimitere deja acceptată de ANAF.',
+                      )) return;
                       setError('');
                       try {
                         await deleteDraft(d.id).unwrap();
