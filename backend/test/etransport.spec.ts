@@ -12,6 +12,7 @@ import {
   parseVehicleWorkbook,
 } from '../src/etransport/drive-vehicle-data.service';
 import {
+  EtransportService,
   selectUitPurchaseSource,
   validityDaysForOperation,
 } from '../src/etransport/etransport.service';
@@ -302,6 +303,43 @@ async function verifyDriveWorkbookParsing() {
   assert.equal(status.configured, true);
   assert.equal(status.connected, false);
   assert.match(String((status as any).error), /Credentialele Google Drive/);
+
+  const auditEntries: any[] = [];
+  let storedDeclaration: any = {
+    id: 41,
+    tenantId: 7,
+    status: 'DRAFT',
+    operationType: 'AIC',
+    vehicleId: 9,
+  };
+  const draftService = new EtransportService(
+    {
+      eTransportDeclaration: {
+        findFirst: async ({ where }: any) =>
+          storedDeclaration?.id === where.id && storedDeclaration?.tenantId === where.tenantId
+            ? storedDeclaration
+            : null,
+        delete: async ({ where }: any) => {
+          assert.equal(where.id, storedDeclaration.id);
+          storedDeclaration = null;
+        },
+      },
+    } as any,
+    {} as any,
+    { log: async (entry: any) => auditEntries.push(entry) } as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
+  assert.deepEqual(await draftService.removeDraft(7, 3, 41), { id: 41, deleted: true });
+  assert.equal(storedDeclaration, null);
+  assert.equal(auditEntries[0]?.action, 'etransport.draft_deleted');
+
+  storedDeclaration = { id: 42, tenantId: 7, status: 'SUBMITTED', operationType: 'AIC' };
+  await assert.rejects(
+    () => draftService.removeDraft(7, 3, 42),
+    /Poți șterge doar ciornele/,
+  );
 }
 
 verifyDriveWorkbookParsing()

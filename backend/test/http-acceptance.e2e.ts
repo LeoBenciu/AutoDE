@@ -633,6 +633,20 @@ async function main() {
       token: tokens.get('ACCOUNTANT'),
       expected: 400,
     });
+    const deletedDraft = await request(baseUrl, `/etransport/${declaration.id}`, {
+      method: 'DELETE',
+      token: tokens.get('ACCOUNTANT'),
+      expected: 200,
+    });
+    assert.deepEqual(deletedDraft, { id: declaration.id, deleted: true });
+    const declarationsAfterDelete = await request(baseUrl, '/etransport', {
+      token: tokens.get('ACCOUNTANT'),
+      expected: 200,
+    });
+    assert.equal(
+      declarationsAfterDelete.some((item: { id: number }) => item.id === declaration.id),
+      false,
+    );
 
     console.log(
       'HTTP acceptance passed: auth roles, tenancy, vehicles, documents, archive/download, contracts, e-Transport and SAGA preferences.',

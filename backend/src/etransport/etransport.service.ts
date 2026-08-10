@@ -756,78 +756,24 @@ export class EtransportService {
     return updated;
   }
 
-  /**
-   * Attach an upload ANAF already accepted when an older client failed to parse
-   * its JSON receipt. This checks the remote state and never uploads XML again.
-   */
-  async recoverSubmission(
-    tenantId: number,
-    userId: number,
-    id: number,
-    uploadIdInput: unknown,
-  ) {
-    const uploadId = textValue(uploadIdInput);
-    if (!uploadId || !/^\d+$/.test(uploadId)) {
-      throw new BadRequestException('Indexul de încărcare ANAF trebuie să conțină numai cifre');
-    }
-
+  /** Drafts have no accepted ANAF lifecycle to preserve and may be removed. */
+  async removeDraft(tenantId: number, userId: number, id: number) {
     const decl = await this.get(tenantId, id);
-    if (decl.status === 'CONFIRMED') return decl;
-    if (!['DRAFT', 'REJECTED', 'SUBMITTED'].includes(decl.status)) {
-      throw new BadRequestException(`Declarația nu poate fi recuperată din starea ${decl.status}`);
-    }
-    if (decl.anafUploadId && decl.anafUploadId !== uploadId) {
+    if (decl.status !== 'DRAFT') {
       throw new BadRequestException(
-        `Declarația este deja asociată indexului ANAF ${decl.anafUploadId}`,
+        'Poți șterge doar ciornele care nu au fost înregistrate la ANAF',
       );
     }
-
-    const result = await this.anaf.checkStatus(tenantId, uploadId);
-    if (result.status === 'UNKNOWN') {
-      throw new BadRequestException('Starea încărcării nu a putut fi verificată la ANAF');
-    }
-
-    const declaredAt = decl.declaredAt ?? new Date();
-    const data: Record<string, unknown> = {
-      anafUploadId: uploadId,
-      anafResponse: { raw: result.raw },
-      declaredAt,
-      status: result.status === 'REJECTED' ? 'REJECTED' : 'SUBMITTED',
-    };
-
-    if (result.status === 'CONFIRMED') {
-      if (!result.uit) {
-        throw new BadRequestException('ANAF indică o stare validă, dar nu a returnat codul UIT');
-      }
-      const validFrom = decl.transportDate ?? declaredAt;
-      const validUntil = new Date(validFrom);
-      validUntil.setUTCDate(validUntil.getUTCDate() + validityDaysForOperation(decl.operationType));
-      Object.assign(data, {
-        status: 'CONFIRMED',
-        uit: result.uit,
-        validFrom,
-        validUntil,
-      });
-    }
-
-    const updated = await this.prisma.eTransportDeclaration.update({
-      where: { id },
-      data: data as any,
-    });
+    await this.prisma.eTransportDeclaration.delete({ where: { id } });
     await this.audit.log({
       tenantId,
       userId,
-      action: 'etransport.submission_recovered',
+      action: 'etransport.draft_deleted',
       entity: 'ETransportDeclaration',
       entityId: id,
-      details: { uploadId, status: updated.status, uit: updated.uit },
+      details: { operationType: decl.operationType, vehicleId: decl.vehicleId },
     });
-    if (updated.status === 'CONFIRMED') {
-      await this.saveUitSheet(updated.id).catch((err) =>
-        this.logger.warn(`saving UIT sheet for declaration ${updated.id} failed: ${(err as Error).message}`),
-      );
-    }
-    return updated;
+    return { id, deleted: true };
   }
 
   private validateForSubmission(input: CreateDeclarationInput): void {

@@ -264,12 +264,8 @@ export const api = createApi({
       query: (id) => ({ url: `/etransport/${id}/submit`, method: 'POST' }),
       invalidatesTags: ['ETransport'],
     }),
-    recoverEtransport: build.mutation<any, { id: number; uploadId: string }>({
-      query: ({ id, uploadId }) => ({
-        url: `/etransport/${id}/recover`,
-        method: 'POST',
-        body: { uploadId },
-      }),
+    deleteEtransportDraft: build.mutation<{ id: number; deleted: boolean }, number>({
+      query: (id) => ({ url: `/etransport/${id}`, method: 'DELETE' }),
       invalidatesTags: ['ETransport'],
     }),
 
@@ -470,7 +466,7 @@ export const {
   useCreateEtransportMutation,
   useUpdateEtransportMutation,
   useSubmitEtransportMutation,
-  useRecoverEtransportMutation,
+  useDeleteEtransportDraftMutation,
   useAnafStatusQuery,
   useLazyAnafAuthorizeUrlQuery,
   useAnafDisconnectMutation,
