@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import {
   useApproveDocumentMutation,
@@ -10,6 +10,7 @@ import {
   useCorrectFieldMutation,
   useDocumentQuery,
   useDocumentsQuery,
+  useManagementsQuery,
   useLazyDownloadUrlQuery,
   usePartiesQuery,
   usePostingPreviewQuery,
@@ -499,6 +500,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   const { data: vehicles = [] } = useVehiclesQuery();
   const { data: parties = [] } = usePartiesQuery();
   const { data: accounts = [] } = useChartOfAccountsQuery();
+  const { data: managements = [] } = useManagementsQuery();
   const [correct] = useCorrectFieldMutation();
   const [reprocess, { isLoading: reprocessing }] = useReprocessDocumentMutation();
   const [approve, { isLoading: approving }] = useApproveDocumentMutation();
@@ -1420,9 +1422,9 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                         disabled={doc.reviewStatus === 'APPROVED'}
                         onSave={(value) => saveLineField(index, 'stock_id', value)}
                       />
-                      <LineField
-                        label="Gestiune"
+                      <ManagementField
                         value={item.management ?? ''}
+                        managements={managements}
                         disabled={doc.reviewStatus === 'APPROVED'}
                         onSave={(value) => saveLineField(index, 'management', value)}
                       />
@@ -1564,6 +1566,98 @@ function JournalPreview({
         </>
       )}
     </div>
+  );
+}
+
+type ManagementOption = { code: string; name: string };
+
+// Searchable gestiune picker: the client selects by name (they don't know the
+// codes), but the line still stores the gestiune CODE. Backed by a native
+// datalist so typing filters the list. A free-typed value is kept as-is.
+function resolveManagementCode(
+  input: string,
+  managements: ManagementOption[],
+): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+  const combined = managements.find((m) => `${m.code} · ${m.name}` === trimmed);
+  if (combined) return combined.code;
+  if (managements.some((m) => m.code === trimmed)) return trimmed;
+  const byName = managements.find(
+    (m) => m.name.toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (byName) return byName.code;
+  const codePart = trimmed.split('·')[0].trim();
+  if (managements.some((m) => m.code === codePart)) return codePart;
+  return trimmed;
+}
+
+function ManagementField({
+  value,
+  managements,
+  onSave,
+  disabled,
+}: {
+  value: string;
+  managements: ManagementOption[];
+  onSave: (value: string) => Promise<unknown>;
+  disabled?: boolean;
+}) {
+  const label = (code: string) => {
+    const match = managements.find((m) => m.code === code);
+    return match ? `${match.code} · ${match.name}` : code;
+  };
+  const [draft, setDraft] = useState(label(String(value ?? '')));
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const listId = useId();
+  useEffect(
+    () => setDraft(label(String(value ?? ''))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [value, managements],
+  );
+
+  const save = async () => {
+    const code = resolveManagementCode(draft, managements);
+    if (code === String(value ?? '')) {
+      setDraft(label(code));
+      return;
+    }
+    setSaving(true);
+    setFailed(false);
+    try {
+      await onSave(code);
+      setDraft(label(code));
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const controlClass = `mt-1 w-full rounded-md border bg-white px-2 py-1.5 text-xs text-ink focus:border-brand focus:outline-none disabled:bg-slate-100 ${
+    failed ? 'border-red-400' : 'border-line-strong'
+  }`;
+  return (
+    <label className="min-w-0 text-[10px] font-medium uppercase tracking-wide text-muted">
+      Gestiune{saving ? ' · se salvează' : ''}
+      <input
+        list={listId}
+        value={draft}
+        disabled={disabled || saving}
+        placeholder="Caută gestiune…"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={save}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+        }}
+        className={controlClass}
+      />
+      <datalist id={listId}>
+        {managements.map((m) => (
+          <option key={m.code} value={`${m.code} · ${m.name}`} />
+        ))}
+      </datalist>
+    </label>
   );
 }
 
