@@ -94,9 +94,46 @@ export const OPERATION_CODES: Record<string, string> = {
 // Ownership-transfer operations default to 101 (Comercializare); non-transfer,
 // customs and warehousing flows use the generic 9999 scope.
 const NON_TRANSFER_OPERATION_CODES = new Set(['12', '14', '22', '24', '40', '50', '60', '70']);
+const VALID_SCOPE_CODES = new Set([
+  '101',
+  '201',
+  '301',
+  '401',
+  '501',
+  '601',
+  '703',
+  '704',
+  '705',
+  '801',
+  '802',
+  '901',
+  '1001',
+  '1101',
+  '9901',
+  '9999',
+]);
 
 export function defaultScopeCode(operationCode: string): string {
   return NON_TRANSFER_OPERATION_CODES.has(operationCode) ? '9999' : '101';
+}
+
+/**
+ * Keep drafts created by older releases resubmittable. Those releases could
+ * persist operation-prefixed scope codes such as 100101. ANAF v2 expects the
+ * short suffix (101); fixed-purpose legacy codes such as 404001 have no valid
+ * short suffix and therefore fall back to the operation's current default.
+ */
+export function normalizeScopeCode(scopeCode: unknown, operationCode: string): string {
+  const raw = String(scopeCode ?? '').trim();
+  if (!raw) return defaultScopeCode(operationCode);
+  if (VALID_SCOPE_CODES.has(raw)) return raw;
+
+  if (/^\d{6}$/.test(raw)) {
+    const shortCode = String(Number(raw.slice(2)));
+    if (VALID_SCOPE_CODES.has(shortCode)) return shortCode;
+  }
+
+  return defaultScopeCode(operationCode);
 }
 
 const esc = (s: unknown): string =>
@@ -149,7 +186,7 @@ export function buildETransportXml(d: DeclarationData): string {
   const operationCode = OPERATION_CODES[d.operationType] ?? '';
   const goods = d.goods
     .map((g) => {
-      const scope = isBlank(g.scopeCode) ? defaultScopeCode(operationCode) : g.scopeCode;
+      const scope = normalizeScopeCode(g.scopeCode, operationCode);
       return `
     <bunuriTransportate${reqAttr('codScopOperatiune', scope)}${attr('codTarifar', g.tariffCode)}${reqAttr('denumireMarfa', g.description)}${reqAttr('cantitate', 1)}${reqAttr('codUnitateMasura', 'H87')}${reqAttr('greutateBruta', g.weightKg)}${attr('valoareLeiFaraTva', g.valueRon)}/>`;
     })
