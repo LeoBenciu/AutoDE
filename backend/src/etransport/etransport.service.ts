@@ -738,6 +738,15 @@ export class EtransportService {
     }
     if (!input.transporter.name) errors.push('denumirea transportatorului');
     if (!/^[A-Z]{2}$/.test(input.transporter.country)) errors.push('țara transportatorului');
+    // Schematron BR-043: a Romanian transport organizer on a non-national
+    // operation must carry its CUI (codOrgTransport).
+    if (
+      input.transporter.country?.toUpperCase() === 'RO' &&
+      OPERATION_CODES[input.operationType] !== '30' &&
+      !textValue(input.transporter.taxId)
+    ) {
+      errors.push('codul fiscal (CUI) al transportatorului');
+    }
     if (!input.vehiclePlate) errors.push('numărul vehiculului de transport');
     if (!/^[A-Z]{2}$/.test(input.loadingPlace.country)) errors.push('țara de încărcare');
     if (!/^[A-Z]{2}$/.test(input.unloadingPlace.country)) errors.push('țara de descărcare');
