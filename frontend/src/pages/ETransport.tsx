@@ -6,6 +6,7 @@ import {
   useLazyCompanyFromAnafQuery,
   useLazyEtransportPrefillQuery,
   useParseEtransportMessageMutation,
+  useRecoverEtransportMutation,
   useSubmitEtransportMutation,
   useUpdateEtransportMutation,
   useVehiclesQuery,
@@ -107,6 +108,7 @@ function TruckTile() {
 export default function ETransport() {
   const { data: declarations = [] } = useEtransportQuery();
   const [submitDecl] = useSubmitEtransportMutation();
+  const [recoverDecl] = useRecoverEtransportMutation();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [error, setError] = useState('');
@@ -169,6 +171,26 @@ export default function ETransport() {
                     title="Modificarea regenerează codul UIT"
                   >
                     Modifică
+                  </button>
+                )}
+                {(d.status === 'DRAFT' || d.status === 'REJECTED') && (
+                  <button
+                    onClick={async () => {
+                      const uploadId = window.prompt(
+                        'Introdu indexul de încărcare primit de la ANAF (index_incarcare):',
+                      )?.trim();
+                      if (!uploadId) return;
+                      setError('');
+                      try {
+                        await recoverDecl({ id: d.id, uploadId }).unwrap();
+                      } catch (err: any) {
+                        setError(err?.data?.message ?? 'Trimiterea ANAF nu a putut fi recuperată');
+                      }
+                    }}
+                    className="rounded-lg border border-line-strong bg-white px-3.5 py-2 text-[13px] text-ink-soft"
+                    title="Atașează o trimitere deja acceptată de ANAF, fără retransmitere"
+                  >
+                    Am index ANAF
                   </button>
                 )}
                 {(d.status === 'DRAFT' || d.status === 'REJECTED') && (

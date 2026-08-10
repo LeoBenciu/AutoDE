@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { ConfigService } from '@nestjs/config';
 import JSZip = require('jszip');
+import {
+  parseAnafStatusResponse,
+  parseAnafUploadIndex,
+} from '../src/etransport/anaf-client';
 import { parseBnrRateXml } from '../src/etransport/bnr-rate';
 import {
   DriveVehicleDataService,
@@ -49,6 +53,24 @@ assert.match(xml, /greutateBruta="1327"/);
 assert.match(xml, /valoareLeiFaraTva="65000\.25"/);
 assert.match(xml, /<partenerComercial codTara="DE"/);
 assert.match(xml, /<dateTransport nrVehicul="B123UIT"/);
+// ANAF currently returns a JSON receipt even though older environments used
+// an XML-like attribute. Both formats must advance the declaration to SUBMITTED.
+const successfulUploadResponse = JSON.stringify({
+  dateResponse: '202608101800',
+  ExecutionStatus: 0,
+  index_incarcare: 5060642348,
+  UIT: '5F3P2L8P0T8D1574',
+  trace_id: 'b5559b50-6027-4135-8560-c1407545097c',
+});
+assert.equal(parseAnafUploadIndex(successfulUploadResponse), '5060642348');
+assert.equal(parseAnafUploadIndex('<header index_incarcare="5060642349"/>'), '5060642349');
+assert.equal(parseAnafUploadIndex('{"ExecutionStatus":1}'), undefined);
+assert.deepEqual(
+  parseAnafStatusResponse('{"stare":"ok","UIT":"5F3P2L8P0T8D1574"}'),
+  { status: 'CONFIRMED', uit: '5F3P2L8P0T8D1574' },
+);
+assert.deepEqual(parseAnafStatusResponse('{"stare":"nok"}'), { status: 'REJECTED' });
+assert.deepEqual(parseAnafStatusResponse('{"stare":"in_prelucru"}'), { status: 'PENDING' });
 // ANAF v2 accepts the short scope-code enumeration. Ownership-transfer flows
 // use Comercializare (101); non-transfer/customs/warehousing flows use 9999.
 for (const operationCode of ['10', '20', '30']) {

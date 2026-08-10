@@ -264,6 +264,14 @@ export const api = createApi({
       query: (id) => ({ url: `/etransport/${id}/submit`, method: 'POST' }),
       invalidatesTags: ['ETransport'],
     }),
+    recoverEtransport: build.mutation<any, { id: number; uploadId: string }>({
+      query: ({ id, uploadId }) => ({
+        url: `/etransport/${id}/recover`,
+        method: 'POST',
+        body: { uploadId },
+      }),
+      invalidatesTags: ['ETransport'],
+    }),
 
     contracts: build.query<any[], number | void>({
       query: (vehicleId) => ({ url: '/contracts', params: vehicleId ? { vehicleId } : undefined }),
@@ -462,6 +470,7 @@ export const {
   useCreateEtransportMutation,
   useUpdateEtransportMutation,
   useSubmitEtransportMutation,
+  useRecoverEtransportMutation,
   useAnafStatusQuery,
   useLazyAnafAuthorizeUrlQuery,
   useAnafDisconnectMutation,
