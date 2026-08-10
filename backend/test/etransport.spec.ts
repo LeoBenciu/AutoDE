@@ -11,7 +11,11 @@ import {
   selectUitPurchaseSource,
   validityDaysForOperation,
 } from '../src/etransport/etransport.service';
-import { buildETransportXml, DeclarationData } from '../src/etransport/xml-builder';
+import {
+  buildETransportXml,
+  DeclarationData,
+  defaultScopeCode,
+} from '../src/etransport/xml-builder';
 import { eTransportCodJudet } from '../src/etransport/judet-codes';
 
 const base: DeclarationData = {
@@ -36,12 +40,21 @@ const xml = buildETransportXml(base);
 // v2 schema: notificare/bunuriTransportate/partenerComercial/dateTransport
 // carry their data as XML attributes, not child elements.
 assert.match(xml, /<notificare codTipOperatiune="10"/);
-assert.match(xml, /<bunuriTransportate codScopOperatiune="100101"/);
+assert.match(xml, /<bunuriTransportate codScopOperatiune="101"/);
+assert.doesNotMatch(xml, /codScopOperatiune="100101"/);
 assert.match(xml, /codTarifar="87032390"/);
 assert.match(xml, /greutateBruta="1327"/);
 assert.match(xml, /valoareLeiFaraTva="65000\.25"/);
 assert.match(xml, /<partenerComercial codTara="DE"/);
 assert.match(xml, /<dateTransport nrVehicul="B123UIT"/);
+// ANAF v2 accepts the short scope-code enumeration. Ownership-transfer flows
+// use Comercializare (101); non-transfer/customs/warehousing flows use 9999.
+for (const operationCode of ['10', '20', '30']) {
+  assert.equal(defaultScopeCode(operationCode), '101');
+}
+for (const operationCode of ['12', '14', '22', '24', '40', '50', '60', '70']) {
+  assert.equal(defaultScopeCode(operationCode), '9999');
+}
 // BR-043: cod/codOrgTransport must be the bare CUI, without the country prefix.
 const roOrgXml = buildETransportXml({
   ...base,

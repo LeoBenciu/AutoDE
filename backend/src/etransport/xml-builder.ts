@@ -87,24 +87,16 @@ export const OPERATION_CODES: Record<string, string> = {
   DIE: '70',
 };
 
-// codScopOperatiune is a 6-digit code whose valid set depends on codTipOperatiune;
-// ANAF enforces the pairing with Schematron rule BR-207. The per-operation default
-// is "Comercializare" for the ownership-transfer flows (fits buying/selling
-// vehicles for resale) and the single mandated code for the rest. The obsolete
-// 3-/4-digit codes (101, 9999) are rejected by BR-207. Callers can still override
-// per good via ETransportGood.scopeCode (e.g. 100702 for lohn, 100701 for stock).
-const DEFAULT_SCOPE_BY_OPERATION: Record<string, string> = {
-  '10': '100101', // Achiziție intracomunitară — Comercializare
-  '20': '200101', // Livrare intracomunitară — Comercializare
-  '30': '300101', // Transport național — Comercializare
-  '40': '404001', // Import
-  '50': '505001', // Export
-  '60': '606001', // Intrare pentru depozitare/formare transport nou
-  '70': '707001', // Ieșire după depozitare/formare transport nou
-};
+// Version 2 of ANAF's ETRANSP upload endpoint validates codScopOperatiune
+// against the short-code enumeration (101, 201, ... 9901, 9999). The operation
+// prefix must not be folded into this attribute: for example, AIC is expressed
+// as codTipOperatiune="10" plus codScopOperatiune="101", not "100101".
+// Ownership-transfer operations default to 101 (Comercializare); non-transfer,
+// customs and warehousing flows use the generic 9999 scope.
+const NON_TRANSFER_OPERATION_CODES = new Set(['12', '14', '22', '24', '40', '50', '60', '70']);
 
 export function defaultScopeCode(operationCode: string): string {
-  return DEFAULT_SCOPE_BY_OPERATION[operationCode] ?? '';
+  return NON_TRANSFER_OPERATION_CODES.has(operationCode) ? '9999' : '101';
 }
 
 const esc = (s: unknown): string =>
