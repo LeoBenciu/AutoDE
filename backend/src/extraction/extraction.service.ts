@@ -56,6 +56,7 @@ export interface TransportMessageResult {
   loading_country?: string | null;
   unloading_city?: string | null;
   unloading_county?: string | null;
+  border_crossing_point?: string | null;
   transport_date?: string | null;
 }
 

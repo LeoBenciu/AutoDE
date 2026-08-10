@@ -57,6 +57,38 @@ const BORDER_POINTS: ReadonlyArray<readonly [string, string]> = [
   ['37', 'Nădlac 2 - A1 (HU)'], ['38', 'Borș 2 - A3 (HU)'],
 ];
 
+// Resolves a border point named in a transporter message (e.g. "Nădlac 2",
+// "vama Borș") to its numeric codPtf. Returns '' when nothing matches, so an
+// unrecognized value simply leaves the dropdown empty for manual selection.
+function matchBorderPoint(raw: string | null | undefined): string {
+  if (raw == null) return '';
+  const trimmed = String(raw).trim();
+  if (!trimmed) return '';
+  if (BORDER_POINTS.some(([value]) => value === trimmed)) return trimmed;
+  const norm = (s: string) => s.normalize('NFD').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const target = norm(trimmed);
+  if (!target) return '';
+  let best = '';
+  let bestScore = 0;
+  for (const [code, label] of BORDER_POINTS) {
+    // Keep the place name + number, drop the "(HU)" tag and the "- A1"/"- A3"
+    // highway suffix so "Nădlac 2 - A1 (HU)" compares as "nadlac2".
+    const place = norm(label.replace(/\(.*?\)/g, '').replace(/-.*/, ''));
+    if (!place) continue;
+    const score =
+      place === target
+        ? 1000
+        : target.includes(place) || place.includes(target)
+          ? Math.min(place.length, target.length)
+          : 0;
+    if (score > bestScore) {
+      bestScore = score;
+      best = code;
+    }
+  }
+  return bestScore >= 3 ? best : '';
+}
+
 // Every transport in this app is a passenger car (NC heading 8703), so the
 // NC/tariff field defaults to 87035000 — the user can still override it.
 const DEFAULT_TARIFF_CODE = '87035000';
@@ -344,6 +376,8 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
         // LOCATIE from the VIN table is authoritative when a row was found.
         unloadingCity: driveInfo?.matched ? undefined : parsed.unloading_city,
         unloadingCounty: parsed.unloading_county,
+        // The message names the crossing (e.g. "Nădlac 2"); map it to the codPtf.
+        borderCrossingPoint: matchBorderPoint(parsed.border_crossing_point),
         transportDate: parsed.transport_date,
       };
       setForm((current) => {
@@ -367,6 +401,7 @@ function NewDeclarationModal({ declaration, onClose }: { declaration?: any; onCl
         loading_country: 'țară încărcare',
         unloading_city: 'oraș descărcare',
         unloading_county: 'județ descărcare',
+        border_crossing_point: 'punct de trecere a frontierei',
         transport_date: 'data transportului',
       };
       const filled = (result?.foundFields ?? [])
