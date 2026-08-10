@@ -36,7 +36,7 @@ const xml = buildETransportXml(base);
 // v2 schema: notificare/bunuriTransportate/partenerComercial/dateTransport
 // carry their data as XML attributes, not child elements.
 assert.match(xml, /<notificare codTipOperatiune="10"/);
-assert.match(xml, /<bunuriTransportate codScopOperatiune="101"/);
+assert.match(xml, /<bunuriTransportate codScopOperatiune="100101"/);
 assert.match(xml, /codTarifar="87032390"/);
 assert.match(xml, /greutateBruta="1327"/);
 assert.match(xml, /valoareLeiFaraTva="65000\.25"/);
