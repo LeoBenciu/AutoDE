@@ -5,6 +5,29 @@ import { PrismaService } from '../common/prisma.service';
 const TOKEN_SAFETY_WINDOW_MS = 5 * 60 * 1000;
 
 /**
+ * ANAF's /upload endpoint returns validation failures as HTTP 200 with a JSON
+ * body `{ Errors: [{ errorMessage }], ExecutionStatus: 1, trace_id }`. Surface
+ * the full error text (every message) so Schematron rules like BR-207 aren't cut
+ * off mid-sentence; fall back to a generous raw slice for non-JSON responses.
+ */
+function describeAnafResponse(text: string): string {
+  try {
+    const body = JSON.parse(text);
+    const errors = Array.isArray(body?.Errors) ? body.Errors : [];
+    const messages = errors
+      .map((e: { errorMessage?: string }) => e?.errorMessage)
+      .filter((m: unknown): m is string => typeof m === 'string' && m.trim() !== '');
+    if (messages.length) {
+      const trace = body?.trace_id ? ` (trace_id: ${body.trace_id})` : '';
+      return `${messages.join(' | ')}${trace}`;
+    }
+  } catch {
+    // Not JSON — fall through to the raw slice below.
+  }
+  return text.slice(0, 1000);
+}
+
+/**
  * ANAF OAuth2 + e-Transport web-service client.
  *
  * Auth follows the logincert.anaf.ro pattern (qualified certificate enrolled
@@ -201,11 +224,11 @@ export class AnafClient {
           `ANAF este temporar indisponibil (${res.status}). Declarația NU a fost trimisă — reîncearcă în câteva minute.`,
         );
       }
-      throw new BadRequestException(`ANAF a respins declarația (${res.status}): ${text.slice(0, 300)}`);
+      throw new BadRequestException(`ANAF a respins declarația (${res.status}): ${describeAnafResponse(text)}`);
     }
     const indexMatch = text.match(/index_incarcare="?(\d+)/);
     if (!indexMatch) {
-      throw new BadRequestException(`Răspuns ANAF neașteptat: ${text.slice(0, 300)}`);
+      throw new BadRequestException(`Răspuns ANAF neașteptat: ${describeAnafResponse(text)}`);
     }
     return indexMatch[1];
   }
