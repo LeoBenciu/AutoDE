@@ -15,6 +15,7 @@ import {
   buildETransportXml,
   DeclarationData,
   defaultScopeCode,
+  normalizeScopeCode,
 } from '../src/etransport/xml-builder';
 import { eTransportCodJudet } from '../src/etransport/judet-codes';
 
@@ -55,6 +56,20 @@ for (const operationCode of ['10', '20', '30']) {
 for (const operationCode of ['12', '14', '22', '24', '40', '50', '60', '70']) {
   assert.equal(defaultScopeCode(operationCode), '9999');
 }
+// Drafts saved by the previous release can contain operation-prefixed scope
+// overrides. Normalize those too; otherwise the override wins over the fixed
+// default and ANAF sees the same invalid 100101 value on retry.
+assert.equal(normalizeScopeCode('100101', '10'), '101');
+assert.equal(normalizeScopeCode('200101', '20'), '101');
+assert.equal(normalizeScopeCode('100703', '12'), '703');
+assert.equal(normalizeScopeCode('404001', '40'), '9999');
+assert.equal(normalizeScopeCode('201', '10'), '201');
+const legacyDraftXml = buildETransportXml({
+  ...base,
+  goods: [{ ...base.goods[0], scopeCode: '100101' }],
+});
+assert.match(legacyDraftXml, /codScopOperatiune="101"/);
+assert.doesNotMatch(legacyDraftXml, /codScopOperatiune="100101"/);
 // BR-043: cod/codOrgTransport must be the bare CUI, without the country prefix.
 const roOrgXml = buildETransportXml({
   ...base,
