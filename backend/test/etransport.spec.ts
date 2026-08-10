@@ -42,6 +42,14 @@ assert.match(xml, /greutateBruta="1327"/);
 assert.match(xml, /valoareLeiFaraTva="65000\.25"/);
 assert.match(xml, /<partenerComercial codTara="DE"/);
 assert.match(xml, /<dateTransport nrVehicul="B123UIT"/);
+// BR-043: cod/codOrgTransport must be the bare CUI, without the country prefix.
+const roOrgXml = buildETransportXml({
+  ...base,
+  transporter: { name: 'PLAYER MEDIA SRL', taxId: 'RO20752458', country: 'RO' },
+});
+assert.match(roOrgXml, /codOrgTransport="20752458"/);
+assert.doesNotMatch(roOrgXml, /codOrgTransport="RO20752458"/);
+assert.match(roOrgXml, /<partenerComercial codTara="RO" cod="20752458"/);
 // The border crossing point is not declared unless explicitly provided.
 assert.doesNotMatch(xml, /codPtf=/);
 // BR-004: an intra-community operation carries the border crossing point (codPtf)

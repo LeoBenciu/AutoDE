@@ -522,6 +522,7 @@ class TransportMessageData(StrictBase):
     loading_country: Optional[str]  # ISO alpha-2 when identifiable
     unloading_city: Optional[str]
     unloading_county: Optional[str]
+    border_crossing_point: Optional[str]  # RO border/customs point name, e.g. "Nădlac 2"
     transport_date: Optional[str]  # YYYY-MM-DD
 
 

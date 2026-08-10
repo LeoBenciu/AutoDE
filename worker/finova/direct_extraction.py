@@ -1095,6 +1095,12 @@ sent date, signature address, phone number, order number or VIN for transport
 data. The tractor/truck plate belongs in vehicle_plate; the semitrailer/trailer
 plate belongs in trailer_plate. Extract unloading data only when the transporter
 message explicitly contains it.
+
+For border_crossing_point, extract the Romanian border/customs crossing point
+(vamă / punct de trecere a frontierei) where the goods enter or leave Romania,
+if the message names one — e.g. "Nădlac", "Nădlac 2", "Borș", "Petea",
+"Vărșand", "Calafat", "Giurgiu". Copy the place name exactly as stated; use null
+when no border point is mentioned.
 """
 
 
@@ -1135,6 +1141,7 @@ def extract_transport_message(message: str, current_date: Optional[str] = None) 
         "loading_country",
         "unloading_city",
         "unloading_county",
+        "border_crossing_point",
         "transport_date",
     ):
         value = data.get(field)

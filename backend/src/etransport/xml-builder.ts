@@ -101,6 +101,13 @@ const esc = (s: unknown): string =>
 const isBlank = (value: unknown): boolean =>
   value == null || String(value).trim() === '';
 
+/** Bare tax id without a leading country prefix ("RO20752458" → "20752458"). */
+function stripCountryPrefix(taxId: unknown, country: unknown): string {
+  const id = String(taxId ?? '').trim().toUpperCase().replace(/\s+/g, '');
+  const cc = String(country ?? '').trim().toUpperCase();
+  return cc && id.startsWith(cc) ? id.slice(cc.length) : id;
+}
+
 /** Always-present attribute (empty string when missing, so required-field errors surface). */
 const reqAttr = (name: string, value: unknown): string => ` ${name}="${esc(value)}"`;
 
@@ -150,11 +157,15 @@ export function buildETransportXml(d: DeclarationData): string {
     )
     .join('');
 
+  // ANAF's cod/codOrgTransport is the bare tax id, without the country prefix:
+  // for a RO organizer it must be "20752458", not "RO20752458" — the prefixed
+  // form fails Schematron BR-043 (codOrgTransport must be filled/valid).
+  const orgTaxId = stripCountryPrefix(d.transporter.taxId, d.transporter.country);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <eTransport xmlns="mfp:anaf:dgti:eTransport:declaratie:v2"${reqAttr('codDeclarant', d.tenantCui)}>
   <notificare${reqAttr('codTipOperatiune', operationCode)}>${goods}
-    <partenerComercial${reqAttr('codTara', d.transporter.country)}${attr('cod', d.transporter.taxId)}${reqAttr('denumire', d.transporter.name)}/>
-    <dateTransport${reqAttr('nrVehicul', d.vehiclePlate)}${attr('nrRemorca1', d.trailerPlate)}${reqAttr('codTaraOrgTransport', d.transporter.country)}${attr('codOrgTransport', d.transporter.taxId)}${reqAttr('denumireOrgTransport', d.transporter.name)}${reqAttr('dataTransport', d.transportDate)}/>
+    <partenerComercial${reqAttr('codTara', d.transporter.country)}${attr('cod', orgTaxId)}${reqAttr('denumire', d.transporter.name)}/>
+    <dateTransport${reqAttr('nrVehicul', d.vehiclePlate)}${attr('nrRemorca1', d.trailerPlate)}${reqAttr('codTaraOrgTransport', d.transporter.country)}${attr('codOrgTransport', orgTaxId)}${reqAttr('denumireOrgTransport', d.transporter.name)}${reqAttr('dataTransport', d.transportDate)}/>
     ${buildPlace('locStartTraseuRutier', d.loadingPlace)}
     ${buildPlace('locFinalTraseuRutier', d.unloadingPlace)}${documents}
   </notificare>
