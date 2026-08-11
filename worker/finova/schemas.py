@@ -119,10 +119,10 @@ class SegmentationResult(StrictBase):
 
 class LineItem(StrictBase):
     name: str
-    quantity: float
-    unit_price: float
-    total: float
-    vat_amount: float
+    quantity: float = Field(description="Signed quantity exactly as printed; may be negative for returns")
+    unit_price: float = Field(description="Signed NET unit price; preserve discounts and credits")
+    total: float = Field(description="Signed NET line total; negative rows must never be omitted")
+    vat_amount: float = Field(description="Signed line VAT, with the same sign as the line total")
     vat: VatRate
     um: UnitOfMeasure
     articleCode: str  # empty string when no match and type is 'Nedefinit'

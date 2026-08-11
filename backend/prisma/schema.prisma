@@ -190,35 +190,37 @@ enum VehicleStatus {
 }
 
 model Vehicle {
-  id               Int           @id @default(autoincrement())
-  vin              String
-  make             String
-  model            String
-  variant          String?
-  firstRegistered  DateTime?
-  year             Int
-  mileageKm        Int?
-  fuelType         String?
-  gearbox          String?
-  color            String?
-  originCountry    String        @default("DE")
-  status           VehicleStatus @default(SOURCED)
-  purchasePrice    Decimal       @db.Decimal(12, 2)
-  purchaseCurrency String        @default("EUR")
-  landedCost       Decimal?      @db.Decimal(12, 2)
-  listPrice        Decimal?      @db.Decimal(12, 2)
-  soldPrice        Decimal?      @db.Decimal(12, 2)
-  soldCurrency     String        @default("RON")
-  tenantId         Int
-  tenant           Tenant        @relation(fields: [tenantId], references: [id])
-  buyerId          Int?
-  buyer            Party?        @relation("VehicleBuyer", fields: [buyerId], references: [id])
-  sellerId         Int?
-  seller           Party?        @relation("VehicleSeller", fields: [sellerId], references: [id])
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  id                    Int           @id @default(autoincrement())
+  vin                   String
+  make                  String
+  model                 String
+  variant               String?
+  firstRegistered       DateTime?
+  year                  Int
+  mileageKm             Int?
+  fuelType              String?
+  gearbox               String?
+  color                 String?
+  originCountry         String        @default("DE")
+  status                VehicleStatus @default(SOURCED)
+  purchasePrice         Decimal       @db.Decimal(12, 2)
+  purchaseCurrency      String        @default("EUR")
+  landedCost            Decimal?      @db.Decimal(12, 2)
+  listPrice             Decimal?      @db.Decimal(12, 2)
+  soldPrice             Decimal?      @db.Decimal(12, 2)
+  soldCurrency          String        @default("RON")
+  tenantId              Int
+  tenant                Tenant        @relation(fields: [tenantId], references: [id])
+  buyerId               Int?
+  buyer                 Party?        @relation("VehicleBuyer", fields: [buyerId], references: [id])
+  sellerId              Int?
+  seller                Party?        @relation("VehicleSeller", fields: [sellerId], references: [id])
+  draftSourceDocumentId Int?          @unique
+  draftSourceDocument   Document?     @relation("DraftVehicleSource", fields: [draftSourceDocumentId], references: [id], onDelete: SetNull)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
 
-  documents  Document[]
+  documents  Document[]              @relation("VehicleDocuments")
   contracts  Contract[]
   transports ETransportDeclaration[]
   costs      VehicleCost[]
@@ -298,7 +300,7 @@ model Document {
   tenantId              Int
   tenant                Tenant               @relation(fields: [tenantId], references: [id])
   vehicleId             Int?
-  vehicle               Vehicle?             @relation(fields: [vehicleId], references: [id])
+  vehicle               Vehicle?             @relation("VehicleDocuments", fields: [vehicleId], references: [id])
   partyId               Int?
   party                 Party?               @relation(fields: [partyId], references: [id])
   processingStatus      ProcessingStatus     @default(PENDING)
@@ -324,6 +326,7 @@ model Document {
   deletedAt             DateTime?
 
   processedData         ProcessedData?
+  draftCreatedVehicle   Vehicle?                @relation("DraftVehicleSource")
   costs                 VehicleCost[]
   contracts             Contract[]
   corrections           UserCorrection[]

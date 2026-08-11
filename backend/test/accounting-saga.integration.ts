@@ -1019,6 +1019,49 @@ async function main() {
     assert.ok(invalidPreview.errors.some((error) => error.includes('Liniile însumează')));
     await assert.rejects(() => posting.approve(tenant.id, user.id, invalid.id));
 
+    const discounted = await createDocument('Invoice', 'DISCOUNT-1', {
+      vendor: 'Furnizor Discount',
+      vendor_ein: 'RO333',
+      buyer: marker,
+      buyer_ein: '50675950',
+      total_amount: 1672,
+      net_amount: 1672,
+      vat_amount: 0,
+      line_items: [
+        {
+          name: 'Servicii facturate',
+          quantity: 1,
+          unit_price: 1922,
+          total: 1922,
+          vat_amount: 0,
+          vat: 'ZERO',
+          account_code: '628',
+        },
+        {
+          name: 'Reducere comercială',
+          quantity: 1,
+          unit_price: -250,
+          total: -250,
+          vat_amount: 0,
+          vat: 'ZERO',
+          account_code: '628',
+        },
+      ],
+    });
+    const discountedPreview = await posting.preview(tenant.id, discounted.id);
+    assert.deepEqual(discountedPreview.errors, []);
+    assert.equal(discountedPreview.totalDebit, 1922);
+    assert.equal(discountedPreview.totalCredit, 1922);
+    assert.ok(
+      discountedPreview.entries.some(
+        (entry) =>
+          entry.description === 'Reducere comercială' &&
+          entry.debit === 0 &&
+          entry.credit === 250,
+      ),
+    );
+    await posting.approve(tenant.id, user.id, discounted.id);
+
     const legacy = await createDocument(
       'Invoice',
       'LEGACY-1',

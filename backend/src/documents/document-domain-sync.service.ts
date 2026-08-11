@@ -11,17 +11,131 @@ import {
 import { PrismaService } from '../common/prisma.service';
 import { privateSellerIdentityErrors } from '../parties/party-identity';
 import { ensureVehicleArticle } from '../accounting/vehicle-article';
+import {
+  deleteVehicleAndDetachReferences,
+  isVehiclePurchaseDocument,
+} from '../vehicles/vehicle-document-sync';
+
+interface DraftVehicleCandidate {
+  vin: string;
+  make: string;
+  model: string;
+  variant?: string;
+  firstRegistered?: Date;
+  year: number;
+  mileageKm?: number;
+  fuelType?: string;
+  color?: string;
+  originCountry: string;
+  status: 'SOURCED' | 'PURCHASED';
+  purchasePrice: number;
+  purchaseCurrency: string;
+}
 
 /**
- * Applies approved vehicle documents to the operational catalogue. Extracted
- * data stays draft-only until approval; this service only synchronizes facts
- * that have a stable identity (VIN and CUI/CNP), and is safe to run repeatedly.
+ * Applies vehicle documents to the operational catalogue. A draft may create
+ * only a provisional vehicle so related costs can be linked before approval.
+ * Seller, contract and accounting effects remain approval-only.
  */
 @Injectable()
 export class DocumentDomainSyncService {
   private readonly logger = new Logger(DocumentDomainSyncService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Makes a VIN available to the review UI as soon as extraction finishes.
+   * Existing vehicles are only linked, never marked as draft-owned or mutated.
+   */
+  async syncDraftVehicle(
+    documentId: number,
+  ): Promise<{ vehicleId?: number }> {
+    const document = await this.prisma.document.findUnique({
+      where: { id: documentId },
+      include: {
+        processedData: true,
+        tenant: { select: { cui: true, defaultCurrency: true } },
+      },
+    });
+    if (
+      !document?.processedData ||
+      document.deletedAt ||
+      document.reviewStatus === 'APPROVED'
+    ) {
+      return {};
+    }
+
+    const fields = unwrapExtractedFields(document.processedData.extractedFields);
+    const vin = extractedVin(fields);
+    const candidate = this.draftVehicleCandidate(document, fields, vin);
+
+    const vehicleId = await this.prisma.$transaction(async (tx) => {
+      const assigned = document.vehicleId
+        ? await tx.vehicle.findFirst({
+            where: { id: document.vehicleId, tenantId: document.tenantId },
+          })
+        : null;
+
+      if (assigned?.draftSourceDocumentId === document.id) {
+        if (!candidate || normalizeVin(assigned.vin) !== vin) {
+          await deleteVehicleAndDetachReferences(tx, assigned.id);
+        } else {
+          const updated = await tx.vehicle.update({
+            where: { id: assigned.id },
+            data: candidate,
+          });
+          return updated.id;
+        }
+      } else if (assigned) {
+        if (!vin || normalizeVin(assigned.vin) === vin) return assigned.id;
+        this.logger.warn(
+          `document ${document.id} VIN ${vin} does not match assigned vehicle ${assigned.vin}`,
+        );
+        await tx.document.update({
+          where: { id: document.id },
+          data: { needsReview: true },
+        });
+        return undefined;
+      }
+
+      if (!vin) return undefined;
+      const existing = await tx.vehicle.findUnique({
+        where: { tenantId_vin: { tenantId: document.tenantId, vin } },
+      });
+      if (existing) {
+        await tx.document.update({
+          where: { id: document.id },
+          data: { vehicleId: existing.id },
+        });
+        return existing.id;
+      }
+      if (!candidate) return undefined;
+
+      const vehicle = await tx.vehicle.upsert({
+        where: { tenantId_vin: { tenantId: document.tenantId, vin } },
+        update: {},
+        create: {
+          tenantId: document.tenantId,
+          ...candidate,
+          draftSourceDocumentId: document.id,
+        },
+      });
+      await tx.document.update({
+        where: { id: document.id },
+        data: { vehicleId: vehicle.id },
+      });
+      return vehicle.id;
+    });
+
+    if (!vehicleId) return {};
+    await this.attachRelatedDocuments(
+      document.tenantId,
+      vehicleId,
+      vin!,
+      document.id,
+    );
+    return { vehicleId };
+  }
 
   async sync(documentId: number): Promise<{ vehicleId?: number; sellerId?: number }> {
     const document = await this.prisma.document.findUnique({
@@ -54,6 +168,13 @@ export class DocumentDomainSyncService {
     }
 
     if (result.vehicleId) {
+      await this.prisma.vehicle.updateMany({
+        where: {
+          id: result.vehicleId,
+          draftSourceDocumentId: document.id,
+        },
+        data: { draftSourceDocumentId: null },
+      });
       const vehicle = await this.prisma.vehicle.findUnique({
         where: { id: result.vehicleId },
         select: { vin: true },
@@ -70,8 +191,72 @@ export class DocumentDomainSyncService {
     return result;
   }
 
+  private draftVehicleCandidate(
+    document: any,
+    fields: Record<string, any>,
+    vin?: string,
+  ): DraftVehicleCandidate | undefined {
+    if (!vin) return undefined;
+    const firstRegistered = extractedDate(
+      fields.first_registration_date ?? fields.firstRegistered,
+    );
+    const year =
+      validVehicleYear(
+        fields.vehicle_year ?? fields.manufacture_year ?? fields.year,
+      ) ??
+      firstRegistered?.getUTCFullYear() ??
+      new Date().getUTCFullYear();
+
+    if (document.type === 'Vehicle Registration Certificate') {
+      return {
+        vin,
+        make: cleanString(fields.make ?? fields.vehicle_make) || 'Necunoscut',
+        model: cleanString(fields.model ?? fields.vehicle_model) || 'Necunoscut',
+        variant: optionalString(fields.variant ?? fields.vehicle_variant),
+        firstRegistered,
+        year,
+        mileageKm: positiveInteger(fields.mileage_km ?? fields.mileage),
+        fuelType: optionalString(fields.fuel_type),
+        color: optionalString(fields.color),
+        originCountry: countryCode(
+          fields.registration_country ?? fields.country,
+          'DE',
+        ),
+        status: 'SOURCED',
+        purchasePrice: 0,
+        purchaseCurrency: document.tenant.defaultCurrency || 'EUR',
+      };
+    }
+
+    if (!['Invoice', 'Contract'].includes(document.type ?? '')) return undefined;
+    const canonical = normalizeAccountingDocument(
+      document.type,
+      fields,
+      document.tenant.cui,
+    );
+    if (!isVehiclePurchaseDocument(canonical)) return undefined;
+    return {
+      vin,
+      make:
+        cleanString(fields.vehicle_make ?? fields.make) || 'Necunoscut',
+      model:
+        cleanString(fields.vehicle_model ?? fields.model) || 'Necunoscut',
+      variant: optionalString(fields.vehicle_variant ?? fields.variant),
+      firstRegistered,
+      year,
+      mileageKm: positiveInteger(fields.mileage_km ?? fields.mileage),
+      fuelType: optionalString(fields.fuel_type),
+      color: optionalString(fields.color),
+      originCountry: countryCode(canonical.vendorCountry, 'DE'),
+      status: 'PURCHASED',
+      purchasePrice: Math.max(0, canonical.totalAmount),
+      purchaseCurrency:
+        canonical.currency || document.tenant.defaultCurrency || 'EUR',
+    };
+  }
+
   private async syncRegistrationCertificate(document: any, fields: Record<string, any>) {
-    const vin = normalizeVin(fields.vin);
+    const vin = extractedVin(fields);
     if (!vin) {
       this.logger.warn(`registration document ${document.id} has no valid VIN`);
       return {};
@@ -134,7 +319,7 @@ export class DocumentDomainSyncService {
     canonical: CanonicalAccountingDocument,
   ) {
     const fields = canonical.raw;
-    const vin = normalizeVin(fields.vin);
+    const vin = extractedVin(fields);
     const firstRegistered = extractedDate(fields.first_registration_date);
     const year =
       validVehicleYear(fields.vehicle_year ?? fields.manufacture_year ?? fields.year) ??
@@ -225,7 +410,7 @@ export class DocumentDomainSyncService {
   }
 
   private async attachVinDocument(document: any, fields: Record<string, any>) {
-    const vin = normalizeVin(fields.vin);
+    const vin = extractedVin(fields);
     if (!vin) return document.vehicleId ?? undefined;
     return this.prisma.$transaction(async (tx) => {
       const vehicle = await this.vehicleForDocument(tx, document, vin);
@@ -343,7 +528,15 @@ export class DocumentDomainSyncService {
         id: { not: sourceDocumentId },
         vehicleId: null,
         deletedAt: null,
-        type: { in: ['Contract', 'CMR', 'Vehicle Registration Certificate'] },
+        type: {
+          in: [
+            'Contract',
+            'CMR',
+            'Invoice',
+            'Receipt',
+            'Vehicle Registration Certificate',
+          ],
+        },
         processedData: { isNot: null },
       },
       include: { processedData: true },
@@ -354,7 +547,7 @@ export class DocumentDomainSyncService {
       const fields = unwrapExtractedFields(
         candidate.processedData?.extractedFields,
       );
-      return normalizeVin(fields.vin) === vin;
+      return extractedVin(fields) === vin;
     });
     if (related.length === 0) return;
     await this.prisma.document.updateMany({
@@ -370,6 +563,12 @@ export class DocumentDomainSyncService {
 export function normalizeVin(value: unknown): string | undefined {
   const vin = cleanString(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
   return /^[A-HJ-NPR-Z0-9]{17}$/.test(vin) ? vin : undefined;
+}
+
+function extractedVin(fields: Record<string, any>): string | undefined {
+  return normalizeVin(
+    fields.vin ?? fields.vehicle_vin ?? fields.chassis_number,
+  );
 }
 
 function extractedDate(value: unknown): Date | undefined {
