@@ -506,42 +506,48 @@ enum ETransportStatus {
   SUBMITTED
   VALIDATED
   CONFIRMED
+  INFIRMING
+  INFIRMED
   REJECTED
   EXPIRED
 }
 
 model ETransportDeclaration {
-  id                Int              @id @default(autoincrement())
-  tenantId          Int
-  tenant            Tenant           @relation(fields: [tenantId], references: [id])
-  vehicleId         Int?
-  vehicle           Vehicle?         @relation(fields: [vehicleId], references: [id])
-  operationType     String // AIC, LIC, IMP, EXP, LHI, LHE, SCI, SCE, TTN, DIN or DIE
-  uit               String?
-  status            ETransportStatus @default(DRAFT)
-  transportDate     DateTime?
-  dataVerifiedAt    DateTime?
-  validFrom         DateTime?
-  validUntil        DateTime?
-  declaredAt        DateTime?
-  xmlPayload        String           @db.Text
-  anafUploadId      String?
-  anafResponse      Json?
+  id                  Int              @id @default(autoincrement())
+  tenantId            Int
+  tenant              Tenant           @relation(fields: [tenantId], references: [id])
+  vehicleId           Int?
+  vehicle             Vehicle?         @relation(fields: [vehicleId], references: [id])
+  operationType       String // AIC, LIC, IMP, EXP, LHI, LHE, SCI, SCE, TTN, DIN or DIE
+  uit                 String?
+  status              ETransportStatus @default(DRAFT)
+  transportDate       DateTime?
+  dataVerifiedAt      DateTime?
+  validFrom           DateTime?
+  validUntil          DateTime?
+  declaredAt          DateTime?
+  xmlPayload          String           @db.Text
+  anafUploadId        String?
+  anafResponse        Json?
+  infirmationUploadId String?
+  infirmationReason   String?
+  infirmationResponse Json?
+  infirmedAt          DateTime?
   // Legacy column name retained for compatibility; stores the private purchase-contract document.
-  invoiceDocumentId Int?
-  invoiceDocument   Document?        @relation("DeclInvoice", fields: [invoiceDocumentId], references: [id])
+  invoiceDocumentId   Int?
+  invoiceDocument     Document?        @relation("DeclInvoice", fields: [invoiceDocumentId], references: [id])
   // The saved printable UIT sheet, once the declaration is confirmed.
-  uitDocumentId     Int?
-  uitDocument       Document?        @relation("DeclUit", fields: [uitDocumentId], references: [id])
-  idempotencyKey    String           @unique @default(uuid())
-  transporter       Json // { name, taxId, country }
-  vehiclePlate      String?
-  trailerPlate      String?
-  loadingPlace      Json // { country, county, city, address }
-  unloadingPlace    Json
-  goods             Json // [{ description, tariffCode, weightKg, valueRon }]
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  uitDocumentId       Int?
+  uitDocument         Document?        @relation("DeclUit", fields: [uitDocumentId], references: [id])
+  idempotencyKey      String           @unique @default(uuid())
+  transporter         Json // { name, taxId, country }
+  vehiclePlate        String?
+  trailerPlate        String?
+  loadingPlace        Json // { country, county, city, address }
+  unloadingPlace      Json
+  goods               Json // [{ description, tariffCode, weightKg, valueRon }]
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 
   @@index([tenantId, status])
 }

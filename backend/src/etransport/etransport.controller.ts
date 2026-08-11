@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { CurrentUser, JwtAuthGuard, Roles, RolesGuard } from '../auth/guards';
 import { AuthUser } from '../auth/jwt.strategy';
@@ -65,14 +65,20 @@ export class EtransportController {
     return this.etransport.submit(user.tenantId, user.userId, id);
   }
 
-  @Post(':id/recover')
+  @Delete(':id')
   @Roles('ACCOUNTANT')
-  recoverSubmission(
+  removeDraft(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.etransport.removeDraft(user.tenantId, user.userId, id);
+  }
+
+  @Post(':id/infirm')
+  @Roles('ACCOUNTANT')
+  infirm(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { uploadId?: string },
+    @Body() dto: { reason?: string },
   ) {
-    return this.etransport.recoverSubmission(user.tenantId, user.userId, id, dto?.uploadId);
+    return this.etransport.infirm(user.tenantId, user.userId, id, dto?.reason);
   }
 
   @Get(':id/uit-sheet')

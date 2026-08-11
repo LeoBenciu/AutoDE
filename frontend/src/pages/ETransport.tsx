@@ -1,12 +1,13 @@
 import { FormEvent, useRef, useState } from 'react';
 import {
   useCreateEtransportMutation,
+  useDeleteEtransportDraftMutation,
   useEtransportQuery,
+  useInfirmEtransportMutation,
   useLazyBnrRateQuery,
   useLazyCompanyFromAnafQuery,
   useLazyEtransportPrefillQuery,
   useParseEtransportMessageMutation,
-  useRecoverEtransportMutation,
   useSubmitEtransportMutation,
   useUpdateEtransportMutation,
   useVehiclesQuery,
@@ -108,7 +109,8 @@ function TruckTile() {
 export default function ETransport() {
   const { data: declarations = [] } = useEtransportQuery();
   const [submitDecl] = useSubmitEtransportMutation();
-  const [recoverDecl] = useRecoverEtransportMutation();
+  const [deleteDraft] = useDeleteEtransportDraftMutation();
+  const [infirmDecl] = useInfirmEtransportMutation();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [error, setError] = useState('');
@@ -159,12 +161,15 @@ export default function ETransport() {
                     {daysLeft != null && daysLeft < 0 && (
                       <span className="ml-1 font-semibold text-red-600">· UIT expirat</span>
                     )}
+                    {d.status === 'CONFIRMED' && d.infirmationUploadId && d.infirmationResponse?.raw && (
+                      <span className="ml-1 font-semibold text-red-600">· Ultima infirmare a fost respinsă de ANAF</span>
+                    )}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <StatusChip status={d.status} />
-                {d.status !== 'SUBMITTED' && (
+                {!['SUBMITTED', 'INFIRMING'].includes(d.status) && (
                   <button
                     onClick={() => setEditing(d)}
                     className="rounded-lg border border-line-strong bg-white px-3.5 py-2 text-[13px] text-ink-soft"
@@ -173,24 +178,23 @@ export default function ETransport() {
                     Modifică
                   </button>
                 )}
-                {(d.status === 'DRAFT' || d.status === 'REJECTED') && (
+                {d.status === 'DRAFT' && (
                   <button
                     onClick={async () => {
-                      const uploadId = window.prompt(
-                        'Introdu indexul de încărcare primit de la ANAF (index_incarcare):',
-                      )?.trim();
-                      if (!uploadId) return;
+                      if (!window.confirm(
+                        'Ștergi această ciornă din AutoImport? Acțiunea nu poate fi anulată și nu anulează o eventuală trimitere deja acceptată de ANAF.',
+                      )) return;
                       setError('');
                       try {
-                        await recoverDecl({ id: d.id, uploadId }).unwrap();
+                        await deleteDraft(d.id).unwrap();
                       } catch (err: any) {
-                        setError(err?.data?.message ?? 'Trimiterea ANAF nu a putut fi recuperată');
+                        setError(err?.data?.message ?? 'Ciorna nu a putut fi ștearsă');
                       }
                     }}
-                    className="rounded-lg border border-line-strong bg-white px-3.5 py-2 text-[13px] text-ink-soft"
-                    title="Atașează o trimitere deja acceptată de ANAF, fără retransmitere"
+                    className="rounded-lg border border-red-200 bg-white px-3.5 py-2 text-[13px] text-red-700"
+                    title="Șterge definitiv ciorna din AutoImport"
                   >
-                    Am index ANAF
+                    Șterge
                   </button>
                 )}
                 {(d.status === 'DRAFT' || d.status === 'REJECTED') && (
@@ -206,6 +210,29 @@ export default function ETransport() {
                     className="rounded-lg bg-sidebar px-3.5 py-2 text-[13px] font-semibold text-white"
                   >
                     Trimite la ANAF
+                  </button>
+                )}
+                {d.status === 'CONFIRMED' && (
+                  <button
+                    onClick={async () => {
+                      const reason = window.prompt(
+                        'Motivul infirmării la ANAF (de exemplu: transport anulat sau nefinalizat):',
+                      )?.trim();
+                      if (!reason) return;
+                      if (!window.confirm(
+                        `Infirmi la ANAF declarația cu UIT ${d.uit}? Această acțiune nu șterge istoricul și nu poate fi tratată ca o simplă ștergere locală.`,
+                      )) return;
+                      setError('');
+                      try {
+                        await infirmDecl({ id: d.id, reason }).unwrap();
+                      } catch (err: any) {
+                        setError(err?.data?.message ?? 'Declarația nu a putut fi infirmată la ANAF');
+                      }
+                    }}
+                    className="rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-[13px] font-semibold text-amber-800"
+                    title="Transmite la ANAF confirmarea oficială Infirmat"
+                  >
+                    Infirmă la ANAF
                   </button>
                 )}
                 {d.uit && (
