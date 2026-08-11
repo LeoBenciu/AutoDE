@@ -12,6 +12,7 @@ import {
   ExtractionService,
   Phase0Result,
 } from '../extraction/extraction.service';
+import { promoteDocumentStockId } from '../accounting/accounting-normalizer';
 import {
   applyVehicleCostAccountDefaults,
   applyVehiclePurchaseContractDefaults,
@@ -248,6 +249,7 @@ export class DocumentsProcessor {
       if (phase1Saved.count === 0) return;
 
       const fields = result.fields ?? {};
+      promoteDocumentStockId(fields);
       if (result.document_type === 'Invoice' || result.document_type === 'Contract') {
         const managements = await this.prisma.management.findMany({
           where: { tenantId: row.tenantId },

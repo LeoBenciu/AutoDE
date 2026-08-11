@@ -57,6 +57,7 @@ const EXTRACTED_FIELD_LABELS: Record<string, string> = {
   receipt_type: 'Tip bon / chitanță',
   receipt_number: 'Număr bon',
   document_number: 'Număr document',
+  stock_id: 'Stock ID / Ref. document',
   document_date: 'Data emiterii',
   due_date: 'Data scadenței',
   vendor: 'Furnizor',
@@ -104,6 +105,7 @@ const EXTRACTED_FIELD_ORDER = [
   'receipt_type',
   'receipt_number',
   'document_number',
+  'stock_id',
   'document_date',
   'due_date',
   'vendor',
@@ -601,6 +603,10 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
       value != null &&
       typeof value !== 'object',
   );
+  const stockId = documentStockId(fields);
+  if (stockId && !entries.some(([key]) => key === 'stock_id')) {
+    entries.push(['stock_id', stockId]);
+  }
   // The extractor returns null for vehicle fields it can't read, and null values
   // are dropped above—so a purchase contract missing e.g. the year renders no row
   // to correct, yet posting rejects it. Surface the required fields as empty,
@@ -1416,12 +1422,6 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                         disabled={doc.reviewStatus === 'APPROVED'}
                         onSave={(value) => saveLineField(index, 'articleCode', value)}
                       />
-                      <LineField
-                        label="Stock ID / Ref."
-                        value={item.stock_id ?? ''}
-                        disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => saveLineField(index, 'stock_id', value)}
-                      />
                       <ManagementField
                         value={item.management ?? ''}
                         managements={managements}
@@ -1818,6 +1818,19 @@ function displayExtractedFieldValue(field: string, value: unknown): string {
   const options = extractedFieldOptions(field, value);
   const draft = extractedFieldDraftValue(field, value);
   return options?.find(([option]) => option === draft)?.[1] ?? String(value);
+}
+
+function documentStockId(fields: Record<string, any>): string {
+  const explicit = String(fields.stock_id ?? '').trim();
+  if (explicit) return explicit;
+  const lineItems = Array.isArray(fields.line_items) ? fields.line_items : [];
+  return Array.from(
+    new Set(
+      lineItems
+        .map((line: any) => String(line?.stock_id ?? '').trim())
+        .filter(Boolean),
+    ),
+  ).join(' · ');
 }
 
 // Mirrors the single vehicle line the backend synthesizes for a purchase

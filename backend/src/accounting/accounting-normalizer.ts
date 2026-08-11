@@ -105,6 +105,25 @@ export function unwrapExtractedFields(value: unknown): Record<string, any> {
   return object;
 }
 
+/** Promote the extractor's repeated per-line Stock ID into one document field. */
+export function promoteDocumentStockId(fields: Record<string, any>): void {
+  const lines = Array.isArray(fields.line_items) ? fields.line_items : [];
+  const stockIds = Array.from(
+    new Set(
+      lines
+        .map((line: any) => String(line?.stock_id ?? '').trim())
+        .filter(Boolean),
+    ),
+  );
+  const explicit = String(fields.stock_id ?? '').trim();
+  if (!explicit && stockIds.length > 0) {
+    fields.stock_id = stockIds.join(' · ');
+  }
+  for (const line of lines) {
+    if (line && typeof line === 'object') delete line.stock_id;
+  }
+}
+
 export function normalizeAccountingDocument(
   documentType: string | null | undefined,
   extractedFields: unknown,

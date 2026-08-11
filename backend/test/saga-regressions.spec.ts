@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { normalizeAccountingDocument } from '../src/accounting/accounting-normalizer';
+import {
+  normalizeAccountingDocument,
+  promoteDocumentStockId,
+} from '../src/accounting/accounting-normalizer';
 import { sagaInvoicesFileName } from '../src/saga/saga.service';
 import { buildFacturiXml, SagaCompany } from '../src/saga/saga-xml';
 
@@ -203,8 +206,8 @@ assert.match(splitXml, /<Cont>371<\/Cont>/);
 assert.match(splitXml, /<Cont>624<\/Cont>/);
 assert.doesNotMatch(splitXml, /<TipDeducere>I<\/TipDeducere>/);
 
-// A line's supplier Stock ID/Ref (e.g. AUTO1 "NR22280") is exported into the
-// SAGA <InformatiiSuplimentare> field for that line.
+// A supplier Stock ID/Ref (e.g. AUTO1 "NR22280") identifies the document. Old
+// extractions repeated it on every line; SAGA receives it once in the header.
 const stockIdInvoice = {
   id: 15,
   type: 'Invoice',
@@ -220,6 +223,7 @@ const stockIdInvoice = {
       buyer_country: 'RO',
       document_number: '17012651015926',
       document_date: '05-08-2026',
+      additional_info: 'Import AUTO1',
       total_amount: 13_407,
       vat_amount: 0,
       currency: 'EUR',
@@ -227,11 +231,21 @@ const stockIdInvoice = {
         {
           name: 'BMW X3 xDrive 20d xLine',
           quantity: 1,
-          unit_price: 13_407,
-          total: 13_407,
+          unit_price: 13_307,
+          total: 13_307,
           vat_amount: 0,
           vat: 'ZERO',
           account_code: '371',
+          stock_id: 'NR22280',
+        },
+        {
+          name: 'Transport vehicul',
+          quantity: 1,
+          unit_price: 100,
+          total: 100,
+          vat_amount: 0,
+          vat: 'ZERO',
+          account_code: '624',
           stock_id: 'NR22280',
         },
       ],
@@ -242,7 +256,24 @@ const stockIdInvoice = {
 const stockIdXml = buildFacturiXml([stockIdInvoice], company, []);
 assert.match(
   stockIdXml,
+  /<FacturaInformatiiSuplimentare>Import AUTO1 · NR22280<\/FacturaInformatiiSuplimentare>/,
+);
+assert.doesNotMatch(
+  stockIdXml,
   /<InformatiiSuplimentare>NR22280<\/InformatiiSuplimentare>/,
+);
+const newlyExtractedStockFields = {
+  line_items: [
+    { name: 'Vehicul', stock_id: 'NR22280' },
+    { name: 'Transport', stock_id: 'NR22280' },
+  ],
+} as Record<string, any>;
+promoteDocumentStockId(newlyExtractedStockFields);
+assert.equal(newlyExtractedStockFields.stock_id, 'NR22280');
+assert.ok(
+  newlyExtractedStockFields.line_items.every(
+    (line: Record<string, any>) => !('stock_id' in line),
+  ),
 );
 
 assert.equal(
