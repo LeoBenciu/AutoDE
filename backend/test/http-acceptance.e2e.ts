@@ -206,12 +206,21 @@ async function main() {
       },
     });
     assert.deepEqual(await domainSync.sync(registrationDocument.id), {});
+    const registrationDraftSync = await domainSync.syncDraftVehicle(
+      registrationDocument.id,
+    );
+    const extractedDraftVehicle = await prisma.vehicle.findUnique({
+      where: { tenantId_vin: { tenantId: tenant.id, vin: registrationVin } },
+    });
     assert.equal(
-      await prisma.vehicle.findUnique({
-        where: { tenantId_vin: { tenantId: tenant.id, vin: registrationVin } },
-      }),
-      null,
-      'a pending extracted document must not create a vehicle',
+      registrationDraftSync.vehicleId,
+      extractedDraftVehicle?.id,
+      'a pending vehicle document must create a vehicle for cost association',
+    );
+    assert.equal(
+      extractedDraftVehicle?.draftSourceDocumentId,
+      registrationDocument.id,
+      'the draft document must own only the provisional vehicle it created',
     );
     await request(
       baseUrl,
@@ -224,11 +233,13 @@ async function main() {
       },
     );
     assert.equal(
-      await prisma.vehicle.findUnique({
+      (
+        await prisma.vehicle.findUnique({
         where: { tenantId_vin: { tenantId: tenant.id, vin: registrationVin } },
-      }),
-      null,
-      'saving a draft correction must not create a vehicle',
+        })
+      )?.model,
+      'Golf Certificate revizuit',
+      'saving a draft correction must keep the provisional vehicle in sync',
     );
     assert.equal(
       (
@@ -236,7 +247,7 @@ async function main() {
           where: { id: registrationDocument.id },
         })
       )?.vehicleId,
-      null,
+      extractedDraftVehicle?.id,
     );
     await request(
       baseUrl,
@@ -255,6 +266,11 @@ async function main() {
     assert.equal(extractedVehicle?.year, 2021);
     assert.equal(extractedVehicle?.fuelType, 'Diesel');
     assert.equal(
+      extractedVehicle?.draftSourceDocumentId,
+      null,
+      'approval must make the provisional vehicle permanent',
+    );
+    assert.equal(
       (await prisma.document.findUnique({ where: { id: registrationDocument.id } }))?.vehicleId,
       extractedVehicle?.id,
     );
@@ -268,6 +284,97 @@ async function main() {
         },
       }),
       'approving a new registration VIN must create its own article',
+    );
+
+    const deletedDraftVin = 'WBAZZZ1JZXW000099';
+    const deletedDraftDocument = await prisma.document.create({
+      data: {
+        tenantId: tenant.id,
+        name: 'draft-vehicle-to-delete.pdf',
+        type: 'Contract',
+        s3Key: `tenants/${tenant.id}/acceptance/draft-vehicle-to-delete.pdf`,
+        contentType: 'application/pdf',
+        fileSize: 1,
+        documentHash: `${marker}-draft-vehicle-to-delete`,
+        processingStatus: 'COMPLETED',
+        reviewStatus: 'PENDING_APPROVAL',
+        needsReview: true,
+        processedData: {
+          create: {
+            documentType: 'Contract',
+            extractedFields: {
+              document_type: 'Contract',
+              direction: 'incoming',
+              contract_type: 'vanzare-cumparare autoturism',
+              vehicle_transaction: 'purchase',
+              vin: deletedDraftVin,
+              vehicle_make: 'BMW',
+              vehicle_model: 'X3 draft',
+              vehicle_year: 2022,
+              total_value: 20_000,
+              currency: 'EUR',
+            },
+          },
+        },
+      },
+    });
+    const relatedDraftCost = await prisma.document.create({
+      data: {
+        tenantId: tenant.id,
+        name: 'draft-vehicle-cost.pdf',
+        type: 'Invoice',
+        s3Key: `tenants/${tenant.id}/acceptance/draft-vehicle-cost.pdf`,
+        contentType: 'application/pdf',
+        fileSize: 1,
+        documentHash: `${marker}-draft-vehicle-cost`,
+        processingStatus: 'COMPLETED',
+        reviewStatus: 'PENDING_APPROVAL',
+        needsReview: true,
+        processedData: {
+          create: {
+            documentType: 'Invoice',
+            extractedFields: {
+              ...accountingFields(tenant.name, tenant.cui!, 'DRAFT-COST-1'),
+              vehicle_transaction: 'cost',
+              vin: deletedDraftVin,
+            },
+          },
+        },
+      },
+    });
+    const deletedDraftSync = await domainSync.syncDraftVehicle(
+      deletedDraftDocument.id,
+    );
+    assert.ok(deletedDraftSync.vehicleId);
+    assert.equal(
+      (
+        await prisma.document.findUnique({
+          where: { id: relatedDraftCost.id },
+        })
+      )?.vehicleId,
+      deletedDraftSync.vehicleId,
+      'a cost invoice with the same VIN must attach to the provisional vehicle',
+    );
+    await request(baseUrl, `/documents/${deletedDraftDocument.id}`, {
+      method: 'DELETE',
+      token: tokens.get('ACCOUNTANT'),
+      expected: 200,
+    });
+    assert.equal(
+      await prisma.vehicle.findUnique({
+        where: { id: deletedDraftSync.vehicleId! },
+      }),
+      null,
+      'deleting the source draft must delete its provisional vehicle',
+    );
+    assert.equal(
+      (
+        await prisma.document.findUnique({
+          where: { id: relatedDraftCost.id },
+        })
+      )?.vehicleId,
+      null,
+      'related cost documents must be preserved and detached',
     );
 
     const sellerCnp = '1800101223340';

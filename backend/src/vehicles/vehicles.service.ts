@@ -14,6 +14,7 @@ import {
   privateSellerIdentityErrors,
 } from '../parties/party-identity';
 import { ensureVehicleArticle } from '../accounting/vehicle-article';
+import { deleteVehicleAndDetachReferences } from './vehicle-document-sync';
 
 @Injectable()
 export class VehiclesService {
@@ -139,14 +140,7 @@ export class VehiclesService {
   async delete(tenantId: number, id: number) {
     await this.ensureExists(tenantId, id);
     await this.prisma.$transaction(async (tx) => {
-      // Manual costs reference the vehicle with a required FK, so remove them
-      // first. Documents, contracts and e-Transport declarations are accounting
-      // records worth keeping — detach them from the vehicle instead of deleting.
-      await tx.vehicleCost.deleteMany({ where: { vehicleId: id } });
-      await tx.document.updateMany({ where: { vehicleId: id }, data: { vehicleId: null } });
-      await tx.contract.updateMany({ where: { vehicleId: id }, data: { vehicleId: null } });
-      await tx.eTransportDeclaration.updateMany({ where: { vehicleId: id }, data: { vehicleId: null } });
-      await tx.vehicle.delete({ where: { id } });
+      await deleteVehicleAndDetachReferences(tx, id);
     });
     return { id, deleted: true };
   }

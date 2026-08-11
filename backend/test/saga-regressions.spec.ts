@@ -310,4 +310,61 @@ assert.match(
   /<FacturaTVAIncasare>Nu<\/FacturaTVAIncasare>/,
 );
 
+// Discounts and regularizations are signed invoice lines. They must reconcile
+// the invoice base and keep their minus sign in the SAGA details.
+const invoiceWithDiscount = {
+  id: 16,
+  type: 'Invoice',
+  data: normalizeAccountingDocument(
+    'Invoice',
+    {
+      direction: 'incoming',
+      vendor: 'Discount Supplier SRL',
+      vendor_ein: 'RO12345670',
+      buyer: company.name,
+      buyer_ein: company.cui,
+      document_number: 'DISC-1',
+      document_date: '10-08-2026',
+      total_amount: 1672,
+      net_amount: 1672,
+      vat_amount: 0,
+      currency: 'RON',
+      line_items: [
+        {
+          name: 'Servicii',
+          quantity: 1,
+          unit_price: 1922,
+          total: 1922,
+          vat_amount: 0,
+          vat: 'ZERO',
+          account_code: '628',
+        },
+        {
+          name: 'Discount comercial',
+          quantity: 1,
+          unit_price: -250,
+          total: -250,
+          vat_amount: 0,
+          vat: 'ZERO',
+          account_code: '628',
+        },
+      ],
+    },
+    company.cui,
+  ),
+};
+assert.equal(invoiceWithDiscount.data.lineItems[1].unitPrice, -250);
+assert.equal(invoiceWithDiscount.data.lineItems[1].netAmount, -250);
+assert.equal(
+  invoiceWithDiscount.data.lineItems.reduce(
+    (sum, line) => sum + line.netAmount,
+    0,
+  ),
+  1672,
+);
+const discountXml = buildFacturiXml([invoiceWithDiscount], company, []);
+assert.match(discountXml, /<Descriere>Discount comercial<\/Descriere>/);
+assert.match(discountXml, /<Pret>-250<\/Pret>/);
+assert.match(discountXml, /<Valoare>-250<\/Valoare>/);
+
 console.log('saga-regressions.spec.ts passed');

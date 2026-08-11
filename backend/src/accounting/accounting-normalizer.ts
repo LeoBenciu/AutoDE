@@ -434,19 +434,29 @@ function normalizeLineItem(value: unknown, index: number): CanonicalLineItem {
     value && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, any>)
       : {};
-  const quantity = positiveNumber(line.quantity) || 1;
-  const unitPrice = positiveNumber(line.unit_price ?? line.unitPrice ?? line.pret);
-  const vatAmount = positiveNumber(line.vat_amount ?? line.tva);
-  const explicitNet = positiveNumber(
+  const extractedQuantity = optionalSignedNumber(line.quantity);
+  const quantity =
+    extractedQuantity == null || extractedQuantity === 0
+      ? 1
+      : extractedQuantity;
+  const extractedUnitPrice = optionalSignedNumber(
+    line.unit_price ?? line.unitPrice ?? line.pret,
+  );
+  const vatAmount = optionalSignedNumber(line.vat_amount ?? line.tva) ?? 0;
+  const explicitNet = optionalSignedNumber(
     line.net_amount ?? line.line_total ?? line.total ?? line.valoare,
   );
-  const netAmount = explicitNet || round2(quantity * unitPrice);
+  const netAmount =
+    explicitNet ?? round2(quantity * (extractedUnitPrice ?? 0));
+  const unitPrice =
+    extractedUnitPrice ??
+    (quantity ? round2(netAmount / quantity) : netAmount);
   const vatRate = normalizeVatRate(line.vat_rate ?? line.vat ?? line.proc_tva);
 
   return {
     name: stringValue(line.name ?? line.description) || `Articol ${index + 1}`,
     quantity,
-    unitPrice: unitPrice || (quantity ? round2(netAmount / quantity) : netAmount),
+    unitPrice,
     netAmount,
     vatAmount,
     vatRate,
@@ -624,6 +634,28 @@ function positiveNumber(value: unknown): number {
   }
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? round2(numeric) : 0;
+}
+
+/**
+ * Line items may be discounts, rebates or regularizations, so their monetary
+ * values (and occasionally quantity) are signed. Missing/invalid values stay
+ * undefined to distinguish them from an explicit zero.
+ */
+function optionalSignedNumber(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined;
+  let parenthesized = false;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    parenthesized = /^\(.*\)$/.test(trimmed);
+    value = trimmed
+      .replace(/[−–—]/g, '-')
+      .replace(/\s/g, '')
+      .replace(',', '.')
+      .replace(/[^\d.-]/g, '');
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return undefined;
+  return round2(parenthesized ? -Math.abs(numeric) : numeric);
 }
 
 function optionalPositiveNumber(value: unknown): number | undefined {

@@ -17,6 +17,35 @@ import { PrismaService } from '../common/prisma.service';
 
 type DbClient = Prisma.TransactionClient | PrismaService;
 
+/**
+ * Removes a vehicle while preserving accounting and transport documents. All
+ * references are detached first because VehicleCost is the only dependent
+ * record that cannot exist without its vehicle.
+ */
+export async function deleteVehicleAndDetachReferences(
+  tx: Prisma.TransactionClient,
+  vehicleId: number,
+): Promise<void> {
+  await tx.vehicleCost.deleteMany({ where: { vehicleId } });
+  await tx.document.updateMany({
+    where: { vehicleId },
+    data: { vehicleId: null },
+  });
+  await tx.contract.updateMany({
+    where: { vehicleId },
+    data: { vehicleId: null },
+  });
+  await tx.eTransportDeclaration.updateMany({
+    where: { vehicleId },
+    data: { vehicleId: null },
+  });
+  await tx.pendingUpload.updateMany({
+    where: { vehicleId },
+    data: { vehicleId: null },
+  });
+  await tx.vehicle.delete({ where: { id: vehicleId } });
+}
+
 interface VehicleCandidate {
   vin?: string;
   make?: string;
@@ -614,6 +643,14 @@ export async function syncApprovedDocumentVehicleEffects(
   );
   if (!vehicleId) return undefined;
 
+  // Approval makes only the vehicle created by this document permanent. A
+  // cost invoice linked to another document's provisional vehicle must not
+  // finalize that vehicle on its own.
+  await tx.vehicle.updateMany({
+    where: { id: vehicleId, draftSourceDocumentId: document.id },
+    data: { draftSourceDocumentId: null },
+  });
+
   if (document.vehicleId !== vehicleId) {
     await tx.document.update({
       where: { id: document.id },
@@ -658,7 +695,9 @@ export async function syncApprovedDocumentVehicleEffects(
   });
   if (!vehicle) return vehicleId;
   for (const [category, amount] of grouped) {
-    if (amount <= 0) continue;
+    // A negative group is a discount/credit that reduces landed cost and must
+    // be mirrored just like a positive vehicle expense.
+    if (Math.abs(amount) <= 0.004) continue;
     const normalizedAmount = await convertCostToPurchaseCurrency(
       tx,
       tenantId,

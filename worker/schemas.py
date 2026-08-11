@@ -33,9 +33,9 @@ class Categorization(BaseModel):
 
 class LineItem(BaseModel):
     description: str
-    quantity: Optional[float] = None
-    unit_price: Optional[float] = None
-    net_amount: Optional[float] = Field(None, description="Line total WITHOUT VAT (net convention)")
+    quantity: Optional[float] = Field(None, description="Signed quantity exactly as printed")
+    unit_price: Optional[float] = Field(None, description="Signed unit price; preserve discounts and credits")
+    net_amount: Optional[float] = Field(None, description="Signed line total WITHOUT VAT; negative rows must not be omitted")
     vat_rate: Optional[float] = None
     vehicle_cost_category: Optional[str] = None
 

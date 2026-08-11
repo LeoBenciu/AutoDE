@@ -1406,10 +1406,23 @@ function draft(
   description: string,
   originalAmount?: number,
 ): JournalDraftLine {
+  let normalizedDebit = round2(debit);
+  let normalizedCredit = round2(credit);
+  // A negative invoice line is a discount/regularization. Accounting entries
+  // express it on the opposite side instead of persisting a negative debit or
+  // credit, while the source line keeps its signed value for SAGA export.
+  if (normalizedDebit < 0) {
+    normalizedCredit = round2(normalizedCredit + Math.abs(normalizedDebit));
+    normalizedDebit = 0;
+  }
+  if (normalizedCredit < 0) {
+    normalizedDebit = round2(normalizedDebit + Math.abs(normalizedCredit));
+    normalizedCredit = 0;
+  }
   return {
     accountCode,
-    debit: round2(debit),
-    credit: round2(credit),
+    debit: normalizedDebit,
+    credit: normalizedCredit,
     description,
     originalAmount:
       originalAmount != null ? round2(Math.abs(originalAmount)) : undefined,

@@ -12,6 +12,7 @@ import { S3Service } from '../common/s3.service';
 import { AuditService } from '../common/audit.service';
 import { PostingService } from '../accounting/posting.service';
 import { DocumentDomainSyncService } from './document-domain-sync.service';
+import { deleteVehicleAndDetachReferences } from '../vehicles/vehicle-document-sync';
 
 export interface UploadedDoc {
   originalname: string;
@@ -252,7 +253,19 @@ export class DocumentsService {
         'Redeschide documentul înainte de ștergere pentru a elimina nota contabilă',
       );
     }
-    await this.prisma.document.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.prisma.$transaction(async (tx) => {
+      const draftVehicle = await tx.vehicle.findFirst({
+        where: { tenantId, draftSourceDocumentId: id },
+        select: { id: true },
+      });
+      if (draftVehicle) {
+        await deleteVehicleAndDetachReferences(tx, draftVehicle.id);
+      }
+      await tx.document.update({
+        where: { id },
+        data: { deletedAt: new Date(), vehicleId: null },
+      });
+    });
     await this.audit.log({ tenantId, userId, action: 'document.deleted', entity: 'Document', entityId: id });
     return { ok: true };
   }
@@ -341,6 +354,7 @@ export class DocumentsService {
         },
       }),
     ]);
+    await this.domainSync.syncDraftVehicle(documentId);
     return { ok: true, fields };
   }
 

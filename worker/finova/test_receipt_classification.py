@@ -227,6 +227,40 @@ C.I.F.: RO31194616
         self.assertEqual(repaired["total_amount"], 49.91)
         self.assertTrue(meta["receipt_parties_repaired"])
 
+    def test_negative_discount_line_keeps_its_sign(self):
+        data = {
+            "total_amount": 1672,
+            "vat_amount": 0,
+            "line_items": [
+                {
+                    "name": "Servicii",
+                    "quantity": 1,
+                    "unit_price": 1922,
+                    "total": 1922,
+                    "vat_amount": 0,
+                    "vat": "ZERO",
+                },
+                {
+                    "name": "Discount comercial",
+                    "quantity": 1,
+                    "unit_price": -250,
+                    "total": -250,
+                    "vat_amount": 0,
+                    "vat": "ZERO",
+                },
+            ],
+        }
+
+        validators.normalize_line_items_to_net(data)
+
+        discount = data["line_items"][1]
+        self.assertEqual(discount["unit_price"], -250)
+        self.assertEqual(discount["total"], -250)
+        self.assertEqual(
+            sum(item["total"] for item in data["line_items"]),
+            1672,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

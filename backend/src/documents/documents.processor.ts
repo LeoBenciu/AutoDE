@@ -17,6 +17,7 @@ import {
   applyVehiclePurchaseContractDefaults,
   applyVehiclePurchaseInvoiceDefaults,
 } from '../vehicles/vehicle-document-sync';
+import { DocumentDomainSyncService } from './document-domain-sync.service';
 
 const STUCK_PROCESSING_MINUTES = 10;
 const CLAIM_BATCH_SIZE = 5;
@@ -36,12 +37,14 @@ const CLAIM_BATCH_SIZE = 5;
 export class DocumentsProcessor {
   private readonly logger = new Logger(DocumentsProcessor.name);
   private ticking = false;
+  private draftVehiclesBackfilled = false;
   private readonly splitEnabled: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
     private readonly extraction: ExtractionService,
+    private readonly domainSync: DocumentDomainSyncService,
     config: ConfigService,
   ) {
     this.splitEnabled = config.get('PENDING_UPLOAD_SPLIT_ENABLED', 'false') === 'true';
@@ -52,6 +55,7 @@ export class DocumentsProcessor {
     if (this.ticking) return;
     this.ticking = true;
     try {
+      await this.backfillDraftVehicles();
       await this.recoverStuck();
       await this.requeueRetryableErrors();
       const candidates = await this.prisma.pendingUpload.findMany({
@@ -66,6 +70,49 @@ export class DocumentsProcessor {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /**
+   * One startup pass repairs drafts extracted while vehicle creation was
+   * approval-only. This also reconnects already processed cost invoices by VIN.
+   */
+  private async backfillDraftVehicles() {
+    if (this.draftVehiclesBackfilled) return;
+    let afterId = 0;
+    while (true) {
+      const documents = await this.prisma.document.findMany({
+        where: {
+          id: { gt: afterId },
+          deletedAt: null,
+          vehicleId: null,
+          reviewStatus: { in: ['PENDING_APPROVAL', 'REOPENED'] },
+          type: {
+            in: [
+              'Contract',
+              'Invoice',
+              'Receipt',
+              'Vehicle Registration Certificate',
+            ],
+          },
+          processedData: { isNot: null },
+        },
+        orderBy: { id: 'asc' },
+        take: 100,
+        select: { id: true },
+      });
+      if (documents.length === 0) break;
+      for (const document of documents) {
+        try {
+          await this.domainSync.syncDraftVehicle(document.id);
+        } catch (error) {
+          this.logger.warn(
+            `draft vehicle backfill failed for document ${document.id}: ${(error as Error).message}`,
+          );
+        }
+      }
+      afterId = documents[documents.length - 1].id;
+    }
+    this.draftVehiclesBackfilled = true;
   }
 
   private async recoverStuck() {
@@ -329,6 +376,10 @@ export class DocumentsProcessor {
           }),
         ]);
       }
+
+      // The provisional vehicle must exist during review so invoices and other
+      // costs carrying the same VIN can be associated before approval.
+      await this.domainSync.syncDraftVehicle(document.id);
 
       await this.prisma.pendingUpload.updateMany({
         where: { id: row.id, status: 'PHASE1_COMPLETE' },
