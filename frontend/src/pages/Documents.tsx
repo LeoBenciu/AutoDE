@@ -6,7 +6,6 @@ import {
   useDeleteDocumentMutation,
   useAssignDocumentMutation,
   useCancelPendingUploadMutation,
-  useChartOfAccountsQuery,
   useCorrectFieldMutation,
   useDocumentQuery,
   useDocumentsQuery,
@@ -502,7 +501,6 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   });
   const { data: vehicles = [] } = useVehiclesQuery();
   const { data: parties = [] } = usePartiesQuery();
-  const { data: accounts = [] } = useChartOfAccountsQuery();
   const { data: managements = [] } = useManagementsQuery();
   const [correct] = useCorrectFieldMutation();
   const [reprocess, { isLoading: reprocessing }] = useReprocessDocumentMutation();
@@ -1470,10 +1468,6 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                       <LineField
                         label="Cont"
                         value={item.account_code ?? ''}
-                        options={accounts.map((account: any) => [
-                          account.accountCode,
-                          `${account.accountCode} · ${account.accountName}`,
-                        ])}
                         disabled={doc.reviewStatus === 'APPROVED'}
                         onSave={(value) => saveLineField(index, 'account_code', value)}
                       />
