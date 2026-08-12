@@ -442,7 +442,10 @@ function buildFactura(
             ? 'C'
             : '',
     ),
-    xmlTag('FacturaInformatiiSuplimentare', data.raw.additional_info),
+    xmlTag(
+      'FacturaInformatiiSuplimentare',
+      invoiceAdditionalInformation(data),
+    ),
     xmlTag('FacturaMoneda', data.currency || 'RON'),
     xmlTag('FacturaGreutate', data.raw.weight),
     xmlTag('FacturaAccize', data.raw.excise),
@@ -510,7 +513,7 @@ function buildFactura(
           <CodArticolClient>${esc(analytic)}</CodArticolClient>
           <GUID_cod_articol>${esc(line.raw.guid_article_code ?? line.raw.guid_cod_articol)}</GUID_cod_articol>
           <CodBare>${esc(line.raw.barcode ?? line.raw.cod_bare)}</CodBare>
-          <InformatiiSuplimentare>${esc(line.raw.additional_info ?? line.raw.informatii_suplimentare ?? line.raw.stock_id)}</InformatiiSuplimentare>
+          <InformatiiSuplimentare>${esc(line.raw.additional_info ?? line.raw.informatii_suplimentare)}</InformatiiSuplimentare>
           <UM>${esc(sagaUnit(line.unit))}</UM>
           <Cantitate>${esc(quantity)}</Cantitate>
           <Pret>${esc(unitPrice)}</Pret>
@@ -637,6 +640,26 @@ function finovaScalar(value: unknown): string {
 
 function firstTruthy(...values: unknown[]): unknown {
   return values.find(Boolean) ?? '';
+}
+
+/**
+ * Stock ID / Ref. identifies the invoice transaction, not an individual line.
+ * Older extractions copied the same value onto every line, so promote and
+ * deduplicate those values in the document header at export time.
+ */
+function invoiceAdditionalInformation(
+  data: CanonicalAccountingDocument,
+): string {
+  const explicit = finovaScalar(data.raw.additional_info).trim();
+  const documentStockId = finovaScalar(data.raw.stock_id).trim();
+  const legacyLineStockIds = documentStockId
+    ? []
+    : data.lineItems
+        .map((line) => finovaScalar(line.raw.stock_id).trim())
+        .filter(Boolean);
+  return Array.from(
+    new Set([explicit, documentStockId, ...legacyLineStockIds].filter(Boolean)),
+  ).join(' · ');
 }
 
 /**

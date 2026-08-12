@@ -6,7 +6,6 @@ import {
   useDeleteDocumentMutation,
   useAssignDocumentMutation,
   useCancelPendingUploadMutation,
-  useChartOfAccountsQuery,
   useCorrectFieldMutation,
   useDocumentQuery,
   useDocumentsQuery,
@@ -57,6 +56,7 @@ const EXTRACTED_FIELD_LABELS: Record<string, string> = {
   receipt_type: 'Tip bon / chitanță',
   receipt_number: 'Număr bon',
   document_number: 'Număr document',
+  stock_id: 'Stock ID / Ref. document',
   document_date: 'Data emiterii',
   due_date: 'Data scadenței',
   vendor: 'Furnizor',
@@ -104,6 +104,7 @@ const EXTRACTED_FIELD_ORDER = [
   'receipt_type',
   'receipt_number',
   'document_number',
+  'stock_id',
   'document_date',
   'due_date',
   'vendor',
@@ -492,6 +493,7 @@ function pendingStageLabel(pending: any): string {
 function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void }) {
   const user = useSelector((state: RootState) => state.auth.user);
   const canApprove = user?.role === 'ACCOUNTANT';
+  const canReprocess = ['ACCOUNTANT', 'SALES'].includes(user?.role ?? '');
   const { data: doc } = useDocumentQuery(id, { pollingInterval: 2000 });
   const { data: posting, isFetching: postingLoading } = usePostingPreviewQuery(id, {
     skip: !canApprove,
@@ -499,7 +501,6 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
   });
   const { data: vehicles = [] } = useVehiclesQuery();
   const { data: parties = [] } = usePartiesQuery();
-  const { data: accounts = [] } = useChartOfAccountsQuery();
   const { data: managements = [] } = useManagementsQuery();
   const [correct] = useCorrectFieldMutation();
   const [reprocess, { isLoading: reprocessing }] = useReprocessDocumentMutation();
@@ -524,7 +525,7 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
       | undefined;
     const suggested = String(extracted?.document_type ?? doc.type ?? '');
     setReprocessType(
-      REEXTRACTABLE_DOC_TYPES.includes(suggested) ? suggested : 'Receipt',
+      REEXTRACTABLE_DOC_TYPES.includes(suggested) ? suggested : 'Other',
     );
   }, [doc?.id, doc?.type, doc?.processedData?.updatedAt]);
 
@@ -601,6 +602,10 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
       value != null &&
       typeof value !== 'object',
   );
+  const stockId = documentStockId(fields);
+  if (stockId && !entries.some(([key]) => key === 'stock_id')) {
+    entries.push(['stock_id', stockId]);
+  }
   // The extractor returns null for vehicle fields it can't read, and null values
   // are dropped above—so a purchase contract missing e.g. the year renders no row
   // to correct, yet posting rejects it. Surface the required fields as empty,
@@ -756,6 +761,19 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
     }
   };
 
+  const retryExtraction = () => {
+    const typeLabel =
+      reprocessType === 'Receipt' ? 'bon / chitanță' : reprocessType;
+    if (
+      !window.confirm(
+        `Reîncerci extragerea datelor ca ${typeLabel}? Datele extrase existente vor fi înlocuite cu noul rezultat.`,
+      )
+    ) {
+      return;
+    }
+    void runReprocess(reprocessType);
+  };
+
   const openFile = async () => {
     if (previewUrl) {
       window.open(previewUrl, '_blank', 'noopener,noreferrer');
@@ -816,6 +834,31 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
           <button onClick={openFile} className="rounded-control border border-line-strong px-3 py-2 text-xs font-semibold text-ink-soft hover:bg-surface">
             Deschide separat
           </button>
+          {canReprocess && doc.reviewStatus !== 'APPROVED' && (
+            <button
+              type="button"
+              onClick={retryExtraction}
+              disabled={reprocessing || !reprocessType}
+              title="Rulează din nou extragerea datelor din document"
+              className="flex items-center gap-1.5 rounded-control border border-brand px-3 py-2 text-xs font-semibold text-brand hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
+                <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+              </svg>
+              {reprocessing ? 'Se reîncearcă…' : 'Reîncearcă extragerea'}
+            </button>
+          )}
           {doc.reviewStatus === 'LEGACY' && (
             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
               Istoric · fără postare
@@ -1416,12 +1459,6 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                         disabled={doc.reviewStatus === 'APPROVED'}
                         onSave={(value) => saveLineField(index, 'articleCode', value)}
                       />
-                      <LineField
-                        label="Stock ID / Ref."
-                        value={item.stock_id ?? ''}
-                        disabled={doc.reviewStatus === 'APPROVED'}
-                        onSave={(value) => saveLineField(index, 'stock_id', value)}
-                      />
                       <ManagementField
                         value={item.management ?? ''}
                         managements={managements}
@@ -1431,10 +1468,6 @@ function DocumentReviewModal({ id, onClose }: { id: number; onClose: () => void 
                       <LineField
                         label="Cont"
                         value={item.account_code ?? ''}
-                        options={accounts.map((account: any) => [
-                          account.accountCode,
-                          `${account.accountCode} · ${account.accountName}`,
-                        ])}
                         disabled={doc.reviewStatus === 'APPROVED'}
                         onSave={(value) => saveLineField(index, 'account_code', value)}
                       />
@@ -1818,6 +1851,19 @@ function displayExtractedFieldValue(field: string, value: unknown): string {
   const options = extractedFieldOptions(field, value);
   const draft = extractedFieldDraftValue(field, value);
   return options?.find(([option]) => option === draft)?.[1] ?? String(value);
+}
+
+function documentStockId(fields: Record<string, any>): string {
+  const explicit = String(fields.stock_id ?? '').trim();
+  if (explicit) return explicit;
+  const lineItems = Array.isArray(fields.line_items) ? fields.line_items : [];
+  return Array.from(
+    new Set(
+      lineItems
+        .map((line: any) => String(line?.stock_id ?? '').trim())
+        .filter(Boolean),
+    ),
+  ).join(' · ');
 }
 
 // Mirrors the single vehicle line the backend synthesizes for a purchase
